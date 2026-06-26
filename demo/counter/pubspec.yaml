@@ -1,0 +1,14 @@
+name: watch_counter
+description: Counter demo for the Flutter watchOS engine PoC.
+publish_to: "none"
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
