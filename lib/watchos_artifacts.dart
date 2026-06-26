@@ -1,0 +1,170 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'package:file/file.dart';
+import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
+
+import 'watchos_cache.dart';
+
+/// Overrides [CachedArtifacts] to provide watchOS-specific engine artifacts.
+///
+/// Directory naming convention:
+///   - `watchos_debug_arm64`          — Debug device (arm64)
+///   - `watchos_debug_sim_arm64`      — Debug simulator (arm64)
+///   - `watchos_profile_arm64`        — Profile device (arm64)
+///   - `watchos_release_arm64`        — Release device (arm64)
+///
+/// The watchOS engine renders in software (no GPU path on Apple Watch), so —
+/// unlike tvOS — there are no Metal shader libraries to ship; `Flutter.framework`
+/// carries the embedder + Dart VM only.
+class WatchosArtifacts extends CachedArtifacts {
+  WatchosArtifacts({
+    required super.fileSystem,
+    required super.cache,
+    required super.platform,
+    required super.operatingSystemUtils,
+  }) : _fileSystem = fileSystem;
+
+  final FileSystem _fileSystem;
+
+  @override
+  LocalEngineInfo? get localEngineInfo => null;
+
+  @override
+  String getArtifactPath(
+    Artifact artifact, {
+    TargetPlatform? platform,
+    BuildMode? mode,
+    EnvironmentType? environmentType,
+  }) {
+    if (artifact == Artifact.flutterXcframework ||
+        artifact == Artifact.flutterFramework ||
+        artifact == Artifact.genSnapshot) {
+      final String engineDir = _resolveEngineDirectory(mode ?? BuildMode.debug, environmentType);
+
+      if (artifact == Artifact.genSnapshot) {
+        return _fileSystem.path.join(engineDir, 'clang_arm64', 'gen_snapshot');
+      } else if (artifact == Artifact.flutterFramework) {
+        return _fileSystem.path.join(engineDir, 'Flutter.framework');
+      } else if (artifact == Artifact.flutterXcframework) {
+        return _fileSystem.path.join(engineDir, 'Flutter.xcframework');
+      }
+    }
+
+    // For AOT (profile/release) builds, compile the app kernel against OUR
+    // patched `flutter_patched_sdk` (shipped inside the host engine artifact)
+    // rather than the stock Flutter checkout's. The patched dart:io
+    // `platform.dart` defines `isIOS = operatingSystem == "ios" || == "watchos"`
+    // and adds the `isWatch` getter, so the un-folded platform-const getters
+    // evaluate correctly at runtime on watchOS. This is the companion to
+    // `WatchosKernelSnapshot.build()`, which passes `targetOS: null` so those
+    // getters are not const-folded to "ios" at compile time.
+    //
+    // Debug (JIT) deliberately keeps the stock SDK: platform identity there is
+    // resolved by the device engine's own (patched) core libraries at runtime,
+    // so the compile SDK is irrelevant and we avoid disturbing the proven
+    // debug path. We only need our patched SDK where gen_snapshot bakes the
+    // SDK code into the app snapshot — i.e. precompiled builds.
+    if ((mode?.isPrecompiled ?? false) &&
+        (artifact == Artifact.flutterPatchedSdkPath ||
+            artifact == Artifact.platformKernelDill)) {
+      final String patchedSdkDir = _hostPatchedSdkDirectory(mode!);
+      if (artifact == Artifact.platformKernelDill) {
+        return _fileSystem.path.join(patchedSdkDir, 'platform_strong.dill');
+      }
+      return patchedSdkDir;
+    }
+
+    return super.getArtifactPath(
+      artifact,
+      platform: platform,
+      mode: mode,
+      environmentType: environmentType,
+    );
+  }
+
+  /// Path to the patched `flutter_patched_sdk` inside the host engine
+  /// artifact for [mode].
+  ///
+  /// Release uses the **product** SDK (`host_release`); profile uses the
+  /// **non-product** SDK (`host_debug_unopt`). This mirrors stock Flutter's
+  /// `flutter_patched_sdk` (debug/profile) vs `flutter_patched_sdk_product`
+  /// (release) split: the non-product SDK marks entry-point classes that the
+  /// profile/JIT engine looks up natively — e.g. `dart:io`'s
+  /// `_NetworkProfiling` — so gen_snapshot keeps them through AOT
+  /// tree-shaking. Compiling a profile build against the product SDK drops
+  /// those classes and the engine aborts at startup with
+  /// `Type '_NetworkProfiling' not found in library 'dart.io'`.
+  String _hostPatchedSdkDirectory(BuildMode mode) {
+    final dirName = mode == BuildMode.release ? 'host_release' : 'host_debug_unopt';
+    // Handle the nested directory that zip extraction can produce
+    // (`<root>/<dir>/<dir>/flutter_patched_sdk`).
+    final Directory nested = _fileSystem.directory(
+      _fileSystem.path.join(_watchosArtifactRoot, dirName, dirName, 'flutter_patched_sdk'),
+    );
+    if (nested.existsSync()) {
+      return nested.path;
+    }
+    return _fileSystem.path.join(_watchosArtifactRoot, dirName, 'flutter_patched_sdk');
+  }
+
+  String get _watchosArtifactRoot {
+    return watchosArtifactDirectory(globals.fs).path;
+  }
+
+  /// Resolves the engine directory for the given build configuration.
+  String _resolveEngineDirectory(BuildMode mode, EnvironmentType? environmentType) {
+    final String dirName = _getDirectoryName(mode, environmentType);
+
+    // Handle nested directory (from zip extraction where dir is inside dir)
+    final Directory nestedDir = _fileSystem.directory(
+      _fileSystem.path.join(_watchosArtifactRoot, dirName, dirName),
+    );
+    if (nestedDir.existsSync()) {
+      return nestedDir.path;
+    }
+    return _fileSystem.path.join(_watchosArtifactRoot, dirName);
+  }
+
+  /// Canonical watchOS directory name for build configuration.
+  String _getDirectoryName(BuildMode mode, EnvironmentType? environmentType) {
+    if (environmentType == EnvironmentType.simulator) {
+      return 'watchos_debug_sim_arm64';
+    }
+    return switch (mode) {
+      BuildMode.debug => 'watchos_debug_arm64',
+      BuildMode.profile => 'watchos_profile_arm64',
+      BuildMode.release => 'watchos_release_arm64',
+      _ => 'watchos_debug_arm64',
+    };
+  }
+
+  /// Returns the path to gen_snapshot for the target build mode.
+  ///
+  /// gen_snapshot is shipped inside each watchOS device artifact at
+  /// `clang_arm64/gen_snapshot`. Built with `target_os=ios` + a watchOS
+  /// retarget + `--runtime-mode=<mode>`, so it cross-compiles AOT snapshots
+  /// that target watchOS arm64 (not the host). Using `host_release/gen_snapshot`
+  /// here would emit a macOS-arm64 snapshot and the engine fails to load it at
+  /// runtime ("VM snapshot invalid").
+  String getGenSnapshotPath(BuildMode mode) {
+    return getArtifactPath(
+      Artifact.genSnapshot,
+      mode: mode,
+      environmentType: EnvironmentType.physical,
+    );
+  }
+
+  /// Returns the host tools directory path.
+  ///
+  /// Host tools (frontend_server, dart) are in the Flutter SDK, not in engine_artifacts.
+  String getHostToolsPath(BuildMode mode) {
+    final dirName = mode == BuildMode.debug ? 'host_debug_unopt' : 'host_release';
+    return _fileSystem.path.join(_watchosArtifactRoot, dirName);
+  }
+}

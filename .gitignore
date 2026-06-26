@@ -1,0 +1,37 @@
+# Auto-managed by shared.sh (cloned on first run)
+flutter/
+proxy_root/
+
+# Build artifacts
+build/
+.dart_tool/
+bin/cache/
+
+# Engine artifacts — distributed separately, NEVER committed (engine is
+# closed-source). The CLI consumes pre-built engine bundles from here.
+engine_artifacts/
+artifacts/
+
+# Local engine source / build workspaces (closed-source, lives outside repo).
+# The watchOS engine is proprietary and must never be tracked in this repo.
+engine/
+flutter_upstream_watchos_engine/
+watchos_engine_builds/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Pub
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Generated
+*.dart_tool
