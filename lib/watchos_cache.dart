@@ -46,9 +46,11 @@ Directory watchosArtifactDirectory(FileSystem fileSystem) {
 }
 
 /// Local override: if zips are present here they are used instead of
-/// downloading. Used in development. Not relevant for public users.
+/// downloading. Used in development within the monorepo — `artifacts/` lives
+/// at the monorepo root, alongside the CLI checkout (so the CLI repo itself
+/// stays CLI-only). Not relevant for public users.
 Directory _localArtifactArchiveDirectory(FileSystem fileSystem) {
-  return watchosToolRootDirectory(fileSystem).childDirectory('artifacts');
+  return watchosToolRootDirectory(fileSystem).parent.childDirectory('artifacts');
 }
 
 mixin WatchosRequiredArtifacts on FlutterCommand {

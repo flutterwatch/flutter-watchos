@@ -117,6 +117,14 @@ class WatchosArtifacts extends CachedArtifacts {
     return watchosArtifactDirectory(globals.fs).path;
   }
 
+  /// Public accessor for the resolved engine directory for [mode] /
+  /// [environmentType]. The watchOS engine is consumed as the embedder dylib
+  /// (`libflutter_engine.dylib` + `flutter_embedder.h` + `clang_arm64/icudtl.dat`
+  /// + `gen/flutter/lib/snapshot/*.bin`), not as a `Flutter.framework`, so the
+  /// build target reads these files directly from here.
+  String engineDirectory({required BuildMode mode, EnvironmentType? environmentType}) =>
+      _resolveEngineDirectory(mode, environmentType);
+
   /// Resolves the engine directory for the given build configuration.
   String _resolveEngineDirectory(BuildMode mode, EnvironmentType? environmentType) {
     final String dirName = _getDirectoryName(mode, environmentType);

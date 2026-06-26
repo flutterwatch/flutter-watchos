@@ -35,10 +35,3 @@ watchos_engine_builds/
 
 # Generated
 *.dart_tool
-
-# Demo apps — generated watchos/ project + build output (not source)
-demo/*/watchos/
-demo/*/build/
-demo/*/.dart_tool/
-demo/*/.flutter-plugins
-demo/*/.flutter-plugins-dependencies
