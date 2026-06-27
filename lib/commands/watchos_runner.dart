@@ -5,6 +5,7 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
+import 'package:flutter_tools/src/base/utils.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create_base.dart';
 import 'package:flutter_tools/src/template.dart';
@@ -41,6 +42,11 @@ Future<void> renderWatchosRunner({
   }
 
   final String watchosIdentifier = CreateBase.createUTIIdentifier(organization, name);
+  // `Foo Bar` for human-readable display (Info.plist), `FooBar` for the Swift
+  // type identifier (App.swift) — matching how stock `flutter create` derives
+  // names. titleCaseProjectName must never be used as a code identifier.
+  final String titleCaseProjectName = snakeCaseToTitleCase(name);
+  final String pascalCaseProjectName = titleCaseProjectName.replaceAll(' ', '');
   logger.printStatus('Generating watchOS runner...');
   final Template template = Template(
     templateDir,
@@ -52,7 +58,8 @@ Future<void> renderWatchosRunner({
   template.render(targetDir, <String, Object>{
     'organization': organization,
     'projectName': name,
-    'titleCaseProjectName': name.substring(0, 1).toUpperCase() + name.substring(1),
+    'titleCaseProjectName': titleCaseProjectName,
+    'pascalCaseProjectName': pascalCaseProjectName,
     'watchosIdentifier': watchosIdentifier,
     'withRootModule': true,
     'withPlatformChannelPluginHook': true,

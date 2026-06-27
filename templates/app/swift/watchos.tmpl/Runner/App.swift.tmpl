@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct {{titleCaseProjectName}}App: App {
+struct {{pascalCaseProjectName}}App: App {
     var body: some Scene {
         WindowGroup {
             #if arch(arm64_32)
@@ -62,6 +62,12 @@ struct FlutterHostView: View {
                 by: 0.05,
                 sensitivity: .high,
                 isContinuous: true,
+                // MUST stay false with this fine `by:` step. The system crown
+                // haptic fires once per `by:` detent; at by:0.05 a fast frame
+                // crosses ~hundreds of detents, so the Taptic Engine backs up and
+                // stutters the (software-rendered) scroll on real hardware. The
+                // detent click is produced by the Runner instead, rate-limited so
+                // it can't flood (see crownHapticTickPoints in FlutterRunner).
                 isHapticFeedbackEnabled: false
             )
             .onChange(of: crownValue) { oldValue, newValue in

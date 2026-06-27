@@ -60,9 +60,17 @@ final class FlutterRunner: ObservableObject {
         }
 
         if FlutterEngineRunsAOTCompiledDartCode() {
-            // Release/AOT build: the Dart snapshots live in App.framework.
-            guard let app = dlopen("\(bundle)/Frameworks/App.framework/App", RTLD_NOW) else {
-                NSLog("AOT engine but App.framework missing: %@", String(cString: dlerror()))
+            // Release/profile (AOT) build: the Dart snapshots live in the AOT
+            // library. The CLI packages it as a bare `Frameworks/App.dylib`
+            // (install_name @rpath/App.dylib); a framework-wrapped
+            // `App.framework/App` is also accepted, in case a release/App Store
+            // submission step repackages it as a framework. Try both.
+            let appCandidates = [
+                "\(bundle)/Frameworks/App.dylib",
+                "\(bundle)/Frameworks/App.framework/App",
+            ]
+            guard let app = appCandidates.lazy.compactMap({ dlopen($0, RTLD_NOW) }).first else {
+                NSLog("AOT engine but App library missing: %@", String(cString: dlerror()))
                 return
             }
             func sym(_ name: String) -> UnsafePointer<UInt8>? {
@@ -129,28 +137,151 @@ final class FlutterRunner: ObservableObject {
         FlutterEngineSendPointerEvent(engine, &event, 1)
     }
 
-    // MARK: - Digital Crown input & Haptics Channel
+    // MARK: - Digital Crown input
+    //
+    // Reproduces native watchOS crown scrolling. See docs/digital-crown-scroll.md
+    // for the full investigation, including the captured-input calibration that
+    // produced this model. Key finding from logging real crown input: the SwiftUI
+    // crown signal ALREADY scales with turn speed — a slow turn delivers tiny
+    // `delta`s while a fast flick delivers huge ones — so scroll distance is
+    // mapped directly from `delta`; a separate velocity multiplier double-counted
+    // speed and flung the list thousands of points past its end. Behaviours:
+    //   1. ACCELERATION — emergent from the delta magnitude itself: slow = tiny
+    //      deltas = precise aiming; fast flick = large deltas = far travel.
+    //   2. INERTIA — crown motion is forwarded as a trackpad PAN/ZOOM gesture, so
+    //      Flutter's BouncingScrollPhysics runs real ballistic momentum on
+    //      gesture-end (plus the rubber-band). Long flings come from that momentum,
+    //      NOT one giant input step — each sample is tanh soft-saturated
+    //      (crownMaxPointsPerEvent) so a hard flick (or the simulator's inertial
+    //      bursts) can't teleport the list. Pan/zoom carries no hover, no flicker.
+    //   3. DETENT CLICK — a WKHapticType.click per crownHapticTickPoints of
+    //      travel, rate-limited by crownMinTickInterval. We play it ourselves
+    //      rather than via the modifier's `isHapticFeedbackEnabled`, because that
+    //      fires once per `by:` detent and at by:0.05 a fast turn crosses hundreds
+    //      per frame → the Taptic Engine backs up and STUTTERS the scroll on real
+    //      hardware. (.directionUp/.directionDown are navigation cues, not the
+    //      detent — they sound wrong; .click is the closest detent feel.)
+    //   4. EDGE BUMP — the end-of-content haptic is played Flutter-side from an
+    //      OverscrollNotification (WatchCrownScroll in package:flutter_watchos).
 
+    // -- Tunables (calibrated from captured sim input; see the doc) -----------
+    /// Logical points scrolled per crown unit, before soft-saturation. The crown
+    /// delta already encodes turn speed, so this maps it directly.
+    private let crownPointsPerUnit: Double = 5.0
+    /// Soft cap (logical points) on the scroll applied per crown sample, via
+    /// tanh. One sample can never move the list past this; long-distance travel
+    /// comes from Flutter's fling momentum. Tames hard flicks and the simulator's
+    /// inertial-scroll bursts.
+    private let crownMaxPointsPerEvent: Double = 120.0
+    /// Play a detent click every this many logical points of scroll (0 = off).
+    /// We play the haptic ourselves instead of via the modifier's
+    /// `isHapticFeedbackEnabled` because that fires per `by:` step and floods the
+    /// Taptic Engine on a fast turn (stutter). This is distance-gated AND
+    /// time-gated (crownMinTickInterval), so it stays a clean detent cadence.
+    private let crownHapticTickPoints: Double = 22.0
+    /// Hard floor on the time between detent clicks — the anti-flood guarantee.
+    /// Even a violent flick can't play clicks faster than this (≈22/sec at 0.045).
+    private let crownMinTickInterval: Double = 0.045
+    /// Idle gap with no rotation that ends the gesture so Flutter flings.
+    private let crownIdleEndSeconds: Double = 0.05
+    /// Set true to log raw crown delta/points for calibration.
+    private let crownDebugLogging = false
+    // -------------------------------------------------------------------------
+
+    /// True while a crown-driven pan/zoom gesture is in flight.
+    private var crownPanActive = false
+    /// Accumulated pan offset (physical px) since the current gesture started.
+    private var crownPanY: Double = 0
+    /// Logical points scrolled since the last detent tick.
+    private var crownPointsSinceTick: Double = 0
+    /// Engine-clock time (ns) of the last detent click, for rate-limiting.
+    private var crownLastTickNanos: UInt64 = 0
+    /// Fires once the crown stops to end the gesture, letting Flutter's scroll
+    /// physics apply the momentum/settle that makes it feel native.
+    private var crownIdleTimer: Timer?
+
+    /// Forwards one Digital Crown sample to Flutter. `delta` is the change in the
+    /// SwiftUI crown-rotation binding since the previous sample; it already grows
+    /// with turn speed, so distance is mapped from it directly and soft-saturated.
     func sendCrownDelta(_ delta: Double) {
-        guard let engine else { return }
-        let messageStr = String(format: "%f", delta)
-        guard let messageData = messageStr.data(using: .utf8) else { return }
-        
-        messageData.withUnsafeBytes { rawBufferPointer in
-            guard let baseAddress = rawBufferPointer.baseAddress else { return }
-            let messageBytes = baseAddress.assumingMemoryBound(to: UInt8.self)
-            
-            "crown_channel".withCString { channelCString in
-                var platformMessage = FlutterPlatformMessage()
-                platformMessage.struct_size = MemoryLayout<FlutterPlatformMessage>.size
-                platformMessage.channel = channelCString
-                platformMessage.message = messageBytes
-                platformMessage.message_size = messageData.count
-                platformMessage.response_handle = nil
-                
-                FlutterEngineSendPlatformMessage(engine, &platformMessage)
+        guard let engine, delta != 0 else { return }
+        let cx = sizePoints.width * pixelRatio / 2
+        let cy = sizePoints.height * pixelRatio / 2
+
+        // Map delta→points directly (it already encodes speed), then tanh
+        // soft-saturate so no single sample teleports the list — distance on a
+        // fast flick comes from Flutter's fling momentum, not a giant single step.
+        let raw = delta * crownPointsPerUnit
+        let points = crownMaxPointsPerEvent * tanh(raw / crownMaxPointsPerEvent)
+        let pixels = points * pixelRatio
+
+        if crownDebugLogging {
+            NSLog("crown delta=%.4f raw=%.1f pts=%.1f", delta, raw, points)
+        }
+
+        if !crownPanActive {
+            crownPanActive = true
+            crownPanY = 0
+            crownPointsSinceTick = 0
+            sendPanZoom(phase: kPanZoomStart, x: cx, y: cy)
+        }
+
+        // Crown forward (positive delta) scrolls down the list — content moves up,
+        // i.e. a negative pan in Flutter's coordinate space.
+        crownPanY -= pixels
+        sendPanZoom(phase: kPanZoomUpdate, x: cx, y: cy)
+
+        // Detent click: one .click every crownHapticTickPoints of travel, but
+        // never faster than crownMinTickInterval (the anti-flood floor that keeps
+        // the Taptic Engine from backing up and stuttering the scroll).
+        if crownHapticTickPoints > 0 {
+            crownPointsSinceTick += abs(points)
+            if crownPointsSinceTick >= crownHapticTickPoints {
+                crownPointsSinceTick = 0
+                let now = FlutterEngineGetCurrentTime()
+                let sinceLast = Double(now &- crownLastTickNanos) / 1_000_000_000.0
+                if crownLastTickNanos == 0 || sinceLast >= crownMinTickInterval {
+                    crownLastTickNanos = now
+                    WKInterfaceDevice.current().play(.click)
+                }
             }
         }
+
+        // Restart the idle timer; when the crown stops, end the gesture so Flutter
+        // applies momentum from the tracked pan velocity. .common mode keeps it
+        // firing while the crown's tracking run-loop mode is active.
+        crownIdleTimer?.invalidate()
+        let timer = Timer(timeInterval: crownIdleEndSeconds, repeats: false) { [weak self] _ in
+            self?.endCrownPan()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        crownIdleTimer = timer
+    }
+
+    private func endCrownPan() {
+        guard crownPanActive else { return }
+        crownPanActive = false
+        crownPointsSinceTick = 0
+        sendPanZoom(phase: kPanZoomEnd,
+                    x: sizePoints.width * pixelRatio / 2,
+                    y: sizePoints.height * pixelRatio / 2)
+    }
+
+    private func sendPanZoom(phase: FlutterPointerPhase, x: Double, y: Double) {
+        guard let engine else { return }
+        var event = FlutterPointerEvent()
+        event.struct_size = MemoryLayout<FlutterPointerEvent>.size
+        event.timestamp = Int(FlutterEngineGetCurrentTime() / 1000)
+        event.phase = phase
+        event.device_kind = kFlutterPointerDeviceKindTrackpad
+        event.device = 1  // distinct pointer id from touch (device 0)
+        event.x = x
+        event.y = y
+        event.pan_x = 0
+        event.pan_y = crownPanY
+        event.scale = 1.0
+        event.rotation = 0
+        FlutterEngineSendPointerEvent(engine, &event, 1)
     }
 
     private func handlePlatformMessage(channel: String, data: Data, responseHandle: OpaquePointer?) {
