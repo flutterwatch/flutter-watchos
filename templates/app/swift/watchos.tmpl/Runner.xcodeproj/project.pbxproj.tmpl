@@ -17,25 +17,12 @@
 		AB0000000000000000000008 /* vm_isolate_snapshot.bin in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000A /* vm_isolate_snapshot.bin */; };
 		AB0000000000000000000009 /* isolate_snapshot.bin in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000B /* isolate_snapshot.bin */; };
 		AB0000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000C /* Assets.xcassets */; };
-		CB0000000000000000000001 /* HostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0000000000000000000002 /* HostApp.swift */; };
-		CB0000000000000000000002 /* Runner.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000007 /* Runner.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		CB0000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CF0000000000000000000004 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXContainerItemProxy section */
-		CA0000000000000000000004 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = AA0000000000000000000002 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = AA0000000000000000000001;
-			remoteInfo = Runner;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		AC0000000000000000000001 /* Embed Libraries */ = {
 			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 12;
+			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
@@ -43,17 +30,6 @@
 				AB0000000000000000000005 /* App.dylib in Embed Libraries */,
 			);
 			name = "Embed Libraries";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		CD0000000000000000000011 /* Embed Watch Content */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
-			dstSubfolderSpec = 16;
-			files = (
-				CB0000000000000000000002 /* Runner.app in Embed Watch Content */,
-			);
-			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -71,10 +47,6 @@
 		AF000000000000000000000A /* vm_isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = vm_isolate_snapshot.bin; sourceTree = "<group>"; };
 		AF000000000000000000000B /* isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = isolate_snapshot.bin; sourceTree = "<group>"; };
 		AF000000000000000000000C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		CF0000000000000000000001 /* {{titleCaseProjectName}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = {{titleCaseProjectName}}.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		CF0000000000000000000002 /* HostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostApp.swift; sourceTree = "<group>"; };
-		CF0000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		CF0000000000000000000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,7 +65,6 @@
 			isa = PBXGroup;
 			children = (
 				AE0000000000000000000002 /* Runner */,
-				CE0000000000000000000001 /* HostApp */,
 				AE0000000000000000000004 /* Flutter */,
 				AE0000000000000000000003 /* Products */,
 			);
@@ -115,7 +86,6 @@
 			isa = PBXGroup;
 			children = (
 				AF0000000000000000000007 /* Runner.app */,
-				CF0000000000000000000001 /* {{titleCaseProjectName}}.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -133,16 +103,6 @@
 			path = Flutter;
 			sourceTree = "<group>";
 		};
-		CE0000000000000000000001 /* HostApp */ = {
-			isa = PBXGroup;
-			children = (
-				CF0000000000000000000002 /* HostApp.swift */,
-				CF0000000000000000000004 /* Assets.xcassets */,
-				CF0000000000000000000003 /* Info.plist */,
-			);
-			path = HostApp;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -154,7 +114,6 @@
 				AD0000000000000000000001 /* Frameworks */,
 				AD0000000000000000000003 /* Resources */,
 				AC0000000000000000000001 /* Embed Libraries */,
-				0B66C03C2FE321FA002C6E54 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -163,24 +122,6 @@
 			name = Runner;
 			productName = Runner;
 			productReference = AF0000000000000000000007 /* Runner.app */;
-			productType = "com.apple.product-type.application";
-		};
-		CA0000000000000000000001 /* HostApp */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = CA0000000000000000000003 /* Build configuration list for PBXNativeTarget "HostApp" */;
-			buildPhases = (
-				CD0000000000000000000010 /* Sources */,
-				CD0000000000000000000012 /* Resources */,
-				CD0000000000000000000011 /* Embed Watch Content */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				CA0000000000000000000002 /* PBXTargetDependency */,
-			);
-			name = HostApp;
-			productName = {{titleCaseProjectName}};
-			productReference = CF0000000000000000000001 /* {{titleCaseProjectName}}.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -193,9 +134,6 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					AA0000000000000000000001 = {
-						CreatedOnToolsVersion = 15.0;
-					};
-					CA0000000000000000000001 = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
@@ -214,7 +152,6 @@
 			projectRoot = "";
 			targets = (
 				AA0000000000000000000001 /* Runner */,
-				CA0000000000000000000001 /* HostApp */,
 			);
 		};
 /* End PBXProject section */
@@ -232,36 +169,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		CD0000000000000000000012 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				CB0000000000000000000003 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		0B66C03C2FE321FA002C6E54 /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 8;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 1;
-			shellPath = /bin/sh;
-			shellScript = "if [ \"$ACTION\" = \"install\" ]; then\n  echo \"Fixing Flutter dylibs layout for App Store Connect submission...\"\n  TARGET_APP_DIR=\"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app\"\n  \n  if [ -d \"$TARGET_APP_DIR\" ]; then\n    mkdir -p \"$TARGET_APP_DIR/Frameworks\"\n    \n    if [ -f \"$TARGET_APP_DIR/libflutter_engine.dylib\" ]; then\n      mv \"$TARGET_APP_DIR/libflutter_engine.dylib\" \"$TARGET_APP_DIR/Frameworks/\"\n    fi\n    \n    if [ -f \"$TARGET_APP_DIR/App.dylib\" ]; then\n      mv \"$TARGET_APP_DIR/App.dylib\" \"$TARGET_APP_DIR/Frameworks/\"\n    fi\n  fi\nfi\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AD0000000000000000000002 /* Sources */ = {
@@ -273,23 +181,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		CD0000000000000000000010 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				CB0000000000000000000001 /* HostApp.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		CA0000000000000000000002 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = AA0000000000000000000001 /* Runner */;
-			targetProxy = CA0000000000000000000004 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BB0000000000000000000001 /* Debug */ = {
@@ -298,41 +190,17 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				DEPLOYMENT_POSTPROCESSING = YES;
-				DEVELOPMENT_TEAM = {{watchosDevelopmentTeam}};
 				ENABLE_BITCODE = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = watchos;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				TARGETED_DEVICE_FAMILY = 4;
 				WATCHOS_DEPLOYMENT_TARGET = 26.0;
@@ -343,22 +211,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = {{watchosDevelopmentTeam}};
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				INFOPLIST_FILE = Runner/Info.plist;
-				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "{{watchosIdentifier}}.watchkitapp";
 				PRODUCT_NAME = Runner;
-				PROVISIONING_PROFILE_SPECIFIER = "";
-				SKIP_INSTALL = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridge.h;
 				SWIFT_VERSION = 5.0;
 			};
@@ -370,39 +235,15 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				DEPLOYMENT_POSTPROCESSING = YES;
-				DEVELOPMENT_TEAM = {{watchosDevelopmentTeam}};
 				ENABLE_BITCODE = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = s;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				SDKROOT = watchos;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				TARGETED_DEVICE_FAMILY = 4;
@@ -414,77 +255,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = {{watchosDevelopmentTeam}};
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				INFOPLIST_FILE = Runner/Info.plist;
-				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "{{watchosIdentifier}}.watchkitapp";
 				PRODUCT_NAME = Runner;
-				PROVISIONING_PROFILE_SPECIFIER = "";
-				SKIP_INSTALL = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridge.h;
 				SWIFT_VERSION = 5.0;
-			};
-			name = Release;
-		};
-		CC0000000000000000000001 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_BITCODE = NO;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = HostApp/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
-				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "{{watchosIdentifier}}";
-				PRODUCT_NAME = {{titleCaseProjectName}};
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = NO;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		CC0000000000000000000002 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_BITCODE = NO;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = HostApp/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
-				MARKETING_VERSION = 1.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "{{watchosIdentifier}}";
-				PRODUCT_NAME = {{titleCaseProjectName}};
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = NO;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -505,15 +290,6 @@
 			buildConfigurations = (
 				BB0000000000000000000002 /* Debug */,
 				BB0000000000000000000004 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		CA0000000000000000000003 /* Build configuration list for PBXNativeTarget "HostApp" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				CC0000000000000000000001 /* Debug */,
-				CC0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

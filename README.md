@@ -17,7 +17,7 @@ flutter-watchos/
 │   ├── commands/        # build, run, create, devices, doctor, upgrade, plugin, …
 │   └── build_targets/   # xcodebuild orchestration + AOT (embedder model)
 ├── templates/           # watchOS app scaffold emitted by `create`
-│   └── app/swift/watchos.tmpl/   # iOS host container + embedded Watch/Runner.app
+│   └── app/swift/watchos.tmpl/   # single independent watch app (WKWatchOnly)
 ├── pubspec.yaml  analysis_options.yaml  LICENSE
 └── (flutter/, engine_artifacts/ — gitignored runtime)
 ```
@@ -28,8 +28,11 @@ CLI-only — see the workspace README one level up.
 
 ## How watchOS differs from a normal Flutter target
 
-- The shippable product is an **iOS host container** (`ITSWatchOnlyContainer`)
-  that embeds the watch app at `Watch/Runner.app`.
+- `create` scaffolds a **single independent watch app** (`WKWatchOnly`,
+  `Runner.app`) — the minimum needed to `build` and `run`. It installs and
+  launches directly on the simulator or a paired watch. (App Store submission
+  additionally needs an iOS container archive; that wrapping is handled
+  separately at submit time, not in the run template.)
 - The watch app is a **SwiftUI app driving the Flutter embedder C API with
   software rendering** (no GPU on Apple Watch): `Runner/FlutterRunner.swift`
   hosts the engine, publishes CGImage frames, and forwards Digital Crown + touch

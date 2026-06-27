@@ -7,10 +7,9 @@ import 'package:flutter_tools/src/project.dart';
 
 /// Represents the watchOS sub-project within a Flutter project.
 ///
-/// On disk this is the `watchos/` directory, which contains the iOS host
-/// container Xcode project (`ITSWatchOnlyContainer`) plus the embedded
-/// `Watch/Runner.app` watch app — see [build_targets/application.dart] for the
-/// packaging model.
+/// On disk this is the `watchos/` directory, which contains a single
+/// independent watch app Xcode project (`WKWatchOnly`) — see
+/// [build_targets/application.dart] for the packaging model.
 class WatchosProject {
   WatchosProject.fromFlutter(this.parent);
 

@@ -13,10 +13,9 @@ import 'watchos_project.dart';
 
 /// Represents the built watchOS app product.
 ///
-/// On watchOS the shippable product is an **iOS host container** (`.app`) that
-/// embeds the watch app at `Watch/Runner.app` (the `ITSWatchOnlyContainer`
-/// model). [bundlePath] returns the host container; the embedded watch app is
-/// resolved relative to it at install/launch time.
+/// The build product is a single independent watch app, `Runner.app`
+/// (`WKWatchOnly`), installed and launched directly on the simulator or a
+/// paired watch. [bundlePath] returns that app.
 class WatchosApp extends ApplicationPackage {
   WatchosApp({required super.id, required this.projectDirectory});
 
@@ -25,7 +24,7 @@ class WatchosApp extends ApplicationPackage {
   @override
   String get name => projectDirectory.basename;
 
-  /// Returns the path to the host container `.app` for the given build mode.
+  /// Returns the path to the watch `Runner.app` for the given build mode.
   String bundlePath(BuildMode buildMode, {bool isSimulator = false}) {
     final configuration = (buildMode == BuildMode.debug) ? 'Debug' : 'Release';
     final platformSuffix = isSimulator ? 'watchsimulator' : 'watchos';

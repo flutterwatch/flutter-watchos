@@ -267,12 +267,16 @@ class ReleaseWatchosApplication extends Target {
 
 /// Orchestrates the native watchOS build via xcodebuild.
 ///
-/// The shippable product is an **iOS host container** (`ITSWatchOnlyContainer`)
-/// that embeds the watch app at `Watch/Runner.app`. The host-container embed
-/// and the arm64_32 stub slice (required when WATCHOS_DEPLOYMENT_TARGET < 27.0,
-/// because the engine is arm64-only) are handled by the Xcode project template
+/// The build product is a single independent watch app, `Runner.app`
+/// (`WKWatchOnly`), installed directly on the simulator or a paired watch.
+/// The arm64_32 stub slice (required when WATCHOS_DEPLOYMENT_TARGET < 27.0,
+/// because the engine is arm64-only) is handled by the Xcode project template
 /// — see CLAUDE.md. This target copies the engine + assets, generates the
 /// registrants / xcconfigs / SPM packages, and drives xcodebuild.
+///
+/// Note: App Store distribution additionally requires wrapping this watch app
+/// in an iOS container archive; that packaging is intentionally not part of the
+/// `run`-focused template and is handled separately at submit time.
 class NativeWatchosBundle extends Target {
   NativeWatchosBundle(this.buildInfo, this.targetFile);
 
@@ -335,7 +339,11 @@ class NativeWatchosBundle extends Target {
     //    .flutter-plugins-dependencies without the watchos key).
     await ensureReadyForWatchosTooling(project);
 
-    // 6. Run pod install if Podfile exists
+    // 6. Compile federated watchOS plugin native code (FFI plugins) into a
+    //    static archive and force-load it into the Runner link.
+    final String? pluginLdflags = await _buildPluginStaticArchive(project, watchosProjectDir);
+
+    // 7. Run pod install if Podfile exists
     if (watchosProjectDir.childFile('Podfile').existsSync()) {
       final Status podStatus = globals.logger.startProgress('Running pod install...');
       try {
@@ -399,6 +407,7 @@ class NativeWatchosBundle extends Target {
         // executable; forcing arm64 here would strip the required slice. See
         // the arm64_32 gate in CLAUDE.md.
         if (buildInfo.simulator) 'ARCHS=arm64',
+        if (pluginLdflags != null) pluginLdflags,
         ...signingArgs,
         if (!buildInfo.simulator) '-allowProvisioningUpdates',
         'build',
@@ -747,6 +756,122 @@ class NativeWatchosBundle extends Target {
         /* ignore */
       }
     }
+  }
+
+  /// Compiles the native sources of every federated watchOS plugin that ships
+  /// a `watchos/Package.swift` into a single static archive, and returns the
+  /// `OTHER_LDFLAGS=` assignment that force-loads it into the Runner link — or
+  /// null when there are no such plugins.
+  ///
+  /// watchOS plugins here are **FFI-only** (the software-rendering embedder
+  /// exposes no `Flutter` Swift module or plugin registrar), so instead of
+  /// resolving an SPM graph we compile the C/ObjC sources directly and
+  /// `-force_load` the archive into Runner. `-force_load` keeps every member —
+  /// FFI symbols have no compile-time caller, so they would otherwise be
+  /// dead-stripped — and the exports' `used` + default-visibility attributes
+  /// land them in the binary's dynamic symbol table for
+  /// `DynamicLibrary.process()` / dlsym. This needs no Xcode project edits:
+  /// the flag is passed on the `xcodebuild` command line.
+  Future<String?> _buildPluginStaticArchive(
+    FlutterProject project,
+    Directory watchosProjectDir,
+  ) async {
+    final plugins = discoverWatchosSpmPlugins(project);
+    if (plugins.isEmpty) {
+      return null;
+    }
+
+    final sources = <String>[];
+    final headerDirs = <String>{};
+    final frameworks = <String>{};
+    for (final plugin in plugins) {
+      final Directory pluginDir = globals.fs.directory(plugin.packagePath);
+      if (!pluginDir.existsSync()) {
+        continue;
+      }
+      for (final FileSystemEntity entity in pluginDir.listSync(recursive: true)) {
+        if (entity is! File) {
+          continue;
+        }
+        final String p = entity.path;
+        if (p.endsWith('.m') || p.endsWith('.mm') || p.endsWith('.c')) {
+          sources.add(p);
+        } else if (p.endsWith('.h')) {
+          headerDirs.add(entity.parent.path);
+        }
+      }
+      frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
+    }
+    if (sources.isEmpty) {
+      return null;
+    }
+    // watchOS plugins virtually always need these; harmless if already linked.
+    frameworks.addAll(<String>['WatchKit', 'Foundation']);
+
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
+    final Directory objDir = flutterDir.childDirectory('.plugins_build')
+      ..createSync(recursive: true);
+    final String clangTarget = buildInfo.simulator
+        ? 'arm64-apple-watchos9.0-simulator'
+        : 'arm64-apple-watchos9.0';
+
+    final objects = <String>[];
+    for (final String src in sources) {
+      final String obj = globals.fs.path.join(
+        objDir.path,
+        '${globals.fs.path.basename(src)}.o',
+      );
+      final ProcessResult r = await globals.processManager.run(<String>[
+        'xcrun', '-sdk', buildInfo.sdkName, 'clang',
+        '-target', clangTarget,
+        '-fobjc-arc', '-fmodules',
+        for (final String dir in headerDirs) '-I$dir',
+        '-c', src,
+        '-o', obj,
+      ]);
+      if (r.exitCode != 0) {
+        globals.logger.printError('Compiling watchOS plugin source $src failed:\n${r.stderr}');
+        throw Exception('Compiling watchOS plugin source failed');
+      }
+      objects.add(obj);
+    }
+
+    final String archive = globals.fs.path.join(flutterDir.path, 'libflutter_watchos_plugins.a');
+    final File archiveFile = globals.fs.file(archive);
+    if (archiveFile.existsSync()) {
+      archiveFile.deleteSync();
+    }
+    final ProcessResult libR = await globals.processManager.run(<String>[
+      'xcrun', '-sdk', buildInfo.sdkName, 'libtool', '-static', '-o', archive, ...objects,
+    ]);
+    if (libR.exitCode != 0) {
+      globals.logger.printError('Linking watchOS plugin archive failed:\n${libR.stderr}');
+      throw Exception('Linking watchOS plugin archive failed');
+    }
+    globals.logger.printTrace(
+      'Built watchOS plugin archive ($archive) from ${objects.length} object(s); '
+      'force-loading into Runner with frameworks: ${frameworks.join(', ')}',
+    );
+
+    final ldflags = StringBuffer(r'OTHER_LDFLAGS=$(inherited) -force_load ');
+    ldflags.write(archive);
+    for (final String fw in frameworks) {
+      ldflags.write(' -framework $fw');
+    }
+    return ldflags.toString();
+  }
+
+  /// Parses `.linkedFramework("X")` entries from a plugin's `Package.swift`.
+  @visibleForTesting
+  static List<String> parseLinkedFrameworks(File packageSwift) {
+    if (!packageSwift.existsSync()) {
+      return const <String>[];
+    }
+    final String content = packageSwift.readAsStringSync();
+    return RegExp(r'\.linkedFramework\(\s*"([^"]+)"\s*\)')
+        .allMatches(content)
+        .map((Match m) => m.group(1)!)
+        .toList();
   }
 
   /// Builds the gen_snapshot command line for the watchOS AOT assembly step.
