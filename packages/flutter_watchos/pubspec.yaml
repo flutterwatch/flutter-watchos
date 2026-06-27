@@ -37,3 +37,7 @@ flutter:
           - flutter_watchos_screen_height
           - flutter_watchos_screen_scale
           - flutter_watchos_play_haptic
+          - flutter_watchos_crown_mode
+          - flutter_watchos_crown_set_mode
+          - flutter_watchos_crown_push_delta
+          - flutter_watchos_crown_consume_delta

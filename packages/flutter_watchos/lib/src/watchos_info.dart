@@ -29,6 +29,12 @@ class _UnsupportedPlatformBindings extends WatchOSNativeBindings {
   double get screenScale => 0.0;
   @override
   void playHaptic(int type) {}
+  @override
+  int get crownMode => 0;
+  @override
+  set crownMode(int mode) {}
+  @override
+  double consumeCrownDelta() => 0.0;
 }
 
 /// Provides runtime information about the watchOS platform.

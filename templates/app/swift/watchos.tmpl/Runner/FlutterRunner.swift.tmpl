@@ -205,6 +205,14 @@ final class FlutterRunner: ObservableObject {
     /// with turn speed, so distance is mapped from it directly and soft-saturated.
     func sendCrownDelta(_ delta: Double) {
         guard let engine, delta != 0 else { return }
+
+        // Raw/exclusive crown mode: a Dart app (via WatchCrown) is consuming the
+        // crown directly, so push the rotation to it and skip scroll + detent.
+        if flutter_watchos_crown_mode() != 0 {
+            flutter_watchos_crown_push_delta(delta)
+            return
+        }
+
         let cx = sizePoints.width * pixelRatio / 2
         let cy = sizePoints.height * pixelRatio / 2
 

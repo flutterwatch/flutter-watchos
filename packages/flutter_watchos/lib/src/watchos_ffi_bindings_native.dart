@@ -65,6 +65,18 @@ class WatchOSNativeBindings {
       .lookupFunction<Void Function(Int32), void Function(int)>(
           'flutter_watchos_play_haptic');
 
+  late final int Function() _crownMode = _lib!
+      .lookupFunction<Int32 Function(), int Function()>(
+          'flutter_watchos_crown_mode');
+
+  late final void Function(int) _crownSetMode = _lib!
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+          'flutter_watchos_crown_set_mode');
+
+  late final double Function() _crownConsumeDelta = _lib!
+      .lookupFunction<Double Function(), double Function()>(
+          'flutter_watchos_crown_consume_delta');
+
   // Public API — override these in fakes for testing.
 
   bool get isWatchOS => _isWatchOS();
@@ -79,4 +91,20 @@ class WatchOSNativeBindings {
 
   /// Plays a Taptic Engine haptic by raw `WKHapticType` value.
   void playHaptic(int type) => _playHaptic(type);
+
+  // --- Raw Digital Crown bridge ---
+  // Null-safe against the [WatchOSNativeBindings.forTesting] constructor (no
+  // linked library): the crown getters/setter become no-ops returning defaults,
+  // so off-watchOS callers don't have to guard.
+
+  /// Current crown routing mode (0 = scroll, 1 = raw/exclusive).
+  int get crownMode => _lib == null ? 0 : _crownMode();
+
+  /// Sets the crown routing mode (0 = scroll, 1 = raw/exclusive).
+  set crownMode(int mode) {
+    if (_lib != null) _crownSetMode(mode);
+  }
+
+  /// Drains the crown rotation accumulated since the last call (0 when idle).
+  double consumeCrownDelta() => _lib == null ? 0.0 : _crownConsumeDelta();
 }

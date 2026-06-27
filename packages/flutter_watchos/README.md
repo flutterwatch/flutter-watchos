@@ -17,6 +17,10 @@ no async.
   simulator flag, and native screen size/scale.
 - **Haptics** — `WatchHaptics.play(...)` drives the Taptic Engine via
   `WKInterfaceDevice.playHaptic`.
+- **Digital Crown** — `WatchCrownScroll` adds the native "end of content" bump
+  to scrollables; `WatchCrown` gives the crown as a *raw* input (a rotation
+  stream, or a per-frame `drain()`) for games, value pickers, and custom
+  controls — without it driving scroll.
 
 ## Usage
 
@@ -34,6 +38,36 @@ if (FlutterWatchosPlatform.isWatch) {
   // compact, crown-driven UI
 }
 ```
+
+### Digital Crown
+
+By default the crown scrolls. Wrap a scrollable to add the native end-of-content
+bump:
+
+```dart
+WatchCrownScroll(child: ListView(children: const [/* ... */]));
+```
+
+For a game or custom control, take the crown as **raw** input instead. While a
+`WatchCrown` subscription (or `enable()`) is active, the crown stops scrolling
+and delivers rotation directly:
+
+```dart
+// Stream (frame-polled). Subscribing switches the crown to raw mode;
+// cancelling the last listener returns it to scroll.
+final sub = WatchCrown.instance.rotations.listen((e) {
+  setState(() => paddleX += e.delta * sensitivity); // e.velocity also available
+});
+// ...later: await sub.cancel();
+
+// Or, for an app with its own game loop — zero stream overhead:
+WatchCrown.instance.enable();
+final delta = WatchCrown.instance.drain(); // call each tick
+WatchCrown.instance.disable();
+```
+
+On non-watchOS platforms the stream never emits and `drain()` returns 0, so it's
+safe to leave in cross-platform code.
 
 ## How it links
 

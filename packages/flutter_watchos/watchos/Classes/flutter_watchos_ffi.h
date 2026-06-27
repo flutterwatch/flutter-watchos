@@ -48,4 +48,30 @@ FLUTTER_WATCHOS_EXPORT float flutter_watchos_screen_scale(void);
 /// 5=retry, 6=start, 7=stop, 8=click). No-op in the simulator.
 FLUTTER_WATCHOS_EXPORT void flutter_watchos_play_haptic(int32_t type);
 
+// --- Raw Digital Crown bridge ---------------------------------------------
+// By default the watch host forwards Digital Crown rotation to Flutter as
+// trackpad scroll. An app that wants the crown as a direct input (a game, a
+// value picker, a custom gauge) switches to "raw" mode via WatchCrown: the host
+// then stops scrolling and pushes each rotation sample here, and Dart drains it.
+//
+// `mode`/`push` are called from the watch host (Swift, main thread); `set_mode`/
+// `consume` are called from Dart (FFI/UI thread). A lock guards the shared state.
+
+/// Crown routing mode: 0 = scroll (default), 1 = raw/exclusive. Read by the
+/// watch host on each crown sample to decide whether to scroll or push.
+FLUTTER_WATCHOS_EXPORT int32_t flutter_watchos_crown_mode(void);
+
+/// Sets the crown routing mode (0 = scroll, 1 = raw). Called from Dart;
+/// switching back to scroll also drops any unconsumed rotation.
+FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_set_mode(int32_t mode);
+
+/// Accumulates one raw crown rotation sample (host → here). `delta` is the
+/// SwiftUI crown-binding change since the previous sample, in abstract crown
+/// units (sign = direction, magnitude grows with turn speed).
+FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_push_delta(double delta);
+
+/// Returns the rotation accumulated since the last call and resets it to 0
+/// (0 when idle). Called from Dart per frame / per game tick.
+FLUTTER_WATCHOS_EXPORT double flutter_watchos_crown_consume_delta(void);
+
 #endif /* FLUTTER_WATCHOS_FFI_H */

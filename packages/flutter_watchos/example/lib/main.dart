@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_watchos/flutter_watchos.dart';
 
@@ -53,6 +55,17 @@ class HomeScreen extends StatelessWidget {
               _Row('screen', WatchOSInfo.screenResolution),
               _Row('scale', '${WatchOSInfo.screenScale}x'),
               const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const CrownDemoScreen(),
+                    ),
+                  ),
+                  child: const Text('crown demo →'),
+                ),
+              ),
               for (final type in WatchHapticType.values)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
@@ -63,6 +76,95 @@ class HomeScreen extends StatelessWidget {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Demonstrates raw Digital Crown input via [WatchCrown]: the crown drives a
+/// 0–100 value directly (it does not scroll), with a tick at each end.
+class CrownDemoScreen extends StatefulWidget {
+  const CrownDemoScreen({super.key});
+
+  @override
+  State<CrownDemoScreen> createState() => _CrownDemoScreenState();
+}
+
+class _CrownDemoScreenState extends State<CrownDemoScreen> {
+  static const double _sensitivity = 6.0; // crown units → value units
+  double _value = 50;
+  StreamSubscription<CrownRotationEvent>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Subscribing switches the crown into raw mode; cancelling (in dispose)
+    // hands it back to scroll for the rest of the app.
+    _sub = WatchCrown.instance.rotations.listen(_onRotate);
+  }
+
+  void _onRotate(CrownRotationEvent e) {
+    final double next = (_value + e.delta * _sensitivity).clamp(0.0, 100.0);
+    if (next == _value) return;
+    if ((next == 0.0 || next == 100.0) && next != _value) {
+      WatchHaptics.play(WatchHapticType.stop); // hit an end
+    }
+    setState(() => _value = next);
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('Turn the crown',
+                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Text(
+                    _value.toStringAsFixed(0),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: 140,
+                    child: LinearProgressIndicator(
+                      value: _value / 100,
+                      backgroundColor: Colors.white24,
+                      color: Colors.lightBlueAccent,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // The watch host has no native swipe-back, so provide one.
+            Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.chevron_left,
+                    color: Colors.white, size: 28),
+              ),
+            ),
+          ],
         ),
       ),
     );

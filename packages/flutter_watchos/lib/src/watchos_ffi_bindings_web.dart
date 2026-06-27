@@ -21,4 +21,8 @@ class WatchOSNativeBindings {
   String get screenResolution => '0x0';
 
   void playHaptic(int type) {}
+
+  int get crownMode => 0;
+  set crownMode(int mode) {}
+  double consumeCrownDelta() => 0.0;
 }

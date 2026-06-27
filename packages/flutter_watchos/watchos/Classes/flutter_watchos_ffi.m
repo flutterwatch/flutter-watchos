@@ -7,6 +7,7 @@
 #import <TargetConditionals.h>
 #include <sys/sysctl.h>
 #include <string.h>
+#include <os/lock.h>
 
 // Static buffers for string results (device info doesn't change at runtime).
 static char s_system_version[64] = {0};
@@ -115,4 +116,44 @@ void flutter_watchos_play_haptic(int32_t type) {
 #else
     (void)type;
 #endif
+}
+
+// --- Raw Digital Crown bridge ---------------------------------------------
+// Shared state between the watch host (pushes rotation, reads mode — main
+// thread) and Dart (sets mode, drains rotation — UI thread). Pure C, so it
+// behaves identically on device and simulator (the crown works in both).
+static os_unfair_lock s_crown_lock = OS_UNFAIR_LOCK_INIT;
+static int32_t s_crown_mode = 0;
+static double s_crown_accum = 0.0;
+
+int32_t flutter_watchos_crown_mode(void) {
+    os_unfair_lock_lock(&s_crown_lock);
+    int32_t mode = s_crown_mode;
+    os_unfair_lock_unlock(&s_crown_lock);
+    return mode;
+}
+
+void flutter_watchos_crown_set_mode(int32_t mode) {
+    os_unfair_lock_lock(&s_crown_lock);
+    s_crown_mode = mode;
+    if (mode == 0) {
+        // Returning to scroll mode: drop any rotation the app never consumed so
+        // it doesn't leak into the next raw session.
+        s_crown_accum = 0.0;
+    }
+    os_unfair_lock_unlock(&s_crown_lock);
+}
+
+void flutter_watchos_crown_push_delta(double delta) {
+    os_unfair_lock_lock(&s_crown_lock);
+    s_crown_accum += delta;
+    os_unfair_lock_unlock(&s_crown_lock);
+}
+
+double flutter_watchos_crown_consume_delta(void) {
+    os_unfair_lock_lock(&s_crown_lock);
+    double value = s_crown_accum;
+    s_crown_accum = 0.0;
+    os_unfair_lock_unlock(&s_crown_lock);
+    return value;
 }

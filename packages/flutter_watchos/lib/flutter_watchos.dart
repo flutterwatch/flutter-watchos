@@ -26,3 +26,4 @@ export 'src/platform_extension.dart'
     show FlutterWatchosPlatform, FlutterWatchosPlatformExt;
 export 'src/haptics.dart' show WatchHaptics, WatchHapticType;
 export 'src/crown_scroll.dart' show WatchCrownScroll;
+export 'src/crown.dart' show WatchCrown, CrownRotationEvent;

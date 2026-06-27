@@ -37,6 +37,27 @@ class _FakeBindings extends WatchOSNativeBindings {
   }
 }
 
+/// Fake bindings for [WatchCrown]: records the routing mode and hands out a
+/// queued rotation delta.
+class _FakeCrownBindings extends WatchOSNativeBindings {
+  _FakeCrownBindings() : super.forTesting();
+
+  int mode = 0;
+  double pending = 0.0;
+
+  @override
+  int get crownMode => mode;
+  @override
+  set crownMode(int value) => mode = value;
+
+  @override
+  double consumeCrownDelta() {
+    final double v = pending;
+    pending = 0.0;
+    return v;
+  }
+}
+
 void main() {
   group('WatchOSInfo', () {
     setUp(() => WatchOSInfo.bindingsOverride = _FakeBindings());
@@ -116,6 +137,71 @@ void main() {
         isTrue,
         reason:
             'WatchCrownScroll must let notifications bubble to app listeners',
+      );
+    });
+  });
+
+  group('WatchCrown', () {
+    late _FakeCrownBindings fake;
+
+    setUp(() {
+      fake = _FakeCrownBindings();
+      WatchCrown.instance.bindingsOverride = fake;
+      WatchCrown.instance.debugAutoTick = false; // drive polling manually
+    });
+    tearDown(() {
+      WatchCrown.instance.bindingsOverride = null;
+      WatchCrown.instance.debugAutoTick = true;
+    });
+
+    test('enable/disable toggles raw mode, reference-counted', () {
+      final WatchCrown crown = WatchCrown.instance;
+      expect(crown.isEnabled, isFalse);
+
+      crown.enable();
+      expect(fake.mode, 1);
+      expect(crown.isEnabled, isTrue);
+
+      crown.enable(); // nested
+      crown.disable();
+      expect(fake.mode, 1, reason: 'one enable still outstanding');
+
+      crown.disable();
+      expect(fake.mode, 0);
+      expect(crown.isEnabled, isFalse);
+    });
+
+    test('drain returns accumulated rotation, then zero', () {
+      final WatchCrown crown = WatchCrown.instance;
+      fake.pending = 3.5;
+      expect(crown.drain(), 3.5);
+      expect(crown.drain(), 0.0);
+    });
+
+    test('rotations stream emits on poll and toggles mode', () async {
+      final WatchCrown crown = WatchCrown.instance;
+      final List<CrownRotationEvent> events = <CrownRotationEvent>[];
+      final sub = crown.rotations.listen(events.add);
+
+      // First listener switches the crown into raw mode.
+      expect(fake.mode, 1);
+
+      fake.pending = 2.0;
+      crown.debugPoll(const Duration(milliseconds: 16));
+      await Future<void>.delayed(Duration.zero); // let the broadcast deliver
+
+      expect(events.single.delta, 2.0);
+
+      // An idle poll (no rotation) emits nothing.
+      crown.debugPoll(const Duration(milliseconds: 32));
+      await Future<void>.delayed(Duration.zero);
+      expect(events, hasLength(1));
+
+      await sub.cancel();
+      expect(
+        fake.mode,
+        0,
+        reason: 'cancelling the last listener returns the crown to scroll',
       );
     });
   });
