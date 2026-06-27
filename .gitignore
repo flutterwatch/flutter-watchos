@@ -35,3 +35,6 @@ watchos_engine_builds/
 
 # Generated
 *.dart_tool
+
+# Test coverage output
+coverage/
