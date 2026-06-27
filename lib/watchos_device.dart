@@ -203,6 +203,15 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
 
   Process? _logProcess;
 
+  final Completer<void> _readyCompleter = Completer<void>();
+
+  /// Completes once `simctl log stream` has emitted its `Filtering the log
+  /// data using …` preamble, i.e. it is actually live and will capture
+  /// subsequent events. Callers must await this (with a timeout) before
+  /// launching the app, otherwise the VM-service banner — printed by the
+  /// embedder within ~40ms of launch — races ahead of the stream and is lost.
+  Future<void> get ready => _readyCompleter.future;
+
   @override
   final String name;
 
@@ -211,7 +220,24 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
 
   /// Starts streaming unified logs from the simulator, filtered for the app.
   Future<void> startLogStream(String deviceId) async {
-    const predicate = 'senderImagePath ENDSWITH "/Flutter"';
+    // Mirror the class of logs `flutter run` surfaces on iOS (see
+    // launchDeviceUnifiedLogging in flutter_tools' ios/simulators.dart), adapted
+    // to the watchOS embedder. iOS keys off `senderImagePath ENDSWITH "/Flutter"`
+    // because the framework logs via os_log from the Flutter.framework image. The
+    // watchOS embedder instead routes engine + Dart logs through
+    // `log_message_callback` → `NSLog("[flutter:<tag>] ...")` inside the watch
+    // app's `Runner` process (sender = Foundation), so we match the flutter tag
+    // in the message text, plus Swift fatal/assertion errors and anything the
+    // Runner binary itself emits — while excluding the watchOS/UIKit system
+    // spam that shares the `Runner` process. Same structure and noise filters as
+    // iOS.
+    const predicate =
+        'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND ('
+        'eventMessage CONTAINS "[flutter:" '
+        'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
+        'OR processImageUUID == senderImageUUID'
+        ') AND NOT(eventMessage CONTAINS " libxpc.dylib ") '
+        'AND NOT(eventMessage BEGINSWITH "assertion failed: ")';
 
     _logProcess = await globals.processManager.start(<String>[
       'xcrun',
@@ -229,14 +255,22 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
     _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
       String line,
     ) {
+      _markReadyIfPreamble(line);
       _onUnifiedLoggingLine(line);
     });
 
     _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
       String line,
     ) {
+      _markReadyIfPreamble(line);
       _onUnifiedLoggingLine(line);
     });
+  }
+
+  void _markReadyIfPreamble(String line) {
+    if (!_readyCompleter.isCompleted && line.contains('Filtering the log data')) {
+      _readyCompleter.complete();
+    }
   }
 
   static final RegExp _eventMessageRegex = RegExp(r'"eventMessage"\s*:\s*(".*?")');
@@ -245,19 +279,29 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
   @visibleForTesting
   void processLogLine(String line) => _onUnifiedLoggingLine(line);
 
+  /// The embedder's NSLog bridge prepends `[flutter:<tag>] ` to every engine /
+  /// Dart log line. Rewrite that to the `<tag>: ` form `flutter run` uses on
+  /// iOS, where Dart `print('x')` surfaces as `flutter: x` — so a watchOS run
+  /// console reads identically (Dart output as `flutter: …`).
+  static final RegExp _flutterTagPrefix = RegExp(r'^\[flutter:([^\]]*)\]\s*');
+
   void _onUnifiedLoggingLine(String line) {
     final Match? match = _eventMessageRegex.firstMatch(line);
     if (match != null) {
       final String rawMessage = match.group(1)!;
+      String message;
       try {
         final Object? decoded = jsonDecode(rawMessage);
-        if (decoded is String && !_linesController.isClosed) {
-          _linesController.add(decoded);
-        }
+        message = decoded is String ? decoded : rawMessage;
       } on FormatException {
-        if (!_linesController.isClosed) {
-          _linesController.add(rawMessage);
-        }
+        message = rawMessage;
+      }
+      message = message.replaceFirstMapped(
+        _flutterTagPrefix,
+        (Match m) => '${m.group(1)}: ',
+      );
+      if (!_linesController.isClosed) {
+        _linesController.add(message);
       }
     }
   }
@@ -492,9 +536,24 @@ class WatchosDevice extends Device {
     final String bundleId = package?.id ?? _readBundleId(project);
 
     logger.printTrace('Launching $bundleId on Apple Watch...');
+
+    // Terminate any prior instance so this launch reliably re-emits the
+    // VM-service banner that the log stream below is waiting to capture.
+    await globals.processUtils.run(<String>['xcrun', 'simctl', 'terminate', id, bundleId]);
+
     final logReader =
         (_logReader ??= WatchosSimulatorLogReader(name)) as WatchosSimulatorLogReader;
     await logReader.startLogStream(id);
+
+    // Wait until the log stream is actually live before launching, otherwise the
+    // embedder prints the VM-service URI (~40ms after launch) before the stream
+    // is listening and protocol discovery times out.
+    await logReader.ready.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        logger.printTrace('Timed out waiting for simctl log stream to go live; launching anyway.');
+      },
+    );
 
     final RunResult launchResult = await globals.processUtils.run(<String>[
       'xcrun',
