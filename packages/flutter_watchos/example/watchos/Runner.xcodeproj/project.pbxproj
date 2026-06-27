@@ -1,0 +1,300 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AB0000000000000000000001 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000001 /* App.swift */; };
+		AB0000000000000000000002 /* FlutterRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000002 /* FlutterRunner.swift */; };
+		AB0000000000000000000003 /* libflutter_engine.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000003 /* libflutter_engine.dylib */; };
+		AB0000000000000000000004 /* libflutter_engine.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000003 /* libflutter_engine.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AB0000000000000000000005 /* App.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000004 /* App.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AB0000000000000000000006 /* flutter_assets in Resources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000005 /* flutter_assets */; };
+		AB0000000000000000000007 /* icudtl.dat in Resources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000006 /* icudtl.dat */; };
+		AB0000000000000000000008 /* vm_isolate_snapshot.bin in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000A /* vm_isolate_snapshot.bin */; };
+		AB0000000000000000000009 /* isolate_snapshot.bin in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000B /* isolate_snapshot.bin */; };
+		AB0000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000C /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AC0000000000000000000001 /* Embed Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				AB0000000000000000000004 /* libflutter_engine.dylib in Embed Libraries */,
+				AB0000000000000000000005 /* App.dylib in Embed Libraries */,
+			);
+			name = "Embed Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0B66C03D2FE326E4002C6E54 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AF0000000000000000000001 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		AF0000000000000000000002 /* FlutterRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlutterRunner.swift; sourceTree = "<group>"; };
+		AF0000000000000000000003 /* libflutter_engine.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libflutter_engine.dylib; sourceTree = "<group>"; };
+		AF0000000000000000000004 /* App.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = App.dylib; sourceTree = "<group>"; };
+		AF0000000000000000000005 /* flutter_assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = flutter_assets; sourceTree = "<group>"; };
+		AF0000000000000000000006 /* icudtl.dat */ = {isa = PBXFileReference; lastKnownFileType = file; path = icudtl.dat; sourceTree = "<group>"; };
+		AF0000000000000000000007 /* Runner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF0000000000000000000008 /* Bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Bridge.h; sourceTree = "<group>"; };
+		AF000000000000000000000A /* vm_isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = vm_isolate_snapshot.bin; sourceTree = "<group>"; };
+		AF000000000000000000000B /* isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = isolate_snapshot.bin; sourceTree = "<group>"; };
+		AF000000000000000000000C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AD0000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB0000000000000000000003 /* libflutter_engine.dylib in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AE0000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				AE0000000000000000000002 /* Runner */,
+				AE0000000000000000000004 /* Flutter */,
+				AE0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AE0000000000000000000002 /* Runner */ = {
+			isa = PBXGroup;
+			children = (
+				AF0000000000000000000001 /* App.swift */,
+				AF0000000000000000000002 /* FlutterRunner.swift */,
+				AF0000000000000000000008 /* Bridge.h */,
+				AF000000000000000000000C /* Assets.xcassets */,
+				0B66C03D2FE326E4002C6E54 /* Info.plist */,
+			);
+			path = Runner;
+			sourceTree = "<group>";
+		};
+		AE0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AF0000000000000000000007 /* Runner.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AE0000000000000000000004 /* Flutter */ = {
+			isa = PBXGroup;
+			children = (
+				AF0000000000000000000003 /* libflutter_engine.dylib */,
+				AF0000000000000000000004 /* App.dylib */,
+				AF0000000000000000000005 /* flutter_assets */,
+				AF0000000000000000000006 /* icudtl.dat */,
+				AF000000000000000000000A /* vm_isolate_snapshot.bin */,
+				AF000000000000000000000B /* isolate_snapshot.bin */,
+			);
+			path = Flutter;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA0000000000000000000001 /* Runner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BA0000000000000000000002 /* Build configuration list for PBXNativeTarget "Runner" */;
+			buildPhases = (
+				AD0000000000000000000002 /* Sources */,
+				AD0000000000000000000001 /* Frameworks */,
+				AD0000000000000000000003 /* Resources */,
+				AC0000000000000000000001 /* Embed Libraries */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Runner;
+			productName = Runner;
+			productReference = AF0000000000000000000007 /* Runner.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA0000000000000000000002 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					AA0000000000000000000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = BA0000000000000000000001 /* Build configuration list for PBXProject "Runner" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AE0000000000000000000001;
+			productRefGroup = AE0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA0000000000000000000001 /* Runner */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AD0000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB0000000000000000000006 /* flutter_assets in Resources */,
+				AB0000000000000000000007 /* icudtl.dat in Resources */,
+				AB0000000000000000000008 /* vm_isolate_snapshot.bin in Resources */,
+				AB0000000000000000000009 /* isolate_snapshot.bin in Resources */,
+				AB0000000000000000000010 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AD0000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB0000000000000000000001 /* App.swift in Sources */,
+				AB0000000000000000000002 /* FlutterRunner.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		BB0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_BITCODE = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = watchos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		BB0000000000000000000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				INFOPLIST_FILE = Runner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.flutterWatchosExample.watchkitapp";
+				PRODUCT_NAME = Runner;
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridge.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		BB0000000000000000000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_BITCODE = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SDKROOT = watchos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		BB0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				INFOPLIST_FILE = Runner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				LIBRARY_SEARCH_PATHS = "$(PROJECT_DIR)/Flutter";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.flutterWatchosExample.watchkitapp";
+				PRODUCT_NAME = Runner;
+				SWIFT_OBJC_BRIDGING_HEADER = Runner/Bridge.h;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		BA0000000000000000000001 /* Build configuration list for PBXProject "Runner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB0000000000000000000001 /* Debug */,
+				BB0000000000000000000003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BA0000000000000000000002 /* Build configuration list for PBXNativeTarget "Runner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB0000000000000000000002 /* Debug */,
+				BB0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA0000000000000000000002 /* Project object */;
+}
