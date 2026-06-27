@@ -1,0 +1,39 @@
+name: flutter_watchos
+description: Platform detection and utilities for Flutter apps running on Apple Watch (watchOS). Provides runtime checks for watchOS, device info, capability queries, and Taptic Engine haptics.
+version: 0.1.0
+homepage: https://flutterwatch.dev
+repository: https://github.com/flutterwatch/flutter-watchos
+issue_tracker: https://github.com/flutterwatch/flutter-watchos/issues
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+        # C symbols this FFI plugin exports. The flutter-watchos CLI emits a
+        # forced reference for each so they survive the static link into the
+        # watch app binary and stay resolvable via dlsym / DynamicLibrary.process().
+        ffiSymbols:
+          - flutter_watchos_is_watchos
+          - flutter_watchos_system_version
+          - flutter_watchos_device_model
+          - flutter_watchos_machine_id
+          - flutter_watchos_is_simulator
+          - flutter_watchos_screen_width
+          - flutter_watchos_screen_height
+          - flutter_watchos_screen_scale
+          - flutter_watchos_play_haptic
