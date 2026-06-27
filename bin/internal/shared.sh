@@ -149,8 +149,18 @@ function update_flutter_watchos() {
     needs_pub_get="true"
   fi
 
+  # Rebuild the snapshot whenever any CLI source file is newer than the existing
+  # snapshot, so local edits to lib/ or bin/ are picked up without a manual
+  # cache wipe. (find -newer is empty when nothing is stale.)
+  local sources_changed="false"
+  if [[ -f "$SNAPSHOT_PATH" ]]; then
+    if [[ -n "$(find "$ROOT_DIR/lib" "$ROOT_DIR/bin" -name '*.dart' -newer "$SNAPSHOT_PATH" -print -quit 2>/dev/null)" ]]; then
+      sources_changed="true"
+    fi
+  fi
+
   if [[ ! -f "$SNAPSHOT_PATH" || ! -s "$stamp_path" || "$revision" != "$(cat "$stamp_path")"
-        || "$needs_pub_get" == "true" ]]; then
+        || "$needs_pub_get" == "true" || "$sources_changed" == "true" ]]; then
     if [[ "$needs_pub_get" == "true" ]]; then
       echo "Running pub get..."
       (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get --offline) || \

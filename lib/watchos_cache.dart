@@ -34,6 +34,13 @@ Directory watchosToolRootDirectory(FileSystem fileSystem) {
 /// the CLI at a locally-packaged engine workspace while the public
 /// artifact-distribution story is finalized. The engine itself is never
 /// committed to this repo (closed-source).
+///
+/// Resolution order:
+/// 1. `WATCHOS_ENGINE_ARTIFACTS` env dir (if it exists).
+/// 2. A pre-extracted `engine_artifacts/` at the **workspace root** (the CLI
+///    checkout's parent), the layout `package_artifacts.sh` produces. This is
+///    what makes a local monorepo checkout "just work" without the env var.
+/// 3. `engine_artifacts/` inside the CLI checkout (the download target).
 Directory watchosArtifactDirectory(FileSystem fileSystem) {
   final String? override = globals.platform.environment['WATCHOS_ENGINE_ARTIFACTS'];
   if (override != null && override.isNotEmpty) {
@@ -42,6 +49,14 @@ Directory watchosArtifactDirectory(FileSystem fileSystem) {
       return dir;
     }
   }
+
+  // Workspace-root engine_artifacts/ (sibling of the CLI checkout).
+  final Directory workspaceArtifacts =
+      watchosToolRootDirectory(fileSystem).parent.childDirectory('engine_artifacts');
+  if (workspaceArtifacts.existsSync()) {
+    return workspaceArtifacts;
+  }
+
   return watchosToolRootDirectory(fileSystem).childDirectory('engine_artifacts');
 }
 
@@ -198,6 +213,19 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     final String? envDir = _platform.environment['WATCHOS_ENGINE_ARTIFACTS'];
     if (envDir != null && envDir.isNotEmpty && fileSystem.directory(envDir).existsSync()) {
       _logger.printTrace('Using watchOS engine artifacts from WATCHOS_ENGINE_ARTIFACTS=$envDir');
+      return;
+    }
+
+    // --- Strategy 1b: the resolved artifact dir is already populated ---
+    // `location` (watchosArtifactDirectory) may resolve to a pre-extracted
+    // engine_artifacts/ at the workspace root, or a previous download. If it
+    // already holds extracted engine variant dirs, use it as-is — no download.
+    if (location.existsSync() &&
+        location
+            .listSync()
+            .whereType<Directory>()
+            .any((Directory d) => fileSystem.path.basename(d.path).startsWith('watchos_'))) {
+      _logger.printTrace('Using pre-extracted watchOS engine artifacts at ${location.path}');
       return;
     }
 
