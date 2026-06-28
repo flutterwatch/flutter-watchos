@@ -26,9 +26,9 @@ List<String> expandWatchosPlatformArgs(List<String> args) {
     return args;
   }
 
-  final List<String> withoutPlatforms = <String>[];
-  final Set<String> requested = <String>{};
-  bool sawPlatforms = false;
+  final withoutPlatforms = <String>[];
+  final requested = <String>{};
+  var sawPlatforms = false;
 
   for (var i = 0; i < args.length; i++) {
     final String a = args[i];

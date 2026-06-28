@@ -90,7 +90,7 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   }
   Map<String, dynamic> depsJson;
   try {
-    final decoded = json.decode(depsFile.readAsStringSync());
+    final dynamic decoded = json.decode(depsFile.readAsStringSync());
     if (decoded is! Map<String, dynamic>) {
       return out;
     }
@@ -100,7 +100,7 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   } on FileSystemException {
     return out; // File disappeared between existsSync() and read.
   }
-  final rawGraph = depsJson['dependencyGraph'];
+  final dynamic rawGraph = depsJson['dependencyGraph'];
   final List<dynamic> depGraph = rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
 
   // Build a name→path map from .dart_tool/package_config.json.
@@ -168,12 +168,12 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
 /// instances.
 List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
   final watchosPlugins = <WatchosPlugin>[];
-  for (final dep in _walkPluginDependencies(project)) {
-    final platforms = dep.pluginYaml['platforms'];
+  for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
+    final dynamic platforms = dep.pluginYaml['platforms'];
     if (platforms is! YamlMap) {
       continue;
     }
-    final watchosConfig = platforms['watchos'];
+    final dynamic watchosConfig = platforms['watchos'];
     if (watchosConfig is! YamlMap) {
       continue;
     }
@@ -228,9 +228,7 @@ List<String> _parseFfiSymbols(String pluginName, Object? raw) {
 List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
   final spmPlugins = <WatchosSpmPlugin>[];
   for (final WatchosPlugin plugin in _discoverWatchosPlugins(project)) {
-    final Directory watchosDir = globals.fs.directory(
-      globals.fs.path.join(plugin.path, 'watchos'),
-    );
+    final Directory watchosDir = globals.fs.directory(globals.fs.path.join(plugin.path, 'watchos'));
     final File manifest = watchosDir.childFile('Package.swift');
     if (!manifest.existsSync()) {
       continue;
@@ -238,11 +236,7 @@ List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
     final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
     final String packageName = names.package ?? plugin.name;
     spmPlugins.add(
-      WatchosSpmPlugin(
-        name: packageName,
-        packagePath: watchosDir.path,
-        libraryName: names.library,
-      ),
+      WatchosSpmPlugin(name: packageName, packagePath: watchosDir.path, libraryName: names.library),
     );
     globals.logger.printTrace(
       'watchOS SPM plugin: $packageName (product '
@@ -315,7 +309,7 @@ List<String> _findAllPluginNames(FlutterProject project) {
 /// hasn't added yet. Public so tests can drive it without faking a project
 /// tree.
 List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPluginNames}) {
-  final depGraph = allPluginNames.toSet();
+  final Set<String> depGraph = allPluginNames.toSet();
   final messages = <String>[];
   for (final name in allPluginNames) {
     final List<String>? alternatives = _kKnownWatchosPlugins[name];
@@ -323,7 +317,7 @@ List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPlug
       continue;
     }
     final canonical = '${name}_watchos';
-    final satisfied = depGraph.contains(canonical) || alternatives.any(depGraph.contains);
+    final bool satisfied = depGraph.contains(canonical) || alternatives.any(depGraph.contains);
     if (satisfied) {
       continue;
     }
@@ -333,8 +327,8 @@ List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPlug
         'verified publisher. Did you forget to add it to pubspec.yaml?',
       );
     } else {
-      final List<String> options = <String>[canonical, ...alternatives];
-      final last = options.removeLast();
+      final options = <String>[canonical, ...alternatives];
+      final String last = options.removeLast();
       messages.add(
         '[${options.join(', ')} or $last] is available on pub.dev. '
         'Did you forget to add one to pubspec.yaml?',
@@ -366,7 +360,7 @@ List<String> _collectFfiForcedReferenceSymbols(List<WatchosPlugin> plugins) {
       // CocoaPods-only FFI plugin: dynamic-framework exports already survive.
       continue;
     }
-    for (final symbol in plugin.ffiSymbols) {
+    for (final String symbol in plugin.ffiSymbols) {
       if (seen.add(symbol)) {
         ordered.add(symbol);
       }
@@ -434,12 +428,10 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
 
   final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
 
-  final recommendations = recommendWatchosPluginsToInstall(
+  final List<String> recommendations = recommendWatchosPluginsToInstall(
     allPluginNames: _findAllPluginNames(project),
   );
-  for (final message in recommendations) {
-    globals.logger.printWarning(message);
-  }
+  recommendations.forEach(globals.logger.printWarning);
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
 
@@ -459,7 +451,7 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   final File depsFile = project.flutterPluginsDependenciesFile;
   if (depsFile.existsSync()) {
     try {
-      final decoded = json.decode(depsFile.readAsStringSync());
+      final dynamic decoded = json.decode(depsFile.readAsStringSync());
       if (decoded is Map<String, dynamic>) {
         dependenciesJson = decoded;
       } else {
@@ -478,8 +470,10 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
       );
     }
   }
-  final rawPlugins = dependenciesJson['plugins'];
-  final pluginsMap = rawPlugins is Map<String, dynamic> ? rawPlugins : <String, dynamic>{};
+  final dynamic rawPlugins = dependenciesJson['plugins'];
+  final Map<String, dynamic> pluginsMap = rawPlugins is Map<String, dynamic>
+      ? rawPlugins
+      : <String, dynamic>{};
   pluginsMap['watchos'] = watchosPluginEntries;
   dependenciesJson['plugins'] = pluginsMap;
 

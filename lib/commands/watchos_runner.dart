@@ -48,7 +48,7 @@ Future<void> renderWatchosRunner({
   final String titleCaseProjectName = snakeCaseToTitleCase(name);
   final String pascalCaseProjectName = titleCaseProjectName.replaceAll(' ', '');
   logger.printStatus('Generating watchOS runner...');
-  final Template template = Template(
+  final template = Template(
     templateDir,
     templateDir,
     fileSystem: fileSystem,

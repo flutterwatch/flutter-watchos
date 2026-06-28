@@ -22,6 +22,7 @@ import 'package:package_config/package_config.dart';
 import '../watchos_artifacts.dart';
 import '../watchos_build_info.dart';
 import '../watchos_plugins.dart';
+import '../watchos_swift_package_manager.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
 /// aware plugin registrations, as a proper build target.
@@ -106,8 +107,7 @@ class WatchosKernelSnapshot extends KernelSnapshot {
     }
     final buildMode = BuildMode.fromCliName(buildModeEnvironment);
     final String targetFile =
-        environment.defines[kTargetFile] ??
-        environment.fileSystem.path.join('lib', 'main.dart');
+        environment.defines[kTargetFile] ?? environment.fileSystem.path.join('lib', 'main.dart');
     final File packagesFile = findPackageConfigFileOrDefault(environment.projectDir);
     final String targetFileAbsolute = environment.fileSystem.file(targetFile).absolute.path;
     final trackWidgetCreation = environment.defines[kTrackWidgetCreation] != 'false';
@@ -304,9 +304,7 @@ class NativeWatchosBundle extends Target {
     final Directory watchosProjectDir = project.directory.childDirectory('watchos');
 
     if (!watchosProjectDir.existsSync()) {
-      globals.logger.printError(
-        'watchOS project not found. Did you run flutter-watchos create?',
-      );
+      globals.logger.printError('watchOS project not found. Did you run flutter-watchos create?');
       throw Exception('Missing watchOS project directory');
     }
 
@@ -364,10 +362,7 @@ class NativeWatchosBundle extends Target {
     globals.logger.printTrace('Executing xcodebuild for watchOS (${buildInfo.sdkName})...');
 
     final configuration = buildInfo.buildInfo.isDebug ? 'Debug' : 'Release';
-    final String symroot = project.directory
-        .childDirectory('build')
-        .childDirectory('watchos')
-        .path;
+    final String symroot = project.directory.childDirectory('build').childDirectory('watchos').path;
 
     final bool hasWorkspace = watchosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
 
@@ -381,10 +376,7 @@ class NativeWatchosBundle extends Target {
     try {
       result = await globals.processManager.run(<String>[
         'xcodebuild',
-        if (hasWorkspace) ...<String>[
-          '-workspace',
-          'Runner.xcworkspace',
-        ] else ...<String>[
+        if (hasWorkspace) ...<String>['-workspace', 'Runner.xcworkspace'] else ...<String>[
           '-project',
           'Runner.xcodeproj',
         ],
@@ -569,11 +561,25 @@ class NativeWatchosBundle extends Target {
     copyInto(globals.fs.path.join(engineDir, 'flutter_embedder.h'), 'flutter_embedder.h');
     copyInto(globals.fs.path.join(engineDir, 'clang_arm64', 'icudtl.dat'), 'icudtl.dat');
     copyInto(
-      globals.fs.path.join(simEngineDir, 'gen', 'flutter', 'lib', 'snapshot', 'vm_isolate_snapshot.bin'),
+      globals.fs.path.join(
+        simEngineDir,
+        'gen',
+        'flutter',
+        'lib',
+        'snapshot',
+        'vm_isolate_snapshot.bin',
+      ),
       'vm_isolate_snapshot.bin',
     );
     copyInto(
-      globals.fs.path.join(simEngineDir, 'gen', 'flutter', 'lib', 'snapshot', 'isolate_snapshot.bin'),
+      globals.fs.path.join(
+        simEngineDir,
+        'gen',
+        'flutter',
+        'lib',
+        'snapshot',
+        'isolate_snapshot.bin',
+      ),
       'isolate_snapshot.bin',
     );
     globals.logger.printTrace('Copied watchOS embedder engine into ${flutterDir.path}');
@@ -687,12 +693,19 @@ class NativeWatchosBundle extends Target {
       throw Exception('gen_snapshot failed');
     }
 
-    const String clangTarget = 'arm64-apple-watchos9.0';
+    const clangTarget = 'arm64-apple-watchos9.0';
     final String objectPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.o');
     final ProcessResult ccResult = await globals.processManager.run(<String>[
-      'xcrun', '-sdk', buildInfo.sdkName, 'clang',
-      '-target', clangTarget,
-      '-c', assemblyPath, '-o', objectPath,
+      'xcrun',
+      '-sdk',
+      buildInfo.sdkName,
+      'clang',
+      '-target',
+      clangTarget,
+      '-c',
+      assemblyPath,
+      '-o',
+      objectPath,
     ]);
     if (ccResult.exitCode != 0) {
       globals.logger.printError('Assembly compilation failed:');
@@ -705,11 +718,18 @@ class NativeWatchosBundle extends Target {
       'App.dylib',
     );
     final ProcessResult linkResult = await globals.processManager.run(<String>[
-      'xcrun', '-sdk', buildInfo.sdkName, 'clang',
-      '-target', clangTarget,
+      'xcrun',
+      '-sdk',
+      buildInfo.sdkName,
+      'clang',
+      '-target',
+      clangTarget,
       '-dynamiclib',
-      '-install_name', '@rpath/App.dylib',
-      '-o', appDylib, objectPath,
+      '-install_name',
+      '@rpath/App.dylib',
+      '-o',
+      appDylib,
+      objectPath,
     ]);
     if (linkResult.exitCode != 0) {
       globals.logger.printError('Linking App.dylib failed:');
@@ -734,15 +754,22 @@ class NativeWatchosBundle extends Target {
         watchosProjectDir.childDirectory('Flutter').path,
         'App.dylib',
       );
-      final String clangTarget = buildInfo.simulator
+      final clangTarget = buildInfo.simulator
           ? 'arm64-apple-watchos9.0-simulator'
           : 'arm64-apple-watchos9.0';
       final ProcessResult r = await globals.processManager.run(<String>[
-        'xcrun', '-sdk', buildInfo.sdkName, 'clang',
-        '-target', clangTarget,
+        'xcrun',
+        '-sdk',
+        buildInfo.sdkName,
+        'clang',
+        '-target',
+        clangTarget,
         '-dynamiclib',
-        '-install_name', '@rpath/App.dylib',
-        '-o', appDylib, stubC.path,
+        '-install_name',
+        '@rpath/App.dylib',
+        '-o',
+        appDylib,
+        stubC.path,
       ]);
       if (r.exitCode != 0) {
         globals.logger.printError('Building JIT stub App.dylib failed: ${r.stderr}');
@@ -776,7 +803,7 @@ class NativeWatchosBundle extends Target {
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
-    final plugins = discoverWatchosSpmPlugins(project);
+    final List<WatchosSpmPlugin> plugins = discoverWatchosSpmPlugins(project);
     if (plugins.isEmpty) {
       return null;
     }
@@ -811,23 +838,27 @@ class NativeWatchosBundle extends Target {
     final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
     final Directory objDir = flutterDir.childDirectory('.plugins_build')
       ..createSync(recursive: true);
-    final String clangTarget = buildInfo.simulator
+    final clangTarget = buildInfo.simulator
         ? 'arm64-apple-watchos9.0-simulator'
         : 'arm64-apple-watchos9.0';
 
     final objects = <String>[];
-    for (final String src in sources) {
-      final String obj = globals.fs.path.join(
-        objDir.path,
-        '${globals.fs.path.basename(src)}.o',
-      );
+    for (final src in sources) {
+      final String obj = globals.fs.path.join(objDir.path, '${globals.fs.path.basename(src)}.o');
       final ProcessResult r = await globals.processManager.run(<String>[
-        'xcrun', '-sdk', buildInfo.sdkName, 'clang',
-        '-target', clangTarget,
-        '-fobjc-arc', '-fmodules',
+        'xcrun',
+        '-sdk',
+        buildInfo.sdkName,
+        'clang',
+        '-target',
+        clangTarget,
+        '-fobjc-arc',
+        '-fmodules',
         for (final String dir in headerDirs) '-I$dir',
-        '-c', src,
-        '-o', obj,
+        '-c',
+        src,
+        '-o',
+        obj,
       ]);
       if (r.exitCode != 0) {
         globals.logger.printError('Compiling watchOS plugin source $src failed:\n${r.stderr}');
@@ -842,7 +873,14 @@ class NativeWatchosBundle extends Target {
       archiveFile.deleteSync();
     }
     final ProcessResult libR = await globals.processManager.run(<String>[
-      'xcrun', '-sdk', buildInfo.sdkName, 'libtool', '-static', '-o', archive, ...objects,
+      'xcrun',
+      '-sdk',
+      buildInfo.sdkName,
+      'libtool',
+      '-static',
+      '-o',
+      archive,
+      ...objects,
     ]);
     if (libR.exitCode != 0) {
       globals.logger.printError('Linking watchOS plugin archive failed:\n${libR.stderr}');
@@ -855,7 +893,7 @@ class NativeWatchosBundle extends Target {
 
     final ldflags = StringBuffer(r'OTHER_LDFLAGS=$(inherited) -force_load ');
     ldflags.write(archive);
-    for (final String fw in frameworks) {
+    for (final fw in frameworks) {
       ldflags.write(' -framework $fw');
     }
     return ldflags.toString();
@@ -868,10 +906,9 @@ class NativeWatchosBundle extends Target {
       return const <String>[];
     }
     final String content = packageSwift.readAsStringSync();
-    return RegExp(r'\.linkedFramework\(\s*"([^"]+)"\s*\)')
-        .allMatches(content)
-        .map((Match m) => m.group(1)!)
-        .toList();
+    return RegExp(
+      r'\.linkedFramework\(\s*"([^"]+)"\s*\)',
+    ).allMatches(content).map((Match m) => m.group(1)!).toList();
   }
 
   /// Builds the gen_snapshot command line for the watchOS AOT assembly step.
@@ -914,8 +951,7 @@ class NativeWatchosBundle extends Target {
     final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
     flutterDir.createSync(recursive: true);
 
-    final String buildName =
-        buildInfo.buildInfo.buildName ?? project.manifest.buildName ?? '1.0.0';
+    final String buildName = buildInfo.buildInfo.buildName ?? project.manifest.buildName ?? '1.0.0';
     final String buildNumber =
         buildInfo.buildInfo.buildNumber ?? project.manifest.buildNumber ?? '1';
 

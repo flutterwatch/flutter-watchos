@@ -51,9 +51,14 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   /// Starts streaming logs from the physical device using devicectl.
   Future<void> startLogStream(String deviceId) async {
     _logProcess = await globals.processManager.start(<String>[
-      'xcrun', 'devicectl', 'device', 'process', 'launch',
+      'xcrun',
+      'devicectl',
+      'device',
+      'process',
+      'launch',
       '--terminate-existing',
-      '--device', deviceId,
+      '--device',
+      deviceId,
       '--console',
     ]);
 
@@ -232,10 +237,10 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
     // spam that shares the `Runner` process. Same structure and noise filters as
     // iOS.
     const predicate =
-        'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND ('
+        'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND ( '
         'eventMessage CONTAINS "[flutter:" '
         'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
-        'OR processImageUUID == senderImageUUID'
+        'OR processImageUUID == senderImageUUID '
         ') AND NOT(eventMessage CONTAINS " libxpc.dylib ") '
         'AND NOT(eventMessage BEGINSWITH "assertion failed: ")';
 
@@ -296,10 +301,7 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
       } on FormatException {
         message = rawMessage;
       }
-      message = message.replaceFirstMapped(
-        _flutterTagPrefix,
-        (Match m) => '${m.group(1)}: ',
-      );
+      message = message.replaceFirstMapped(_flutterTagPrefix, (Match m) => '${m.group(1)}: ');
       if (!_linesController.isClosed) {
         _linesController.add(message);
       }
@@ -351,8 +353,7 @@ class WatchosDevice extends Device {
   /// attach always goes through the network tunnel. Override with
   /// `FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS` for slow networks.
   Duration get _lldbAttachTimeout {
-    final String? raw =
-        globals.platform.environment['FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
+    final String? raw = globals.platform.environment['FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
     final int? seconds = raw == null ? null : int.tryParse(raw);
     return Duration(seconds: seconds != null && seconds > 0 ? seconds : 180);
   }
@@ -541,8 +542,7 @@ class WatchosDevice extends Device {
     // VM-service banner that the log stream below is waiting to capture.
     await globals.processUtils.run(<String>['xcrun', 'simctl', 'terminate', id, bundleId]);
 
-    final logReader =
-        (_logReader ??= WatchosSimulatorLogReader(name)) as WatchosSimulatorLogReader;
+    final logReader = (_logReader ??= WatchosSimulatorLogReader(name)) as WatchosSimulatorLogReader;
     await logReader.startLogStream(id);
 
     // Wait until the log stream is actually live before launching, otherwise the
