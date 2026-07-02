@@ -143,9 +143,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   final Platform _platform;
   final ProcessUtils _processUtils;
 
+  // NOTE: there is deliberately no `watchos_debug_arm64` — debug (JIT) cannot
+  // exist on a physical watch (the device SDK removes the Mach APIs the Dart
+  // JIT VM needs). The Simulator is the debug path; devices use profile/release.
   static const List<String> _artifactZipNames = <String>[
     'watchos_debug_sim_arm64.zip',
-    'watchos_debug_arm64.zip',
     'watchos_profile_arm64.zip',
     'watchos_release_arm64.zip',
     'host_debug_unopt.zip',
@@ -200,7 +202,6 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
 
   @override
   List<List<String>> getBinaryDirs() => <List<String>>[
-    <String>['watchos_debug_arm64', ''],
     <String>['watchos_debug_sim_arm64', ''],
     <String>['watchos_profile_arm64', ''],
     <String>['watchos_release_arm64', ''],
