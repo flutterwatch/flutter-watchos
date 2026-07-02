@@ -73,3 +73,18 @@ local engine development, point the CLI at a packaged engine output instead:
 ```bash
 export WATCHOS_ENGINE_ARTIFACTS=/path/to/engine_artifacts
 ```
+
+## License & attribution
+
+The CLI is BSD-3-Clause ([LICENSE](LICENSE)); it incorporates code from the
+Flutter tools and flutter-tizen — see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). The pre-built engine
+artifacts bundle the Flutter engine and Dart SDK; their aggregated
+open-source license file ships inside each artifact.
+
+---
+
+_flutter-watchos is an independent project and is not affiliated with,
+endorsed by, or sponsored by Google LLC or Apple Inc. Flutter and Dart are
+trademarks of Google LLC. Apple Watch and watchOS are trademarks of
+Apple Inc._
