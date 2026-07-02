@@ -5,6 +5,76 @@ import Foundation
 import CoreGraphics
 import WatchKit
 
+/// One Flutter text field to overlay, published by the engine in SwiftUI points.
+/// App.swift places an invisible native proxy over each so the FIRST tap on a
+/// field raises the system keyboard (masked for `obscured`). The engine computes
+/// these from the semantics tree internally — the host does no geometry.
+struct WatchProxyField: Identifiable, Equatable {
+    let id: Int32
+    let rect: CGRect
+    let isObscured: Bool
+}
+
+/// Thin, app-independent adapter over the engine's exported text-input C ABI.
+/// Holds NO logic: it mirrors the engine's published proxy-field list into a
+/// `@Published` array for SwiftUI and forwards focus/edits straight to the
+/// engine. All semantics math, per-field state, the `flutter/textinput`
+/// protocol, and `obscureText` handling live in the engine dylib
+/// (shell/platform/embedder/watchos/). This object is identical for every app.
+final class WatchTextInput: ObservableObject {
+    static let shared = WatchTextInput()
+
+    /// The fields to overlay, kept in sync with the engine via the change
+    /// callback registered in `start()`.
+    @Published var fields: [WatchProxyField] = []
+
+    /// Last generation pulled from the engine, to skip redundant reloads.
+    private var lastGeneration: UInt64 = 0
+
+    fileprivate func start(pixelRatio: Double) {
+        FlutterWatchOSTextInputSetPixelRatio(pixelRatio)
+        // The engine invokes this (on its platform thread) whenever the field
+        // list or any field's text changes; hop to main and refresh.
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        FlutterWatchOSTextInputSetChangeCallback({ context in
+            guard let context else { return }
+            let me = Unmanaged<WatchTextInput>.fromOpaque(context)
+                .takeUnretainedValue()
+            DispatchQueue.main.async { me.reload() }
+        }, ctx)
+        reload()
+    }
+
+    /// Pull the current field list from the engine. Main thread.
+    private func reload() {
+        let generation = FlutterWatchOSTextInputGeneration()
+        let count = Int(FlutterWatchOSTextInputCopyFields(nil, 0))
+        var buffer = [FlutterWatchOSProxyField](
+            repeating: FlutterWatchOSProxyField(), count: max(count, 0))
+        let written = buffer.withUnsafeMutableBufferPointer { ptr in
+            Int(FlutterWatchOSTextInputCopyFields(ptr.baseAddress, Int32(ptr.count)))
+        }
+        let next = buffer.prefix(written).map { f in
+            WatchProxyField(
+                id: f.node_id,
+                rect: CGRect(x: f.x, y: f.y, width: f.width, height: f.height),
+                isObscured: f.obscured)
+        }
+        lastGeneration = generation
+        if next != fields { fields = next }
+    }
+
+    // The proxy bindings/handlers are pure pass-throughs to the engine.
+    func text(for id: Int32) -> String {
+        String(cString: FlutterWatchOSTextInputGetText(id))
+    }
+    func setText(_ text: String, for id: Int32) {
+        FlutterWatchOSTextInputSetText(id, text)
+    }
+    func beginEditing(_ id: Int32) { FlutterWatchOSTextInputBeginEditing(id) }
+    func endEditing() { FlutterWatchOSTextInputEndEditing() }
+}
+
 /// Hosts a Flutter engine instance via the embedder C API using software
 /// rendering. Frames arrive as raw pixel buffers and are published as
 /// CGImages for SwiftUI to display.
@@ -47,15 +117,15 @@ final class FlutterRunner: ObservableObject {
         args.platform_message_callback = { platformMessage, userData in
             guard let platformMessage, let userData else { return }
             let runner = Unmanaged<FlutterRunner>.fromOpaque(userData).takeUnretainedValue()
-            
+
             let channelName = String(cString: platformMessage.pointee.channel)
             let messageSize = platformMessage.pointee.message_size
-            
+
             var data = Data()
             if let messageBytes = platformMessage.pointee.message, messageSize > 0 {
                 data = Data(bytes: messageBytes, count: messageSize)
             }
-            
+
             runner.handlePlatformMessage(channel: channelName, data: data, responseHandle: platformMessage.pointee.response_handle)
         }
 
@@ -102,6 +172,13 @@ final class FlutterRunner: ObservableObject {
         guard result == kSuccess else { return }
 
         sendWindowMetrics()
+        // Turn on the semantics tree so the engine can locate text fields (the
+        // engine ingests semantics internally to publish the proxy rects). No
+        // host-side semantics callback is needed.
+        FlutterEngineUpdateSemanticsEnabled(engine, true)
+        // Hand the engine the device pixel ratio + change callback so it can
+        // publish proxy-field rects in SwiftUI points.
+        WatchTextInput.shared.start(pixelRatio: pixelRatio)
     }
 
     private func sendWindowMetrics() {
@@ -200,6 +277,22 @@ final class FlutterRunner: ObservableObject {
     /// physics apply the momentum/settle that makes it feel native.
     private var crownIdleTimer: Timer?
 
+    // Raw Digital Crown bridge, resolved at runtime via dlsym so an app that
+    // does NOT link the flutter_watchos package still builds and runs — the
+    // crown just stays in scroll mode. When the package IS present it exports
+    // these C symbols (dlsym-visible, used by its own FFI), so raw mode is
+    // picked up with no extra wiring. RTLD_DEFAULT is the special -2 handle.
+    private static let crownModeFn: (@convention(c) () -> Int32)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "flutter_watchos_crown_mode") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) () -> Int32).self)
+    }()
+    private static let crownPushFn: (@convention(c) (Double) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "flutter_watchos_crown_push_delta") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (Double) -> Void).self)
+    }()
+
     /// Forwards one Digital Crown sample to Flutter. `delta` is the change in the
     /// SwiftUI crown-rotation binding since the previous sample; it already grows
     /// with turn speed, so distance is mapped from it directly and soft-saturated.
@@ -208,8 +301,8 @@ final class FlutterRunner: ObservableObject {
 
         // Raw/exclusive crown mode: a Dart app (via WatchCrown) is consuming the
         // crown directly, so push the rotation to it and skip scroll + detent.
-        if flutter_watchos_crown_mode() != 0 {
-            flutter_watchos_crown_push_delta(delta)
+        if let crownMode = Self.crownModeFn, crownMode() != 0 {
+            Self.crownPushFn?(delta)
             return
         }
 
@@ -293,6 +386,8 @@ final class FlutterRunner: ObservableObject {
     }
 
     private func handlePlatformMessage(channel: String, data: Data, responseHandle: OpaquePointer?) {
+        // NOTE: `flutter/textinput` is intercepted INSIDE the engine
+        // (shell/platform/embedder/watchos/) and never reaches this callback.
         if channel == "haptics_channel" {
             if let typeStr = String(data: data, encoding: .utf8) {
                 let hapticType: WKHapticType
@@ -310,7 +405,7 @@ final class FlutterRunner: ObservableObject {
                 }
             }
         }
-        
+
         if let responseHandle {
             FlutterEngineSendPlatformMessageResponse(engine, responseHandle, nil, 0)
         }
