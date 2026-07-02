@@ -74,6 +74,23 @@ local engine development, point the CLI at a packaged engine output instead:
 export WATCHOS_ENGINE_ARTIFACTS=/path/to/engine_artifacts
 ```
 
+## Beta status & known limitations
+
+flutter-watchos is in **closed beta** (access by invite at
+[flutterwatch.dev](https://flutterwatch.dev)). Current limitations:
+
+- **Apple Watch Series 9 / Ultra 2 or later** for on-device runs (the engine
+  is arm64-only; older watches get the fallback screen).
+- **No debug mode on a physical watch** (watchOS cannot run the Dart JIT) —
+  debug + hot reload on the Simulator, `--profile`/`--release` on device.
+- **Software rendering** — fine for watch-sized UIs; Simulator performance
+  is not representative, profile on a real watch.
+- **iOS plugins don't automatically work** — packages need a watchOS
+  implementation (see [doc/plugins.md](doc/plugins.md)); pure-Dart packages
+  are unaffected.
+
+Found something else? Please file a bug or beta-feedback issue.
+
 ## License & attribution
 
 The CLI is BSD-3-Clause ([LICENSE](LICENSE)); it incorporates code from the
