@@ -3,6 +3,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -15,6 +17,8 @@ import 'package:flutter_tools/src/flutter_cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:process/process.dart';
+
+import 'watchos_auth.dart';
 
 const String kWatchosEngineStampName = 'watchos-sdk';
 
@@ -182,8 +186,15 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     return _platform.environment['WATCHOS_ENGINE_BASE_URL'] ?? kDefaultEngineBaseUrl;
   }
 
-  /// Full download URL for a given zip file.
+  /// Full download URL for a given zip file. When the flutterwatch.dev
+  /// artifact API is active (see [watchosArtifactApiBase]) the download is
+  /// authenticated and access-gated server-side; otherwise it is the legacy
+  /// public GitHub Releases URL.
   String artifactDownloadUrl(String zipName) {
+    final String? apiBase = watchosArtifactApiBase(_platform);
+    if (apiBase != null) {
+      return '$apiBase/v1/artifacts/$releaseTag/$zipName';
+    }
     return '$engineBaseUrl/$releaseTag/$zipName';
   }
 
@@ -253,6 +264,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       'flutter_watchos_artifacts.',
     );
 
+    final bool apiMode = watchosArtifactApiBase(_platform) != null;
+    final String? token = apiMode ? readWatchosToken(globals.fs, _platform) : null;
+
     try {
       var index = 0;
       for (final String zipName in _artifactZipNames) {
@@ -266,14 +280,25 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           final RunResult curlResult = await _processUtils.run(<String>[
             'curl',
             '--location',
-            '--fail',
+            if (!apiMode) '--fail',
             '--silent',
             '--show-error',
+            // In API mode capture the HTTP status so gate responses (401/403)
+            // can be surfaced with the server's message instead of a bare
+            // curl failure.
+            if (apiMode) ...<String>['--write-out', '%{http_code}'],
+            if (token != null) ...<String>['--header', 'Authorization: Bearer $token'],
             '--output', tempZip.path,
             url,
           ]);
 
-          if (curlResult.exitCode != 0) {
+          if (apiMode) {
+            final String httpCode = curlResult.stdout.trim();
+            if (curlResult.exitCode != 0 || httpCode != '200') {
+              status.cancel();
+              throwToolExit(_apiGateMessage(zipName, httpCode, tempZip, curlResult));
+            }
+          } else if (curlResult.exitCode != 0) {
             status.cancel();
             throwToolExit(
               'Failed to download $zipName from $url.\n\n${curlResult.stderr}\n\n'
@@ -310,6 +335,36 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     }
 
     _makeFilesExecutable(location, operatingSystemUtils);
+  }
+
+  /// The tool-exit message for a failed API-mode download. Gate responses
+  /// (not signed in, no access) arrive as JSON with a human-readable
+  /// `message` — surface that verbatim so access policy and wording stay
+  /// entirely server-side.
+  String _apiGateMessage(
+    String zipName,
+    String httpCode,
+    File responseFile,
+    RunResult curlResult,
+  ) {
+    if (responseFile.existsSync()) {
+      try {
+        final Object? data = json.decode(responseFile.readAsStringSync());
+        if (data is Map<String, Object?>) {
+          final Object? message = data['message'];
+          if (message is String && message.isNotEmpty) {
+            return message;
+          }
+        }
+      } on FormatException {
+        // Not a JSON gate response — fall through to the generic message.
+      }
+    }
+    final String detail = curlResult.stderr.trim();
+    return 'Failed to download $zipName from the flutterwatch.dev artifact '
+        'service (HTTP $httpCode).'
+        '${detail.isEmpty ? '' : '\n\n$detail'}\n\n'
+        'If you are not signed in yet, run `flutter-watchos login`.';
   }
 
   Future<void> _extractZips(

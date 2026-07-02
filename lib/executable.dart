@@ -49,6 +49,7 @@ import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
 import 'commands/drive.dart';
+import 'commands/login.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
@@ -168,6 +169,8 @@ Future<void> main(List<String> args) async {
         terminal: globals.terminal,
         outputPreferences: globals.outputPreferences,
       ),
+      WatchosLoginCommand(),
+      WatchosLogoutCommand(),
       WatchosPluginCommand(verboseHelp: verboseHelp),
       WatchosPrecacheCommand(
         verboseHelp: verboseHelp,
