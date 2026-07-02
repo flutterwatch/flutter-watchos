@@ -45,20 +45,31 @@ CLI-only — see the workspace README one level up.
 ## Quick commands
 
 ```bash
+flutter-watchos login    # connect to your flutterwatch.dev account
 flutter-watchos doctor
 flutter-watchos create my_app --platforms=watchos
 flutter-watchos build watchos --simulator --debug
 flutter-watchos run -d <watch-simulator-id>
 ```
 
+## Documentation
+
+| Guide | Covers |
+|---|---|
+| [doc/get-started.md](doc/get-started.md) | Install → sign in → create → run |
+| [doc/commands.md](doc/commands.md) | Every supported command, with examples |
+| [doc/architecture.md](doc/architecture.md) | How the embedder works (rendering, input, text entry, platform identity) |
+| [doc/debug-app.md](doc/debug-app.md) | Hot reload, attach, logs, device quirks |
+| [doc/publish-app.md](doc/publish-app.md) | Release builds, iOS container, App Store |
+| [doc/accounts.md](doc/accounts.md) | Login, credentials, environment variables |
+| [doc/plugins.md](doc/plugins.md) | Using and writing watchOS plugins |
+
 ## Engine artifacts
 
-For local development, point the CLI at a packaged engine output:
+Engine binaries are downloaded from flutterwatch.dev, tied to your account
+(`flutter-watchos login`); during the closed beta, access is by invite. For
+local engine development, point the CLI at a packaged engine output instead:
 
 ```bash
 export WATCHOS_ENGINE_ARTIFACTS=/path/to/engine_artifacts
 ```
-
-Otherwise the CLI downloads pre-built bundles from the `flutterwatch`
-engine-artifacts releases (or extracts local zips from the workspace
-`artifacts/` directory).
