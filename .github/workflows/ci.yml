@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  analyze-and-test:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The bootstrap clones the pinned Flutter SDK and compiles the tool
+      # snapshot; cache it keyed on the pin so PR runs are fast.
+      - name: Cache pinned Flutter SDK
+        uses: actions/cache@v4
+        with:
+          path: flutter
+          key: flutter-sdk-${{ runner.os }}-${{ hashFiles('bin/internal/flutter.version') }}
+
+      - name: Bootstrap (pinned SDK + snapshot compile)
+        run: ./bin/flutter-watchos --version
+
+      - name: Analyze
+        run: ./flutter/bin/dart analyze --fatal-warnings
+
+      - name: Unit tests
+        run: ./flutter/bin/dart test test/general
