@@ -42,6 +42,7 @@ void FlutterWatchOSTextInputSetChangeCallback(
 const char* FlutterWatchOSTextInputGetText(int32_t node_id);
 void FlutterWatchOSTextInputBeginEditing(int32_t node_id);
 void FlutterWatchOSTextInputSetText(int32_t node_id, const char* utf8);
+void FlutterWatchOSTextInputSubmitEditing(void);
 void FlutterWatchOSTextInputEndEditing(void);
 
 #endif  // RUNNER_BRIDGE_H_

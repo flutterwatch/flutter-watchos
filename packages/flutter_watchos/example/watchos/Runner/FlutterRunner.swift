@@ -74,6 +74,9 @@ final class WatchTextInput: ObservableObject {
         FlutterWatchOSTextInputSetText(id, text)
     }
     func beginEditing(_ id: Int32) { FlutterWatchOSTextInputBeginEditing(id) }
+    /// Keyboard Done: the engine delivers TextInputAction.done (onSubmitted
+    /// fires; the framework unfocuses the field and closes the connection).
+    func submitEditing() { FlutterWatchOSTextInputSubmitEditing() }
     func endEditing() { FlutterWatchOSTextInputEndEditing() }
 }
 

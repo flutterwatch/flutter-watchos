@@ -52,6 +52,7 @@ void main() {
         'FlutterWatchOSTextInputGetText',
         'FlutterWatchOSTextInputBeginEditing',
         'FlutterWatchOSTextInputSetText',
+        'FlutterWatchOSTextInputSubmitEditing',
         'FlutterWatchOSTextInputEndEditing',
       ]) {
         expect(bridge, contains(symbol));
@@ -128,9 +129,17 @@ void main() {
       expect(app, contains('textInput.endEditing()'));
     });
 
-    test('dismisses focus on Done and on taps outside every proxy', () {
-      expect(app, contains('.onSubmit { focusedField = nil }'));
-      expect(app, contains('focusedField = nil'));
+    test('Done submits through the engine, not through FocusState', () {
+      // @FocusState never fires on watchOS, so `focusedField = nil` alone is
+      // a no-op — the submit must go to the engine directly, which delivers
+      // TextInputAction.done (onSubmitted fires; the framework unfocuses and
+      // closes the connection).
+      expect(app, contains('textInput.submitEditing()'));
+      expect(runner, contains('FlutterWatchOSTextInputSubmitEditing'));
+    });
+
+    test('taps outside every proxy end editing', () {
+      expect(app, contains('textInput.endEditing()'));
     });
   });
 

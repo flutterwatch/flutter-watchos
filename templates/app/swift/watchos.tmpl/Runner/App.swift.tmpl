@@ -112,7 +112,16 @@ struct FlutterHostView: View {
                     proxy(isObscured: field.isObscured, text: textBinding)
                         .focused($focusedField, equals: field.id)
                         .submitLabel(.done)
-                        .onSubmit { focusedField = nil }
+                        // Keyboard Done. IMPORTANT: @FocusState never fires on
+                        // watchOS, so `focusedField` is nil here and the
+                        // onChange path below never runs — the submit must be
+                        // sent to the engine directly. (The nil-set stays for a
+                        // future watchOS where FocusState works; endEditing
+                        // after submitEditing is a no-op.)
+                        .onSubmit {
+                            textInput.submitEditing()
+                            focusedField = nil
+                        }
                         // Make the proxy effectively invisible while keeping it
                         // tappable AND keyboard-raising. watchOS will NOT present the
                         // keyboard for a field it considers hidden — `.opacity(0)`,
