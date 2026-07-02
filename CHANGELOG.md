@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (closed beta)
+## 0.1.0-beta.1 (closed beta)
 
 First public (closed-beta) release. Flutter 3.44.4, engine artifacts
 `v0.1.0-flutter3.44.4`.
