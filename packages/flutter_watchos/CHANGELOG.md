@@ -1,3 +1,11 @@
+## 0.2.0
+
+* `WatchStatusBar` — control the system status bar (the clock watchOS draws
+  over every app). The time is now **visible by default** in apps generated
+  by flutter-watchos (per the watchOS HIG); set `WatchStatusBar.hidden =
+  true` for immersive UIs. Apps that relied on the template's previous
+  always-hidden behaviour must opt in.
+
 ## 0.1.0
 
 * Initial release.

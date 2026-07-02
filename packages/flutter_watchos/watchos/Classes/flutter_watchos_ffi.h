@@ -48,6 +48,20 @@ FLUTTER_WATCHOS_EXPORT float flutter_watchos_screen_scale(void);
 /// 5=retry, 6=start, 7=stop, 8=click). No-op in the simulator.
 FLUTTER_WATCHOS_EXPORT void flutter_watchos_play_haptic(int32_t type);
 
+// --- System status bar (the time overlay) ----------------------------------
+// watchOS draws the clock over every app. By default it stays visible (the
+// HIG expectation); an immersive app (game, media, full-bleed UI) can request
+// it hidden via WatchStatusBar. Dart (FFI/UI thread) sets the flag; the watch
+// host (Swift, main thread) reads it and applies/removes the hiding. There is
+// no system API to reposition the clock — an app wanting a custom placement
+// hides the system one and draws its own.
+
+/// Whether the app requests the system status bar (time) hidden.
+FLUTTER_WATCHOS_EXPORT bool flutter_watchos_status_bar_hidden(void);
+
+/// Sets the status-bar-hidden request. Called from Dart (WatchStatusBar).
+FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_status_bar_hidden(bool hidden);
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // By default the watch host forwards Digital Crown rotation to Flutter as
 // trackpad scroll. An app that wants the crown as a direct input (a game, a

@@ -8,6 +8,7 @@ the toolchain's first-party package (FFI, no method channels):
 - `FlutterWatchosPlatform.isWatch` — watch vs. iPhone/iPad detection
 - `WatchOSInfo` — watchOS version, device model, screen size/scale
 - `WatchHaptics` — Taptic Engine feedback
+- `WatchStatusBar` — show/hide the system clock (visible by default)
 - `WatchCrownScroll` / `WatchCrown` — Digital Crown as scroll polish or as a
   raw rotation input for games and custom controls
 

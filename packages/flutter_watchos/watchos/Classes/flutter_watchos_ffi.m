@@ -118,6 +118,25 @@ void flutter_watchos_play_haptic(int32_t type) {
 #endif
 }
 
+// --- System status bar (the time overlay) ----------------------------------
+// Dart sets the request (FFI/UI thread); the watch host reads it on the main
+// thread. A lock keeps the flag coherent across the two threads.
+static os_unfair_lock s_status_bar_lock = OS_UNFAIR_LOCK_INIT;
+static bool s_status_bar_hidden = false;
+
+bool flutter_watchos_status_bar_hidden(void) {
+    os_unfair_lock_lock(&s_status_bar_lock);
+    bool hidden = s_status_bar_hidden;
+    os_unfair_lock_unlock(&s_status_bar_lock);
+    return hidden;
+}
+
+void flutter_watchos_set_status_bar_hidden(bool hidden) {
+    os_unfair_lock_lock(&s_status_bar_lock);
+    s_status_bar_hidden = hidden;
+    os_unfair_lock_unlock(&s_status_bar_lock);
+}
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // Shared state between the watch host (pushes rotation, reads mode — main
 // thread) and Dart (sets mode, drains rotation — UI thread). Pure C, so it

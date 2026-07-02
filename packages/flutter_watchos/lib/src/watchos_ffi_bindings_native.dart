@@ -65,6 +65,14 @@ class WatchOSNativeBindings {
       .lookupFunction<Void Function(Int32), void Function(int)>(
           'flutter_watchos_play_haptic');
 
+  late final bool Function() _statusBarHidden = _lib!
+      .lookupFunction<Bool Function(), bool Function()>(
+          'flutter_watchos_status_bar_hidden');
+
+  late final void Function(bool) _setStatusBarHidden = _lib!
+      .lookupFunction<Void Function(Bool), void Function(bool)>(
+          'flutter_watchos_set_status_bar_hidden');
+
   late final int Function() _crownMode = _lib!
       .lookupFunction<Int32 Function(), int Function()>(
           'flutter_watchos_crown_mode');
@@ -91,6 +99,18 @@ class WatchOSNativeBindings {
 
   /// Plays a Taptic Engine haptic by raw `WKHapticType` value.
   void playHaptic(int type) => _playHaptic(type);
+
+  // --- System status bar (the time overlay) ---
+  // Null-safe against [WatchOSNativeBindings.forTesting] (no linked library):
+  // reads return the system default (visible), writes are no-ops.
+
+  /// Whether the app has requested the system status bar (time) hidden.
+  bool get statusBarHidden => _lib == null ? false : _statusBarHidden();
+
+  /// Requests the system status bar (time) hidden or shown.
+  set statusBarHidden(bool hidden) {
+    if (_lib != null) _setStatusBarHidden(hidden);
+  }
 
   // --- Raw Digital Crown bridge ---
   // Null-safe against the [WatchOSNativeBindings.forTesting] constructor (no

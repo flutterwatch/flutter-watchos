@@ -22,6 +22,9 @@ class WatchOSNativeBindings {
 
   void playHaptic(int type) {}
 
+  bool get statusBarHidden => false;
+  set statusBarHidden(bool hidden) {}
+
   int get crownMode => 0;
   set crownMode(int mode) {}
   double consumeCrownDelta() => 0.0;

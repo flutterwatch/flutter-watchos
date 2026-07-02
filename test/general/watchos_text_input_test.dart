@@ -134,6 +134,34 @@ void main() {
     });
   });
 
+  group('watchOS system status bar (time) control', () {
+    test('time is visible by default and hidden only on plugin opt-in', () {
+      // The hide is driven by WatchStatusBar (package:flutter_watchos) via a
+      // dlsym-resolved flag — never applied unconditionally. `_statusBarHidden`
+      // is SwiftUI SPI, so the default path must not touch it.
+      expect(app, contains('.modifier(SystemTimeHidden(hidden: runner.statusBarHidden))'));
+      expect(app, contains('if hidden {'));
+      // The old unconditional form (modifier chained directly on the view
+      // tree, not inside the opt-in branch) must not come back.
+      expect(app, isNot(contains('\n        ._statusBarHidden()')));
+    });
+
+    test('runner mirrors the plugin flag via dlsym (no hard link)', () {
+      expect(runner, contains('flutter_watchos_status_bar_hidden'));
+      expect(runner, contains('var statusBarHidden = false'));
+    });
+  });
+
+  group('watchOS platform-message hygiene', () {
+    test('no channel handling in the host — everything rides FFI or the engine', () {
+      // haptics moved to FFI (flutter_watchos_play_haptic); the old
+      // haptics_channel branch must stay gone.
+      expect(runner, isNot(contains('haptics_channel')));
+      // But unanswered messages leak Dart futures: the response must be sent.
+      expect(runner, contains('FlutterEngineSendPlatformMessageResponse'));
+    });
+  });
+
   group('watchOS Digital Crown FFI linking', () {
     test('resolves crown symbols at runtime via dlsym', () {
       // An app that does not depend on flutter_watchos must still link; the

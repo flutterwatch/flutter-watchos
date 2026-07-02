@@ -17,6 +17,10 @@ no async.
   simulator flag, and native screen size/scale.
 - **Haptics** — `WatchHaptics.play(...)` drives the Taptic Engine via
   `WKInterfaceDevice.playHaptic`.
+- **Status bar** — `WatchStatusBar.hidden` shows/hides the system clock the
+  watch draws over every app (visible by default, per the HIG; hide it for
+  games and full-bleed UIs — watchOS cannot reposition it, so a custom
+  placement means hiding it and drawing your own).
 - **Digital Crown** — `WatchCrownScroll` adds the native "end of content" bump
   to scrollables; `WatchCrown` gives the crown as a *raw* input (a rotation
   stream, or a per-frame `drain()`) for games, value pickers, and custom

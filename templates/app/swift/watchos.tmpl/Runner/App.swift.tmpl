@@ -35,7 +35,6 @@ struct FlutterHostView: View {
     // The engine publishes the text-field rects; this is a pure mirror of them.
     @ObservedObject var textInput = WatchTextInput.shared
     @State private var crownValue: Double = 0.0
-    @State private var lastCrownValue: Double = 0.0
     @FocusState private var isFocused: Bool
     // Which text-field proxy (by semantics node id) currently holds focus.
     @FocusState private var focusedField: Int32?
@@ -91,9 +90,7 @@ struct FlutterHostView: View {
                 isHapticFeedbackEnabled: false
             )
             .onChange(of: crownValue) { oldValue, newValue in
-                let delta = newValue - oldValue
-                lastCrownValue = newValue
-                runner.sendCrownDelta(delta)
+                runner.sendCrownDelta(newValue - oldValue)
             }
             // Text entry. We keep an INVISIBLE native proxy over EVERY Flutter
             // text field, positioned from the rect list the ENGINE publishes
@@ -148,7 +145,12 @@ struct FlutterHostView: View {
             }
         }
         .ignoresSafeArea()
-        ._statusBarHidden()
+        // System time visibility. Default: VISIBLE (the watchOS HIG
+        // expectation). Apps opt into hiding it from Dart via
+        // `WatchStatusBar.hidden = true` (package:flutter_watchos) — e.g. for
+        // games or full-bleed UIs; there is no system API to reposition the
+        // clock, so a custom placement means hiding it and drawing your own.
+        .modifier(SystemTimeHidden(hidden: runner.statusBarHidden))
         .onAppear {
             FlutterRunner.shared.start()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -165,6 +167,21 @@ struct FlutterHostView: View {
             SecureField("", text: text)
         } else {
             TextField("", text: text)
+        }
+    }
+}
+
+/// Hides the system status bar (the clock) only when the app asked for it.
+/// watchOS has no public API for this; `_statusBarHidden()` is SwiftUI SPI,
+/// so it is applied ONLY on explicit opt-in (`WatchStatusBar.hidden = true`)
+/// — the default path never touches it and keeps the time visible.
+private struct SystemTimeHidden: ViewModifier {
+    let hidden: Bool
+    func body(content: Content) -> some View {
+        if hidden {
+            content._statusBarHidden()
+        } else {
+            content
         }
     }
 }
