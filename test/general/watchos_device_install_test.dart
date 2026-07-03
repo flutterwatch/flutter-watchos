@@ -96,6 +96,107 @@ void main() {
     );
   });
 
+  group('installApp (physical watch)', () {
+    WatchosDevice physicalDevice() => WatchosDevice(
+      'watch-1',
+      name: 'My Watch',
+      logger: BufferLogger.test(),
+      isSimulator: false,
+    );
+
+    List<String> installCmd(String appPath) => <String>[
+      'xcrun',
+      'devicectl',
+      'device',
+      'install',
+      'app',
+      '--device',
+      'watch-1',
+      appPath,
+    ];
+
+    setUp(() {
+      WatchosDevice.installRetryDelay = Duration.zero;
+    });
+
+    tearDown(() {
+      WatchosDevice.installRetryDelay = const Duration(seconds: 3);
+    });
+
+    testUsingContext(
+      'retries a devicectl install interrupted by a tunnel drop',
+      () async {
+        final WatchosApp app = appAt('/proj/watchos');
+        final String appPath = fileSystem.path.join(
+          '/proj',
+          'build',
+          'watchos',
+          'Release-watchos',
+          'Runner.app',
+        );
+        fileSystem.directory(appPath).createSync(recursive: true);
+
+        // Wireless CoreDevice tunnels drop routinely mid-transfer; the
+        // install is idempotent, so the device must retry, not give up.
+        processManager.addCommand(
+          FakeCommand(
+            command: installCmd(appPath),
+            exitCode: 1,
+            stderr:
+                'ERROR: The tunnel was interrupted while establishing '
+                'connectivity to coredevice-326. '
+                '(com.apple.dt.CoreDeviceError error 4000 (0xFA0))',
+          ),
+        );
+        processManager.addCommand(FakeCommand(command: installCmd(appPath)));
+
+        expect(await physicalDevice().installApp(app), isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'gives up after three failed install attempts with tunnel guidance',
+      () async {
+        final WatchosApp app = appAt('/proj/watchos');
+        final String appPath = fileSystem.path.join(
+          '/proj',
+          'build',
+          'watchos',
+          'Release-watchos',
+          'Runner.app',
+        );
+        fileSystem.directory(appPath).createSync(recursive: true);
+
+        final logger = BufferLogger.test();
+        final device = WatchosDevice(
+          'watch-1',
+          name: 'My Watch',
+          logger: logger,
+          isSimulator: false,
+        );
+        for (var i = 0; i < 3; i++) {
+          processManager.addCommand(
+            FakeCommand(command: installCmd(appPath), exitCode: 1, stderr: 'tunnel interrupted'),
+          );
+        }
+
+        expect(await device.installApp(app), isFalse);
+        expect(processManager, hasNoRemainingExpectations);
+        expect(logger.errorText, contains('after 3 attempts'));
+        expect(logger.errorText, contains('same Wi-Fi network'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
   group('uninstallApp (simulator)', () {
     testUsingContext(
       'returns true on simctl uninstall success',

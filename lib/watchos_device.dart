@@ -418,23 +418,54 @@ class WatchosDevice extends Device {
 
     // Physical device: use devicectl against the paired watch.
     logger.printTrace('Installing on physical Apple Watch ($id)...');
+    return _installOnPhysicalDevice(appPath);
+  }
 
-    final RunResult result = await globals.processUtils.run(<String>[
-      'xcrun',
-      'devicectl',
-      'device',
-      'install',
-      'app',
-      '--device',
-      id,
-      appPath,
-    ]);
+  /// How many times to attempt a `devicectl install` before giving up, and
+  /// the pause between attempts. Wireless CoreDevice tunnels to a paired
+  /// watch drop routinely mid-transfer (`com.apple.dt.CoreDeviceError 4000`,
+  /// "Connection reset by peer"); the install is idempotent, so a retry
+  /// usually succeeds where the first attempt was interrupted.
+  static const int _installAttempts = 3;
 
-    if (result.exitCode != 0) {
-      logger.printError('devicectl install failed:\n${result.stderr}');
-      return false;
+  /// Overridable so retry tests don't sleep for real.
+  @visibleForTesting
+  static Duration installRetryDelay = const Duration(seconds: 3);
+
+  Future<bool> _installOnPhysicalDevice(String appPath) async {
+    for (var attempt = 1; ; attempt++) {
+      final RunResult result = await globals.processUtils.run(<String>[
+        'xcrun',
+        'devicectl',
+        'device',
+        'install',
+        'app',
+        '--device',
+        id,
+        appPath,
+      ]);
+      if (result.exitCode == 0) {
+        logger.printTrace(result.stdout);
+        return true;
+      }
+      if (attempt >= _installAttempts) {
+        logger.printError(
+          'devicectl install failed after $_installAttempts attempts:\n'
+          '${result.stderr}\n'
+          'The wireless tunnel to the watch keeps dropping. Make sure the '
+          'watch is unlocked, on your wrist, near this Mac, and on the same '
+          'Wi-Fi network; then try again (see doc/debug-app.md for '
+          'pairing/tunnel troubleshooting).',
+        );
+        return false;
+      }
+      logger.printStatus(
+        'Install to the watch was interrupted (the wireless tunnel dropped); '
+        'retrying — attempt ${attempt + 1} of $_installAttempts...',
+      );
+      logger.printTrace('devicectl install attempt $attempt failed:\n${result.stderr}');
+      await Future<void>.delayed(installRetryDelay);
     }
-    return true;
   }
 
   @override
@@ -639,19 +670,7 @@ class WatchosDevice extends Device {
 
     logger.printStatus('Installing and launching...');
     logger.printTrace('Installing on Apple Watch ($id)...');
-    final RunResult installResult = await globals.processUtils.run(<String>[
-      'xcrun',
-      'devicectl',
-      'device',
-      'install',
-      'app',
-      '--device',
-      id,
-      appPath,
-    ]);
-    logger.printTrace(installResult.stdout);
-    if (installResult.exitCode != 0) {
-      logger.printError('devicectl install failed: ${installResult.stderr}');
+    if (!await _installOnPhysicalDevice(appPath)) {
       return LaunchResult.failed();
     }
 
