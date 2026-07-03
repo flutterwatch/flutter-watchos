@@ -36,15 +36,21 @@ debug is Simulator-only.
 
 watchOS has no UIKit, so the iOS `Flutter.framework` model doesn't apply.
 The `create` template emits a small SwiftUI runner (`watchos/Runner/`) that
-talks to `libflutter_engine.dylib` through the stable C embedder API:
+drives the engine through a compact exported C ABI (`FlutterWatchOSHostRun`
+and friends). The runner is generic glue — identical for every app — while
+bootstrap, rendering, input interpretation, and text input all live inside
+`libflutter_engine.dylib`, so improvements ship with engine updates without
+touching your app project:
 
 - **Software rendering.** Apple Watch has no usable GPU path for Flutter, so
-  the engine rasterizes frames on the CPU; the runner publishes them as
-  `CGImage`s into a SwiftUI `Image`. This is efficient enough for watch-size
-  screens and means there are no Metal shaders to ship.
-- **Input.** Touches are forwarded as pointer events; the **Digital Crown**
-  is forwarded as scroll input (raw crown data is also available to Dart via
-  the `flutter_watchos` package's `WatchCrown`).
+  the engine rasterizes frames on the CPU and hands the runner ready-made
+  `CGImage`s to publish into a SwiftUI `Image`. This is efficient enough for
+  watch-size screens and means there are no Metal shaders to ship.
+- **Input.** The runner forwards raw touch locations and Digital Crown
+  deltas; the engine turns them into pointer events and runs the calibrated
+  crown scroll model — acceleration, fling momentum, and detent haptics
+  (raw crown data is also available to Dart via the `flutter_watchos`
+  package's `WatchCrown`).
 - **Text input** is engine-side: the engine interprets Flutter's
   `flutter/textinput` protocol and semantics tree, computes where editable
   fields are, and exposes them over a small C ABI. The runner renders

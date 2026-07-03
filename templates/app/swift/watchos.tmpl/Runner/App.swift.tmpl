@@ -85,8 +85,9 @@ struct FlutterHostView: View {
                 // haptic fires once per `by:` detent; at by:0.05 a fast frame
                 // crosses ~hundreds of detents, so the Taptic Engine backs up and
                 // stutters the (software-rendered) scroll on real hardware. The
-                // detent click is produced by the Runner instead, rate-limited so
-                // it can't flood (see crownHapticTickPoints in FlutterRunner).
+                // detent click is produced by the ENGINE's scroll model instead,
+                // distance- and rate-limited so it can't flood; the Runner just
+                // plays it (see FlutterWatchOSCrownSetTickCallback).
                 isHapticFeedbackEnabled: false
             )
             .onChange(of: crownValue) { oldValue, newValue in

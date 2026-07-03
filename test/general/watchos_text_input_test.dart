@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Contract tests for the watchOS Runner template's text-input wiring and the
-// Digital Crown FFI linking. Text input is ENGINE-side: the engine owns the
-// flutter/textinput protocol, semantics ingestion, and per-field state, and
-// publishes proxy-field rects over a C ABI; the host template is a dumb
-// overlay that renders an invisible native input per published rect. The
+// Contract tests for the watchOS Runner template. The runtime is ENGINE-side:
+// the engine owns bootstrap (renderer, Dart snapshots, window metrics,
+// semantics), the frame->CGImage pipeline, touch phase tracking, the full
+// Digital Crown scroll model (including the plugin raw-crown handoff), and the
+// flutter/textinput protocol with per-field state — all behind an exported C
+// ABI. The host template is generic glue: it displays frames, forwards
+// gesture points and raw crown deltas, plays the detent haptic on request,
+// and renders an invisible native input per engine-published rect. The
 // runtime behaviour is exercised manually on the Simulator (and the engine
-// logic by the engine repo's gtest suite); these guard the template
+// logic by the engine repo's gtest suites); these guard the template
 // invariants that behaviour depends on, so a refactor that silently drops the
-// wiring fails fast in CI rather than at the next manual run.
+// wiring — or re-grows host-side logic — fails fast in CI rather than at the
+// next manual run.
 
 import 'dart:io' as io;
 
@@ -41,11 +45,23 @@ void main() {
   final String app = _readRunnerTemplate('App.swift.tmpl');
   final String bridge = _readRunnerTemplate('Bridge.h.tmpl');
 
-  group('watchOS text input — engine C ABI (Bridge.h)', () {
+  group('watchOS engine C ABI (Bridge.h)', () {
+    test('declares the host-runtime ABI', () {
+      for (final String symbol in <String>[
+        'FlutterWatchOSFrameCallback',
+        'FlutterWatchOSHostRun',
+        'FlutterWatchOSHostTouch',
+        'FlutterWatchOSCrownTickCallback',
+        'FlutterWatchOSCrownSetTickCallback',
+        'FlutterWatchOSCrownDelta',
+      ]) {
+        expect(bridge, contains(symbol));
+      }
+    });
+
     test('declares the proxy-field struct and the full text-input ABI', () {
       expect(bridge, contains('FlutterWatchOSProxyField'));
       for (final String symbol in <String>[
-        'FlutterWatchOSTextInputSetPixelRatio',
         'FlutterWatchOSTextInputCopyFields',
         'FlutterWatchOSTextInputGeneration',
         'FlutterWatchOSTextInputSetChangeCallback',
@@ -58,16 +74,81 @@ void main() {
         expect(bridge, contains(symbol));
       }
     });
+
+    test('keeps engine-internal calls out of the public surface', () {
+      // The pixel ratio rides FlutterWatchOSHostRun; the engine wires its own
+      // text-input geometry from it. No host code should call this again.
+      expect(bridge, isNot(contains('FlutterWatchOSTextInputSetPixelRatio')));
+      expect(runner, isNot(contains('FlutterWatchOSTextInputSetPixelRatio')));
+    });
+  });
+
+  group('watchOS FlutterRunner — engine-side bootstrap', () {
+    test('boots through the engine host runtime, passing the display metrics',
+        () {
+      expect(runner, contains('FlutterWatchOSHostRun'));
+      expect(runner, contains('Bundle.main.bundlePath'));
+      expect(runner, contains('pixelRatio'));
+    });
+
+    test('publishes the engine-delivered frame on the main thread', () {
+      expect(runner, contains('DispatchQueue.main.async { runner.publish(image) }'));
+    });
+
+    test('hosts no bootstrap logic (that moved into the engine)', () {
+      // Renderer config, Dart snapshot resolution, window metrics, semantics,
+      // pixel-format knowledge, and platform-message responses are all
+      // engine-side now; none may re-grow in the template.
+      expect(runner, isNot(contains('FlutterEngineRun(')));
+      expect(runner, isNot(contains('FlutterProjectArgs')));
+      expect(runner, isNot(contains('FlutterRendererConfig')));
+      expect(runner, isNot(contains('kDartVmSnapshotData')));
+      expect(runner, isNot(contains('vm_isolate_snapshot.bin')));
+      expect(runner, isNot(contains('FlutterEngineSendWindowMetricsEvent')));
+      expect(runner, isNot(contains('FlutterEngineUpdateSemanticsEnabled')));
+      expect(runner, isNot(contains('CGImageCreate')));
+      expect(runner, isNot(contains('FlutterEngineSendPlatformMessage')));
+      expect(runner, isNot(contains('platform_message_callback')));
+    });
+
+    test('forwards touches in points through the host ABI', () {
+      expect(runner, contains('FlutterWatchOSHostTouch'));
+      expect(runner, isNot(contains('FlutterEngineSendPointerEvent')));
+    });
+  });
+
+  group('watchOS Digital Crown — engine-side scroll model', () {
+    test('forwards raw deltas to the engine', () {
+      expect(runner, contains('FlutterWatchOSCrownDelta'));
+      expect(app, contains('runner.sendCrownDelta'));
+    });
+
+    test('plays the detent haptic only when the engine asks', () {
+      expect(runner, contains('FlutterWatchOSCrownSetTickCallback'));
+      expect(runner, contains('play(.click)'));
+    });
+
+    test('hosts no scroll model (calibration lives in the engine)', () {
+      // The tanh saturation, tunables, pan/zoom synthesis, idle timer, and
+      // the plugin raw-mode dlsym all moved into the engine dylib so
+      // re-calibration reaches existing apps via engine updates.
+      expect(runner, isNot(contains('tanh')));
+      expect(runner, isNot(contains('crownPointsPerUnit')));
+      expect(runner, isNot(contains('kPanZoom')));
+      expect(runner, isNot(contains('flutter_watchos_crown_mode')));
+      expect(runner, isNot(contains('flutter_watchos_crown_push_delta')));
+    });
+
+    test('Bridge.h declares no crown C prototypes (engine resolves the plugin)',
+        () {
+      expect(bridge,
+          isNot(contains('int32_t flutter_watchos_crown_mode(void)')));
+    });
   });
 
   group('watchOS text input — FlutterRunner engine wiring', () {
-    test('enables the semantics tree (field rects come from semantics)', () {
-      expect(runner, contains('FlutterEngineUpdateSemanticsEnabled(engine, true)'));
-    });
-
-    test('starts the WatchTextInput mirror with the display pixel ratio', () {
-      expect(runner, contains('WatchTextInput.shared.start(pixelRatio:'));
-      expect(runner, contains('FlutterWatchOSTextInputSetPixelRatio'));
+    test('starts the WatchTextInput mirror after the engine is running', () {
+      expect(runner, contains('WatchTextInput.shared.start()'));
     });
 
     test('mirrors the engine-published field list, holding no logic itself', () {
@@ -148,7 +229,8 @@ void main() {
       // The hide is driven by WatchStatusBar (package:flutter_watchos) via a
       // dlsym-resolved flag — never applied unconditionally. `_statusBarHidden`
       // is SwiftUI SPI, so the default path must not touch it.
-      expect(app, contains('.modifier(SystemTimeHidden(hidden: runner.statusBarHidden))'));
+      expect(app,
+          contains('.modifier(SystemTimeHidden(hidden: runner.statusBarHidden))'));
       expect(app, contains('if hidden {'));
       // The old unconditional form (modifier chained directly on the view
       // tree, not inside the opt-in branch) must not come back.
@@ -156,37 +238,23 @@ void main() {
     });
 
     test('runner mirrors the plugin flag via dlsym (no hard link)', () {
+      // This is the ONE dlsym left in the host: the status-bar flag feeds a
+      // SwiftUI @Published property, so the host must read it. The crown
+      // plugin symbols are resolved by the engine now.
       expect(runner, contains('flutter_watchos_status_bar_hidden'));
       expect(runner, contains('var statusBarHidden = false'));
+      expect(runner, contains('UnsafeMutableRawPointer(bitPattern: -2)'));
     });
   });
 
   group('watchOS platform-message hygiene', () {
-    test('no channel handling in the host — everything rides FFI or the engine', () {
-      // haptics moved to FFI (flutter_watchos_play_haptic); the old
-      // haptics_channel branch must stay gone.
+    test('no message handling in the host — everything rides FFI or the engine',
+        () {
+      // Haptics ride FFI (flutter_watchos_play_haptic); unhandled messages
+      // are auto-answered INSIDE the engine so Dart futures complete. The
+      // host has no platform-message path at all.
       expect(runner, isNot(contains('haptics_channel')));
-      // But unanswered messages leak Dart futures: the response must be sent.
-      expect(runner, contains('FlutterEngineSendPlatformMessageResponse'));
-    });
-  });
-
-  group('watchOS Digital Crown FFI linking', () {
-    test('resolves crown symbols at runtime via dlsym', () {
-      // An app that does not depend on flutter_watchos must still link; the
-      // crown C symbols are resolved with dlsym rather than a hard link
-      // reference. The process-wide handle is the dlsym sentinel (bitPattern -2).
-      expect(runner, contains('dlsym'));
-      expect(runner, contains('flutter_watchos_crown_mode'));
-      expect(runner, contains('flutter_watchos_crown_push_delta'));
-      expect(runner, contains('UnsafeMutableRawPointer(bitPattern: -2)'));
-    });
-
-    test('Bridge.h declares no crown C prototypes (dlsym-resolved instead)', () {
-      expect(bridge, contains('resolved at runtime via dlsym'));
-      // The prototype form must be gone, or the symbol would be a hard link
-      // reference again and break standalone apps.
-      expect(bridge, isNot(contains('int32_t flutter_watchos_crown_mode(void)')));
+      expect(runner, isNot(contains('handlePlatformMessage')));
     });
   });
 }
