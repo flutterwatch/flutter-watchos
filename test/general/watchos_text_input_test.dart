@@ -47,7 +47,7 @@ void main() {
 
   group('watchOS engine C ABI (Bridge.h)', () {
     test('declares the host-runtime ABI', () {
-      for (final String symbol in <String>[
+      for (final symbol in <String>[
         'FlutterWatchOSFrameCallback',
         'FlutterWatchOSHostRun',
         'FlutterWatchOSHostTouch',
@@ -61,7 +61,7 @@ void main() {
 
     test('declares the proxy-field struct and the full text-input ABI', () {
       expect(bridge, contains('FlutterWatchOSProxyField'));
-      for (final String symbol in <String>[
+      for (final symbol in <String>[
         'FlutterWatchOSTextInputCopyFields',
         'FlutterWatchOSTextInputGeneration',
         'FlutterWatchOSTextInputSetChangeCallback',

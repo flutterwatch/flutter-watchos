@@ -38,3 +38,6 @@ watchos_engine_builds/
 
 # Test coverage output
 coverage/
+
+# Xcode per-user UI state (never commit)
+**/xcuserdata/

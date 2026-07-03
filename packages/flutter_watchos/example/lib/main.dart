@@ -16,8 +16,10 @@ class FlutterWatchosExampleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     // Force a dark theme so text/buttons stay readable on the black watch
     // background — the default light text theme renders dark-on-black.
-    return const MaterialApp(
-      home: HomeScreen(),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true),
+      home: const HomeScreen(),
     );
   }
 }
@@ -30,15 +32,16 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-
   @override
   Widget build(BuildContext context) {
     // A compact, scrollable layout — sized for the watch screen.
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        // WatchCrownScroll adds the native end-of-content bump haptic; the crown
-        // scroll motion/acceleration/ticks come from the watchOS host.
+        // WatchCrownScroll gives this list the native watch feel: watch-tuned
+        // physics with a firm, shallow edge bounce (no edge haptic, matching
+        // watchOS 26). The crown scroll motion/acceleration/detent ticks come
+        // from the watchOS engine.
         child: WatchCrownScroll(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -72,6 +75,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('crown demo →'),
                 ),
               ),
+              // System clock (WatchStatusBar) — the watch draws the time over
+              // every app; hide it for an immersive/full-bleed screen. Visible
+              // by default, per the watchOS HIG.
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ElevatedButton(
+                  onPressed: () => setState(
+                      () => WatchStatusBar.hidden = !WatchStatusBar.hidden),
+                  child: Text(
+                      'system clock: ${WatchStatusBar.hidden ? "hidden" : "shown"}',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ),
               // Crown scroll options (WatchCrownScrolling) — the native-parity
               // sensitivity + detent-haptic knobs, applied engine-side.
               const Text('crown sensitivity',
@@ -102,9 +118,8 @@ class _HomeScreenState extends State<HomeScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: ElevatedButton(
-                  onPressed: () => setState(() =>
-                      WatchCrownScrolling.detentHaptics =
-                          !WatchCrownScrolling.detentHaptics),
+                  onPressed: () => setState(() => WatchCrownScrolling
+                      .detentHaptics = !WatchCrownScrolling.detentHaptics),
                   child: Text(
                       'detent ticks: ${WatchCrownScrolling.detentHaptics ? "on" : "off"}',
                       style: const TextStyle(fontSize: 11)),

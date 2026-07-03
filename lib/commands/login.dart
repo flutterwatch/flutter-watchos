@@ -31,7 +31,7 @@ class WatchosLoginCommand extends FlutterCommand {
   @override
   Future<FlutterCommandResult> runCommand() async {
     final String api = watchosApiBase(globals.platform);
-    final HttpClient client = HttpClient();
+    final client = HttpClient();
     try {
       final (int startStatus, Map<String, Object?> start) =
           await _postJson(client, Uri.parse('$api/v1/auth/device'), <String, Object?>{});
@@ -40,9 +40,9 @@ class WatchosLoginCommand extends FlutterCommand {
             'Could not reach the flutterwatch.dev service (HTTP $startStatus).');
       }
 
-      final String deviceCode = start['device_code']! as String;
-      final String userCode = start['user_code']! as String;
-      final String url =
+      final deviceCode = start['device_code']! as String;
+      final userCode = start['user_code']! as String;
+      final url =
           (start['verification_uri_complete'] ?? start['verification_uri'])! as String;
       final int interval = (start['interval'] as num?)?.toInt() ?? 5;
       final int expiresIn = (start['expires_in'] as num?)?.toInt() ?? 900;
@@ -52,7 +52,7 @@ class WatchosLoginCommand extends FlutterCommand {
       globals.printStatus('and confirm the code: $userCode\n');
       globals.printStatus('Waiting for approval (Ctrl-C to cancel)...');
 
-      final Stopwatch elapsed = Stopwatch()..start();
+      final elapsed = Stopwatch()..start();
       while (elapsed.elapsed.inSeconds < expiresIn) {
         await Future<void>.delayed(Duration(seconds: interval));
         final int status;
@@ -72,8 +72,8 @@ class WatchosLoginCommand extends FlutterCommand {
           continue; // authorization_pending
         }
         if (status == 200) {
-          final String token = body['token']! as String;
-          final String? login = body['login'] as String?;
+          final token = body['token']! as String;
+          final login = body['login'] as String?;
           writeWatchosCredentials(globals.fs, globals.platform, token: token, login: login);
           globals.os.chmod(watchosCredentialsFile(globals.fs, globals.platform), '600');
           globals.printStatus(
