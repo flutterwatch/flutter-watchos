@@ -32,35 +32,26 @@ There is no device-debug variant: the Dart JIT VM cannot exist on watchOS
 (the device SDK removes the required Mach exception APIs), which is why
 debug is Simulator-only.
 
-## The embedder: a SwiftUI app driving the C engine API
+## The embedder: a SwiftUI runner
 
 watchOS has no UIKit, so the iOS `Flutter.framework` model doesn't apply.
 The `create` template emits a small SwiftUI runner (`watchos/Runner/`) that
-drives the engine through a compact exported C ABI (`FlutterWatchOSHostRun`
-and friends). The runner is generic glue — identical for every app — while
-bootstrap, rendering, input interpretation, and text input all live inside
-`libflutter_engine.dylib`, so improvements ship with engine updates without
-touching your app project:
+hosts the Flutter engine. It is generic glue — identical for every app — and
+rendering, input, and text input are handled by the engine, so improvements
+ship with engine updates without touching your app project:
 
-- **Rendering.** The engine renders frames and hands them to the SwiftUI
-  runner to display. GPU-intensive effects (custom fragment shaders, heavy
-  blurs) aren't a good fit for the watch — keep visuals lightweight and
-  profile on a real device.
-- **Input.** The runner forwards raw touch locations and Digital Crown
-  deltas; the engine turns them into pointer events and runs the calibrated
-  crown scroll model — acceleration, fling momentum, and detent haptics
-  (raw crown data is also available to Dart via the `flutter_watchos`
-  package's `WatchCrown`).
-- **Text input** is engine-side: the engine interprets Flutter's
-  `flutter/textinput` protocol and semantics tree, computes where editable
-  fields are, and exposes them over a small C ABI. The runner renders
-  invisible native proxy fields at those positions — tapping a Flutter
-  `TextField` raises the real watchOS keyboard, with pre-filled text and
-  `obscureText` masking, and edits round-trip back into your Dart
-  controllers. App code and the runner template contain **no per-app text
-  input logic**.
-- **Lifecycle & channels.** Standard platform messages work; plugins use
-  Dart FFI or the C plugin messenger rather than the iOS registrar.
+- **Rendering.** Your Flutter UI is displayed by the runner. GPU-intensive
+  effects (custom fragment shaders, heavy blurs) aren't a good fit for the
+  watch — keep visuals lightweight and profile on a real device.
+- **Input.** Touch and the Digital Crown work out of the box, with a native
+  scroll feel. Raw crown input is available to Dart via the `flutter_watchos`
+  package's `WatchCrown` for games, pickers, and custom controls.
+- **Text input** works with no app code: tapping a Flutter `TextField` raises
+  the watchOS system keyboard, with pre-filled text, `obscureText` masking,
+  and edits round-tripping back into your Dart controllers.
+- **Lifecycle & channels.** Standard platform messages and
+  `WidgetsBindingObserver` lifecycle events work; plugins use Dart FFI or the
+  platform messenger.
 
 ## Platform identity
 

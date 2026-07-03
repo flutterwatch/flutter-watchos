@@ -81,31 +81,26 @@ struct FlutterHostView: View {
                 by: 0.05,
                 sensitivity: .high,
                 isContinuous: true,
-                // MUST stay false with this fine `by:` step. The system crown
-                // haptic fires once per `by:` detent; at by:0.05 a fast frame
-                // crosses ~hundreds of detents, so the Taptic Engine backs up and
-                // stutters the (software-rendered) scroll on real hardware. The
-                // detent click is produced by the ENGINE's scroll model instead,
-                // distance- and rate-limited so it can't flood; the Runner just
-                // plays it (see FlutterWatchOSCrownSetTickCallback).
+                // Must stay false with this fine `by:` step: the system crown
+                // haptic fires once per detent and, at by:0.05, floods the
+                // Taptic Engine and stutters the scroll on real hardware. The
+                // detent click is played by the runner instead (see
+                // FlutterWatchOSCrownSetTickCallback).
                 isHapticFeedbackEnabled: false
             )
             .onChange(of: crownValue) { oldValue, newValue in
                 runner.sendCrownDelta(newValue - oldValue)
             }
-            // Text entry. We keep an INVISIBLE native proxy over EVERY Flutter
-            // text field, positioned from the rect list the ENGINE publishes
-            // (`textInput.fields`). Because the proxy is present from the start,
-            // the user's first tap lands on a real native field → the system
-            // keyboard opens immediately (masked for `obscured` fields). The proxy
-            // is bound to the engine's live value, so editing is pre-filled in
-            // place. This overlay is purely declarative — all logic is in the
-            // engine; the host renders fields and forwards focus/edits.
+            // Text entry. An invisible native proxy sits over every Flutter
+            // text field (`textInput.fields`). Because it is present from the
+            // start, the user's first tap lands on a real native field → the
+            // system keyboard opens immediately (masked for `obscured` fields),
+            // pre-filled with the field's current value.
             .overlay {
                 ForEach(textInput.fields) { field in
-                    // Each proxy binds to the engine's isolated per-node value
-                    // (keyed by the field's Semantics Node ID), so two fields can't
-                    // mix data. SecureField for obscured fields, TextField otherwise.
+                    // Each proxy binds to its own field value, so two fields
+                    // can't mix data. SecureField for obscured fields, TextField
+                    // otherwise.
                     let textBinding = Binding(
                         get: { textInput.text(for: field.id) },
                         set: { textInput.setText($0, for: field.id) }

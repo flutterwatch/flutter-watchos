@@ -5,22 +5,18 @@ import Foundation
 import CoreGraphics
 import WatchKit
 
-/// One Flutter text field to overlay, published by the engine in SwiftUI points.
-/// App.swift places an invisible native proxy over each so the FIRST tap on a
-/// field raises the system keyboard (masked for `obscured`). The engine computes
-/// these from the semantics tree internally — the host does no geometry.
+/// One native text-field overlay, positioned in SwiftUI points. App.swift
+/// places an invisible proxy over each so the first tap on a Flutter TextField
+/// raises the system keyboard (masked when `isObscured`).
 struct WatchProxyField: Identifiable, Equatable {
     let id: Int32
     let rect: CGRect
     let isObscured: Bool
 }
 
-/// Thin, app-independent adapter over the engine's exported text-input C ABI.
-/// Holds NO logic: it mirrors the engine's published proxy-field list into a
-/// `@Published` array for SwiftUI and forwards focus/edits straight to the
-/// engine. All semantics math, per-field state, the `flutter/textinput`
-/// protocol, and `obscureText` handling live in the engine dylib.
-/// This object is identical for every app.
+/// Thin, app-independent adapter for watchOS text input — identical for every
+/// app. It keeps the native proxy fields in sync and forwards focus and edits;
+/// it holds no app logic.
 final class WatchTextInput: ObservableObject {
     static let shared = WatchTextInput()
 
@@ -79,12 +75,9 @@ final class WatchTextInput: ObservableObject {
     func endEditing() { FlutterWatchOSTextInputEndEditing() }
 }
 
-/// Generic glue around the engine's exported host runtime. Bootstrap (renderer,
-/// Dart snapshots, window metrics, semantics), the frame->CGImage pipeline,
-/// touch phase tracking, and the entire Digital Crown scroll model (including
-/// the package:flutter_watchos raw-crown handoff) run INSIDE the engine dylib;
-/// this object forwards inputs, publishes the frames it is handed, and plays
-/// the detent haptic when the engine asks. It is identical for every app.
+/// Generic glue around the Flutter engine — identical for every app. It starts
+/// the engine, forwards touch and Digital Crown input, displays the frames the
+/// engine produces, and plays the crown detent haptic on request.
 final class FlutterRunner: ObservableObject {
     static let shared = FlutterRunner()
 
@@ -114,10 +107,8 @@ final class FlutterRunner: ObservableObject {
         guard !started else { return }
         started = true
 
-        // Detent click for crown scrolling: the ENGINE decides when to tick
-        // (distance- and rate-gated so the Taptic Engine can't flood and
-        // stutter the scroll); the host just plays it. Fires on the main
-        // thread (crown deltas arrive there).
+        // Play the crown detent click when requested (on the main thread,
+        // where crown deltas arrive).
         FlutterWatchOSCrownSetTickCallback({ _ in
             WKInterfaceDevice.current().play(.click)
         }, nil)
@@ -129,8 +120,7 @@ final class FlutterRunner: ObservableObject {
             sizePoints.height,
             pixelRatio,
             { context, image in
-                // Raster thread. The image is borrowed (+0) from the engine;
-                // capturing it in the async block retains it (ARC).
+                // Hop to the main thread to publish the frame.
                 guard let context, let image else { return }
                 let runner = Unmanaged<FlutterRunner>.fromOpaque(context)
                     .takeUnretainedValue()
@@ -150,8 +140,7 @@ final class FlutterRunner: ObservableObject {
     }
 
     /// Forward one Digital Crown sample: the change in the SwiftUI
-    /// crown-rotation binding since the previous sample. The engine runs the
-    /// calibrated scroll model (or routes to WatchCrown raw mode).
+    /// crown-rotation binding since the previous sample.
     func sendCrownDelta(_ delta: Double) {
         FlutterWatchOSCrownDelta(delta)
     }
