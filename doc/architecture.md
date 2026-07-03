@@ -42,10 +42,10 @@ bootstrap, rendering, input interpretation, and text input all live inside
 `libflutter_engine.dylib`, so improvements ship with engine updates without
 touching your app project:
 
-- **Software rendering.** Apple Watch has no usable GPU path for Flutter, so
-  the engine rasterizes frames on the CPU and hands the runner ready-made
-  `CGImage`s to publish into a SwiftUI `Image`. This is efficient enough for
-  watch-size screens and means there are no Metal shaders to ship.
+- **Rendering.** The engine renders frames and hands them to the SwiftUI
+  runner to display. GPU-intensive effects (custom fragment shaders, heavy
+  blurs) aren't a good fit for the watch — keep visuals lightweight and
+  profile on a real device.
 - **Input.** The runner forwards raw touch locations and Digital Crown
   deltas; the engine turns them into pointer events and runs the calibrated
   crown scroll model — acceleration, fling momentum, and detent haptics

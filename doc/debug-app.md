@@ -64,6 +64,6 @@ is tunnelled via the iPhone. This path is occasionally flaky:
 - **Keyboard doesn't appear when tapping a TextField** — make sure you're on
   the latest engine (`flutter-watchos upgrade`); text entry is engine-side
   and needs no app code.
-- **Simulator renders but is slow** — the watch renders on the CPU by
-  design; profile on a physical watch before optimizing, the Simulator's
-  software-rendering performance is not representative.
+- **Simulator renders but is slow** — Simulator performance is not
+  representative of a real Apple Watch; profile on a physical watch before
+  optimizing.
