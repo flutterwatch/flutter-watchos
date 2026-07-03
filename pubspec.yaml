@@ -1,6 +1,6 @@
 name: flutter_watchos
 description: Flutter CLI tool for building and running Flutter apps on Apple Watch (watchOS). A custom embedder wrapping the Flutter SDK with watchOS-specific build targets, device management, and plugin support.
-version: 0.1.0
+version: 0.1.0-beta.1
 homepage: https://flutterwatch.dev
 repository: https://github.com/flutterwatch/flutter-watchos
 publish_to: "none"

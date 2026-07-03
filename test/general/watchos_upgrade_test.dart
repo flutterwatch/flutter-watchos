@@ -54,9 +54,22 @@ void main() {
       final RegExp p = WatchosUpgradeCommandRunner.releaseTagPattern;
       expect(p.hasMatch('v3.44.1-watchos.1.2.0'), isTrue);
       expect(p.hasMatch('v10.0.0-watchos.12.34.56'), isTrue);
+      expect(p.hasMatch('v3.44.4-watchos.0.1.0-beta.1'), isTrue); // pre-release ok
+      expect(p.hasMatch('v3.44.4-watchos.0.1.0-rc.2'), isTrue);
+      expect(p.hasMatch('v3.44.4-watchos.0.1.0-beta'), isFalse); // suffix needs .N
+      expect(p.hasMatch('v3.44.4-watchos.0.1.0-gamma.1'), isFalse); // unknown id
       expect(p.hasMatch('v3.44.1-watchos.1.2'), isFalse); // tool version needs 3 parts
       expect(p.hasMatch('3.44.1-watchos.1.2.0'), isFalse); // missing leading v
       expect(p.hasMatch('v3.44.1-tvos.1.2.0'), isFalse); // wrong platform infix
+    });
+
+    test('matches a beta-suffixed release tag', () {
+      expect(
+        WatchosUpgradeCommandRunner.latestReleaseTag(
+          const <String>['v3.44.4-watchos.0.1.0-beta.1'],
+        ),
+        'v3.44.4-watchos.0.1.0-beta.1',
+      );
     });
   });
 
@@ -81,7 +94,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
-          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'v3.44.1-watchos.1.2.0\nv3.44.0-watchos.1.1.1\n',
         ),
         const FakeCommand(
@@ -101,7 +114,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
-          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\nv3.44.0-watchos.1.1.1\nv3.41.4-watchos.1.0.0\n',
         ),
         const FakeCommand(
@@ -121,7 +134,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
-          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\n',
         ),
       ]);
@@ -203,7 +216,7 @@ void main() {
         processManager.addCommands(<FakeCommand>[
           const FakeCommand(command: <String>['git', 'fetch', '--tags']),
           const FakeCommand(
-            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',
           ),
           const FakeCommand(
@@ -238,7 +251,7 @@ void main() {
         processManager.addCommands(<FakeCommand>[
           const FakeCommand(command: <String>['git', 'fetch', '--tags']),
           const FakeCommand(
-            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',
           ),
           const FakeCommand(
@@ -281,7 +294,7 @@ void main() {
         processManager.addCommands(<FakeCommand>[
           const FakeCommand(command: <String>['git', 'fetch', '--tags']),
           const FakeCommand(
-            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',
           ),
           const FakeCommand(

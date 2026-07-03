@@ -24,7 +24,8 @@ import 'package:meta/meta.dart';
 /// the correct engine for the new pin.
 ///
 /// Release tags follow `v<flutter-version>-watchos.<tool-version>`, e.g.
-/// `v3.44.1-watchos.0.1.0`. The newest tag by version order is the target.
+/// `v3.44.1-watchos.0.1.0` (the tool version may carry a `-beta.N` pre-release
+/// suffix). The newest tag by version order is the target.
 class WatchosUpgradeCommand extends UpgradeCommand {
   WatchosUpgradeCommand({required super.verboseHelp});
 
@@ -78,8 +79,10 @@ class WatchosUpgradeCommandRunner {
   String? workingDirectory;
 
   /// Matches flutter-watchos release tags: `v<flutter>-watchos.<tool>`, e.g.
-  /// `v3.44.1-watchos.0.1.0`.
-  static final RegExp releaseTagPattern = RegExp(r'^v\d+\.\d+\.\d+-watchos\.\d+\.\d+\.\d+$');
+  /// `v3.44.1-watchos.0.1.0`. The tool version may carry a pre-release suffix
+  /// (`-alpha.N` / `-beta.N` / `-rc.N`), e.g. `v3.44.4-watchos.0.1.0-beta.1`.
+  static final RegExp releaseTagPattern =
+      RegExp(r'^v\d+\.\d+\.\d+-watchos\.\d+\.\d+\.\d+(-(?:alpha|beta|rc)\.\d+)?$');
 
   /// Selects the newest release tag from [tags], which are expected to be
   /// pre-sorted newest-first (`git tag -l --sort=-v:refname`). Non-release
@@ -160,7 +163,16 @@ class WatchosUpgradeCommandRunner {
         workingDirectory: workingDirectory,
       );
       final RunResult result = await _git.run(
-        <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        // `versionsort.suffix` makes a pre-release (e.g. `-beta.1`) sort BEFORE
+        // the same-version stable, so a later stable release is preferred over
+        // an earlier beta of the same version.
+        <String>[
+          'git',
+          '-c', 'versionsort.suffix=-alpha',
+          '-c', 'versionsort.suffix=-beta',
+          '-c', 'versionsort.suffix=-rc',
+          'tag', '-l', '--sort=-v:refname',
+        ],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
