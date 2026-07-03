@@ -21,10 +21,14 @@ no async.
   watch draws over every app (visible by default, per the HIG; hide it for
   games and full-bleed UIs — watchOS cannot reposition it, so a custom
   placement means hiding it and drawing your own).
-- **Digital Crown** — `WatchCrownScroll` adds the native "end of content" bump
-  to scrollables; `WatchCrown` gives the crown as a *raw* input (a rotation
-  stream, or a per-frame `drain()`) for games, value pickers, and custom
-  controls — without it driving scroll.
+- **Digital Crown** — `WatchCrownScroll` gives scrollables the full native
+  feel: watch-tuned scroll physics (`WatchScrollPhysics` — firm, shallow edge
+  bounce instead of the iPhone-style deep stretch) plus the native
+  "end of content" bump haptic. `WatchCrownScrolling` exposes the same knobs
+  native developers get (`sensitivity`, detent haptics on/off). `WatchCrown`
+  gives the crown as a *raw* input (a rotation stream, or a per-frame
+  `drain()`) for games, value pickers, and custom controls — without it
+  driving scroll.
 
 ## Usage
 
@@ -45,11 +49,23 @@ if (FlutterWatchosPlatform.isWatch) {
 
 ### Digital Crown
 
-By default the crown scrolls. Wrap a scrollable to add the native end-of-content
-bump:
+By default the crown scrolls. Wrap a scrollable (usually a whole screen) to
+give it the full native watch feel — watch-tuned physics with a firm, shallow
+edge bounce, plus the end-of-content bump haptic:
 
 ```dart
 WatchCrownScroll(child: ListView(children: const [/* ... */]));
+```
+
+App-wide instead: `MaterialApp(scrollBehavior: const WatchScrollBehavior())`,
+or pass `physics: const WatchScrollPhysics()` to a single scrollable.
+
+Scroll behavior has the same options native (SwiftUI) developers get on
+`.digitalCrownRotation` — they apply app-wide, from the next crown movement:
+
+```dart
+WatchCrownScrolling.sensitivity = WatchCrownSensitivity.medium; // low/medium/high
+WatchCrownScrolling.detentHaptics = false; // silent scrolling
 ```
 
 For a game or custom control, take the crown as **raw** input instead. While a

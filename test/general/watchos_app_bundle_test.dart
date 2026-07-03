@@ -97,5 +97,22 @@ void main() {
         isFalse,
       );
     });
+
+    test('skips the aot/ gen_snapshot intermediates (22 MB of assembly)', () {
+      seedSource();
+      fs.file('/build/watchos/aot/snapshot_assembly.S').createSync(recursive: true);
+      fs.file('/build/watchos/aot/snapshot_assembly.o').createSync(recursive: true);
+
+      NativeWatchosBundle.copyFlutterAssetsTree(
+        source: fs.directory('/build/watchos'),
+        target: fs.directory('/watchos/Flutter/flutter_assets'),
+      );
+
+      expect(
+        fs.directory('/watchos/Flutter/flutter_assets/aot').existsSync(),
+        isFalse,
+        reason: 'AOT compile intermediates must not ship inside the app bundle',
+      );
+    });
   });
 }

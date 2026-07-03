@@ -22,8 +22,14 @@ class FlutterWatchosExampleApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +70,44 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ),
                   child: const Text('crown demo →'),
+                ),
+              ),
+              // Crown scroll options (WatchCrownScrolling) — the native-parity
+              // sensitivity + detent-haptic knobs, applied engine-side.
+              const Text('crown sensitivity',
+                  style: TextStyle(color: Colors.white70, fontSize: 11)),
+              Row(
+                children: [
+                  for (final s in WatchCrownSensitivity.values)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            backgroundColor:
+                                WatchCrownScrolling.sensitivity == s
+                                    ? Colors.blueGrey
+                                    : null,
+                          ),
+                          onPressed: () => setState(
+                              () => WatchCrownScrolling.sensitivity = s),
+                          child: Text(s.name,
+                              style: const TextStyle(fontSize: 11)),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ElevatedButton(
+                  onPressed: () => setState(() =>
+                      WatchCrownScrolling.detentHaptics =
+                          !WatchCrownScrolling.detentHaptics),
+                  child: Text(
+                      'detent ticks: ${WatchCrownScrolling.detentHaptics ? "on" : "off"}',
+                      style: const TextStyle(fontSize: 11)),
                 ),
               ),
               for (final type in WatchHapticType.values)

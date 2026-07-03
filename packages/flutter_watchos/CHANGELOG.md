@@ -9,7 +9,14 @@
 * `FlutterWatchosPlatform` — cheap `isWatch` / `isIos` platform detection that
   disambiguates Apple Watch from iPhone/iPad (both report `Platform.isIOS`).
 * `WatchHaptics` — Taptic Engine feedback via `WKInterfaceDevice.playHaptic`.
-* `WatchCrownScroll` — native "end of content" bump haptic for scrollables.
+* `WatchCrownScroll` — the full native scroll feel for a subtree: installs
+  `WatchScrollPhysics` (firm, shallow watch-style edge bounce instead of the
+  iPhone deep stretch) and plays the native "end of content" bump haptic.
+* `WatchScrollPhysics` / `WatchScrollBehavior` — the watch-tuned physics on
+  their own, per scrollable or app-wide.
+* `WatchCrownScrolling` — the native-parity crown scroll options:
+  `sensitivity` (low/medium/high) and `detentHaptics` on/off, applied by the
+  engine per crown sample.
 * `WatchCrown` — raw Digital Crown input (rotation stream or per-frame
   `drain()`) for games and custom controls, switching the crown out of scroll
   mode while active.

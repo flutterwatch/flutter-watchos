@@ -85,6 +85,22 @@ class WatchOSNativeBindings {
       .lookupFunction<Double Function(), double Function()>(
           'flutter_watchos_crown_consume_delta');
 
+  late final double Function() _crownScrollMultiplier = _lib!
+      .lookupFunction<Double Function(), double Function()>(
+          'flutter_watchos_crown_scroll_multiplier');
+
+  late final void Function(double) _crownSetScrollMultiplier = _lib!
+      .lookupFunction<Void Function(Double), void Function(double)>(
+          'flutter_watchos_crown_set_scroll_multiplier');
+
+  late final int Function() _crownDetentHaptics = _lib!
+      .lookupFunction<Int32 Function(), int Function()>(
+          'flutter_watchos_crown_detent_haptics');
+
+  late final void Function(int) _crownSetDetentHaptics = _lib!
+      .lookupFunction<Void Function(Int32), void Function(int)>(
+          'flutter_watchos_crown_set_detent_haptics');
+
   // Public API — override these in fakes for testing.
 
   bool get isWatchOS => _isWatchOS();
@@ -127,4 +143,27 @@ class WatchOSNativeBindings {
 
   /// Drains the crown rotation accumulated since the last call (0 when idle).
   double consumeCrownDelta() => _lib == null ? 0.0 : _crownConsumeDelta();
+
+  // --- Crown scroll options (native parity) ---
+  // Null-safe against [WatchOSNativeBindings.forTesting]: reads return the
+  // defaults (1.0 multiplier, haptics on), writes are no-ops.
+
+  /// Scroll-sensitivity multiplier the engine applies per crown delta.
+  double get crownScrollMultiplier =>
+      _lib == null ? 1.0 : _crownScrollMultiplier();
+
+  /// Sets the scroll-sensitivity multiplier (non-positive values are ignored
+  /// by the native side).
+  set crownScrollMultiplier(double multiplier) {
+    if (_lib != null) _crownSetScrollMultiplier(multiplier);
+  }
+
+  /// Whether the crown detent-click haptic plays during scroll.
+  bool get crownDetentHaptics =>
+      _lib == null ? true : _crownDetentHaptics() != 0;
+
+  /// Enables/disables the crown detent-click haptic.
+  set crownDetentHaptics(bool enabled) {
+    if (_lib != null) _crownSetDetentHaptics(enabled ? 1 : 0);
+  }
 }

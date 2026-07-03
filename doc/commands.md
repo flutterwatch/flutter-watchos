@@ -36,8 +36,10 @@ where possible; watchOS-specific behaviour is called out per command.
   Build the watch app bundle (`Runner.app`).
 
   ```sh
-  # Simulator, debug (JIT — the only debug target)
-  flutter-watchos build watchos --simulator --debug
+  # Simulator — always a debug (JIT) build; the default mode is lowered
+  # automatically (an explicit --release/--profile with --simulator errors,
+  # because there is no AOT Simulator engine)
+  flutter-watchos build watchos --simulator
 
   # Physical watch, AOT
   flutter-watchos build watchos --profile

@@ -22,10 +22,16 @@ extern void flutter_watchos_screen_width(void);
 extern void flutter_watchos_screen_height(void);
 extern void flutter_watchos_screen_scale(void);
 extern void flutter_watchos_play_haptic(void);
+extern void flutter_watchos_status_bar_hidden(void);
+extern void flutter_watchos_set_status_bar_hidden(void);
 extern void flutter_watchos_crown_mode(void);
 extern void flutter_watchos_crown_set_mode(void);
 extern void flutter_watchos_crown_push_delta(void);
 extern void flutter_watchos_crown_consume_delta(void);
+extern void flutter_watchos_crown_scroll_multiplier(void);
+extern void flutter_watchos_crown_set_scroll_multiplier(void);
+extern void flutter_watchos_crown_detent_haptics(void);
+extern void flutter_watchos_crown_set_detent_haptics(void);
 
 @implementation GeneratedPluginRegistrant
 
@@ -43,10 +49,16 @@ extern void flutter_watchos_crown_consume_delta(void);
     (const void *)&flutter_watchos_screen_height,
     (const void *)&flutter_watchos_screen_scale,
     (const void *)&flutter_watchos_play_haptic,
+    (const void *)&flutter_watchos_status_bar_hidden,
+    (const void *)&flutter_watchos_set_status_bar_hidden,
     (const void *)&flutter_watchos_crown_mode,
     (const void *)&flutter_watchos_crown_set_mode,
     (const void *)&flutter_watchos_crown_push_delta,
     (const void *)&flutter_watchos_crown_consume_delta,
+    (const void *)&flutter_watchos_crown_scroll_multiplier,
+    (const void *)&flutter_watchos_crown_set_scroll_multiplier,
+    (const void *)&flutter_watchos_crown_detent_haptics,
+    (const void *)&flutter_watchos_crown_set_detent_haptics,
   };
   for (unsigned long _i = 0;
        _i < sizeof(_flutterWatchosFfiForcedReferences) / sizeof(_flutterWatchosFfiForcedReferences[0]);

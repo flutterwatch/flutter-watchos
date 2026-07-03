@@ -43,3 +43,7 @@ flutter:
           - flutter_watchos_crown_set_mode
           - flutter_watchos_crown_push_delta
           - flutter_watchos_crown_consume_delta
+          - flutter_watchos_crown_scroll_multiplier
+          - flutter_watchos_crown_set_scroll_multiplier
+          - flutter_watchos_crown_detent_haptics
+          - flutter_watchos_crown_set_detent_haptics

@@ -594,9 +594,12 @@ class NativeWatchosBundle extends Target {
     final Directory watchosOutputDir = buildDir.childDirectory('watchos');
     final Directory defaultDir = buildDir.childDirectory('flutter_assets');
 
-    if (watchosOutputDir.childFile('kernel_blob.bin').existsSync()) {
+    // Detect the bundle by AssetManifest.bin: EVERY build mode produces it
+    // (kernel_blob.bin exists only in debug bundles, and keying on it made
+    // release builds silently skip the copy below).
+    if (watchosOutputDir.childFile('AssetManifest.bin').existsSync()) {
       flutterAssetsSource = watchosOutputDir;
-    } else if (defaultDir.existsSync()) {
+    } else if (defaultDir.childFile('AssetManifest.bin').existsSync()) {
       flutterAssetsSource = defaultDir;
     }
 
@@ -604,12 +607,17 @@ class NativeWatchosBundle extends Target {
         .childDirectory('Flutter')
         .childDirectory('flutter_assets');
 
-    if (flutterAssetsSource != null) {
-      copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
-      globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
-    } else {
-      globals.logger.printTrace('flutter_assets not found in build output, skipping.');
+    if (flutterAssetsSource == null) {
+      // NEVER fall through silently: the Xcode copy phase would bundle
+      // whatever stale flutter_assets was staged by an earlier build, and the
+      // app would run old Dart with no error anywhere.
+      throwToolExit(
+        'flutter_assets missing from the build output '
+        '(${watchosOutputDir.path}) — cannot stage ${flutterAssetsTarget.path}.',
+      );
     }
+    copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
+    globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
   }
 
   /// Mirrors the build output's flutter_assets tree into [target].
@@ -626,7 +634,13 @@ class NativeWatchosBundle extends Target {
 
     for (final FileSystemEntity entity in source.listSync()) {
       final String name = source.fileSystem.path.basename(entity.path);
-      if (entity is Directory && (name.contains('Debug-') || name.contains('Release-'))) {
+      // Not Flutter assets, even though they sit in `build/watchos/`:
+      //  - `Debug-*` / `Release-*`: xcodebuild SYMROOT products
+      //  - `aot`: gen_snapshot intermediates (snapshot_assembly.S/.o, ~22 MB)
+      //    from _compileAotSnapshot — copying them shipped 22 MB of assembly
+      //    text inside every release app bundle.
+      if (entity is Directory &&
+          (name == 'aot' || name.contains('Debug-') || name.contains('Release-'))) {
         continue;
       }
       final String destPath = target.fileSystem.path.join(target.path, name);

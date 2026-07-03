@@ -28,4 +28,9 @@ class WatchOSNativeBindings {
   int get crownMode => 0;
   set crownMode(int mode) {}
   double consumeCrownDelta() => 0.0;
+
+  double get crownScrollMultiplier => 1.0;
+  set crownScrollMultiplier(double multiplier) {}
+  bool get crownDetentHaptics => true;
+  set crownDetentHaptics(bool enabled) {}
 }

@@ -66,8 +66,38 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
   Future<FlutterCommandResult> runCommand() async {
     final FlutterProject project = FlutterProject.current();
     final bool simulator = boolArg('simulator');
+
+    // The Simulator engine is JIT-only (there is no AOT watchsimulator engine
+    // artifact), so a simulator build is ALWAYS a debug (JIT) build: the app
+    // must ship kernel_blob.bin, which only the debug bundle contains. The
+    // `build` subcommand defaults to release, so quietly lower the default;
+    // an EXPLICIT AOT mode with --simulator is a contradiction — fail with
+    // guidance. Without this, a release+simulator build produced an app whose
+    // AOT App.dylib the JIT engine ignores, silently running whatever stale
+    // kernel was last staged into watchos/Flutter/flutter_assets.
+    BuildInfo buildInfo = await getBuildInfo();
+    if (simulator && buildInfo.mode != BuildMode.debug) {
+      final bool explicitMode = argResults!.wasParsed('release') ||
+          argResults!.wasParsed('profile') ||
+          (argParser.options.containsKey('jit-release') &&
+              argResults!.wasParsed('jit-release'));
+      if (explicitMode) {
+        throwToolExit(
+          '--${buildInfo.mode.cliName} is not supported with --simulator: the '
+          'watchOS Simulator engine is JIT-only, so simulator builds are '
+          'always debug. AOT (profile/release) builds target a physical '
+          'watch.\n'
+          'Use one of:\n'
+          '  flutter-watchos build watchos --simulator   # debug, on the Simulator\n'
+          '  flutter-watchos build watchos --profile     # AOT, on a physical watch\n'
+          '  flutter-watchos build watchos --release     # AOT, on a physical watch',
+        );
+      }
+      buildInfo = await getBuildInfo(forcedBuildMode: BuildMode.debug);
+    }
+
     final watchosBuildInfo = WatchosBuildInfo(
-      await getBuildInfo(),
+      buildInfo,
       targetArch: 'arm64',
       simulator: simulator,
     );

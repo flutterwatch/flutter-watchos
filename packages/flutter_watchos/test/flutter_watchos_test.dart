@@ -37,6 +37,24 @@ class _FakeBindings extends WatchOSNativeBindings {
   }
 }
 
+/// Fake bindings for [WatchCrownScrolling]: records the scroll options.
+class _FakeScrollOptionBindings extends WatchOSNativeBindings {
+  _FakeScrollOptionBindings() : super.forTesting();
+
+  double multiplier = 1.0;
+  bool detents = true;
+
+  @override
+  double get crownScrollMultiplier => multiplier;
+  @override
+  set crownScrollMultiplier(double value) => multiplier = value;
+
+  @override
+  bool get crownDetentHaptics => detents;
+  @override
+  set crownDetentHaptics(bool value) => detents = value;
+}
+
 /// Fake bindings for [WatchCrown]: records the routing mode and hands out a
 /// queued rotation delta.
 class _FakeCrownBindings extends WatchOSNativeBindings {
@@ -138,6 +156,161 @@ void main() {
         reason:
             'WatchCrownScroll must let notifications bubble to app listeners',
       );
+    });
+  });
+
+  group('WatchScrollPhysics', () {
+    const WatchScrollPhysics physics = WatchScrollPhysics();
+
+    FixedScrollMetrics overscrolled(double past) => FixedScrollMetrics(
+          minScrollExtent: 0,
+          maxScrollExtent: 1000,
+          pixels: 1000 + past,
+          viewportDimension: 248,
+          axisDirection: AxisDirection.down,
+          devicePixelRatio: 2.0,
+        );
+
+    test('resistance rises steeply and hits a hard cap', () {
+      // In range: same friction as iOS at rest…
+      expect(physics.frictionFactor(0), moreOrLessEquals(0.52));
+      // …but zero at (and past) the stretch cap — a hard native-style limit.
+      expect(physics.frictionFactor(0.12), 0);
+      expect(physics.frictionFactor(0.5), 0);
+      // Monotonically decreasing in between.
+      expect(physics.frictionFactor(0.03), greaterThan(physics.frictionFactor(0.06)));
+      expect(physics.frictionFactor(0.06), greaterThan(physics.frictionFactor(0.09)));
+    });
+
+    test('content cannot be dragged past the stretch cap', () {
+      // Negative user offset past the END = tensioning further out. At the
+      // cap (12% of a 248-pt viewport ≈ 29.8), it moves the content nowhere.
+      final double atCap =
+          physics.applyPhysicsToUserOffset(overscrolled(248 * 0.12), -50);
+      expect(atCap.abs(), lessThan(0.001));
+      // Well inside the cap, input still moves it (with resistance).
+      final double inside =
+          physics.applyPhysicsToUserOffset(overscrolled(5), -10);
+      expect(inside.abs(), greaterThan(0));
+      expect(inside.abs(), lessThan(10)); // resisted, not free
+    });
+
+    test('spring is much stiffer than the phone default (shallow bounce)', () {
+      expect(physics.spring.stiffness, greaterThanOrEqualTo(500));
+      // Default scroll spring is stiffness 100 — the watch settle must be
+      // several times firmer or flings visibly overshoot the list end.
+      expect(const BouncingScrollPhysics().spring.stiffness, lessThan(200));
+    });
+
+    test('one huge crown sample crossing the edge is still capped', () {
+      // The engine delivers up to ~120 logical px per crown sample. Stock
+      // bouncing physics applies NO friction to an event that starts in
+      // range, so a single sample crossing the edge would plant content most
+      // of a screen deep. Split + integrated friction must bound it.
+      final FixedScrollMetrics nearEnd = FixedScrollMetrics(
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+        pixels: 990, // 10 px of free travel left
+        viewportDimension: 248,
+        axisDirection: AxisDirection.down,
+        devicePixelRatio: 2.0,
+      );
+      final double moved =
+          physics.applyPhysicsToUserOffset(nearEnd, -120).abs();
+      // Free travel (10) + at most the stretch cap (~29.8), never the
+      // unfrictioned 120.
+      expect(moved, lessThan(10 + 248 * 0.12 + 0.001));
+      expect(moved, greaterThan(10)); // still crosses the edge with a stretch
+      // Fully in-range movement stays untouched.
+      final FixedScrollMetrics middle = FixedScrollMetrics(
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+        pixels: 500,
+        viewportDimension: 248,
+        axisDirection: AxisDirection.down,
+        devicePixelRatio: 2.0,
+      );
+      expect(physics.applyPhysicsToUserOffset(middle, -120), -120);
+    });
+
+    test('ballistic entry velocity is clamped (bounded bounce depth)', () {
+      // Stacked crown/wheel momentum can hand goBallistic tens of thousands
+      // of px/s; the simulation must start no faster than maxFlingVelocity or
+      // the edge bounce goes phone-deep.
+      final FixedScrollMetrics inRange = FixedScrollMetrics(
+        minScrollExtent: 0,
+        maxScrollExtent: 1000,
+        pixels: 500,
+        viewportDimension: 248,
+        axisDirection: AxisDirection.down,
+        devicePixelRatio: 2.0,
+      );
+      final Simulation sim =
+          physics.createBallisticSimulation(inRange, 30000)!;
+      expect(sim.dx(0).abs(),
+          lessThanOrEqualTo(physics.maxFlingVelocity * 1.01));
+    });
+
+    testWidgets('WatchCrownScroll installs the native behavior by default',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WatchCrownScroll(
+            child: ListView(children: const <Widget>[Text('row')]),
+          ),
+        ),
+      );
+      final BuildContext context = tester.element(find.text('row'));
+      expect(ScrollConfiguration.of(context), isA<WatchScrollBehavior>());
+      expect(ScrollConfiguration.of(context).getScrollPhysics(context),
+          isA<WatchScrollPhysics>());
+    });
+
+    testWidgets('nativePhysics: false keeps the ambient behavior',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WatchCrownScroll(
+            nativePhysics: false,
+            child: ListView(children: const <Widget>[Text('row')]),
+          ),
+        ),
+      );
+      final BuildContext context = tester.element(find.text('row'));
+      expect(ScrollConfiguration.of(context), isNot(isA<WatchScrollBehavior>()));
+    });
+  });
+
+  group('WatchCrownScrolling', () {
+    late _FakeScrollOptionBindings fake;
+
+    setUp(() {
+      fake = _FakeScrollOptionBindings();
+      WatchCrownScrolling.bindingsOverride = fake;
+    });
+    tearDown(() => WatchCrownScrolling.bindingsOverride = null);
+
+    test('defaults match native: high sensitivity, detents on', () {
+      expect(WatchCrownScrolling.sensitivity, WatchCrownSensitivity.high);
+      expect(WatchCrownScrolling.detentHaptics, isTrue);
+    });
+
+    test('sensitivity writes the native multiplier', () {
+      WatchCrownScrolling.sensitivity = WatchCrownSensitivity.low;
+      expect(fake.multiplier, 0.25);
+      expect(WatchCrownScrolling.sensitivity, WatchCrownSensitivity.low);
+      WatchCrownScrolling.sensitivity = WatchCrownSensitivity.medium;
+      expect(fake.multiplier, 0.5);
+      WatchCrownScrolling.sensitivity = WatchCrownSensitivity.high;
+      expect(fake.multiplier, 1.0);
+    });
+
+    test('detentHaptics writes the native flag', () {
+      WatchCrownScrolling.detentHaptics = false;
+      expect(fake.detents, isFalse);
+      expect(WatchCrownScrolling.detentHaptics, isFalse);
+      WatchCrownScrolling.detentHaptics = true;
+      expect(fake.detents, isTrue);
     });
   });
 
