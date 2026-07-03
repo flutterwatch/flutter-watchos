@@ -1,107 +1,164 @@
 # flutter-watchos
 
-A standalone CLI that builds and runs Flutter apps on **Apple Watch
-(watchOS)** — a custom embedder wrapping an unmodified Flutter SDK with
-pre-built watchOS engine artifacts. Flutter has no official watchOS support;
-this provides it.
+A Flutter toolchain for building and running Flutter apps on **Apple Watch (watchOS)**.
 
-> The watchOS engine is **closed-source** and never committed here. The CLI
-> consumes pre-built engine bundles only.
+`flutter-watchos` is a drop-in CLI companion to the Flutter SDK — same commands, same hot reload (on the Simulator), same DevTools — targeting watchOS instead of iOS.
 
-## This repository (CLI only)
+> **macOS only.** Xcode is required.
 
-```
-flutter-watchos/
-├── bin/                 # Shell + Dart entrypoints, pinned Flutter version, shared.sh
-├── lib/                 # The CLI (Dart) — DI overrides over flutter_tools
-│   ├── commands/        # build, run, create, devices, doctor, upgrade, plugin, …
-│   └── build_targets/   # xcodebuild orchestration + AOT (embedder model)
-├── templates/           # watchOS app scaffold emitted by `create`
-│   └── app/swift/watchos.tmpl/   # single independent watch app (WKWatchOnly)
-├── pubspec.yaml  analysis_options.yaml  LICENSE
-└── (flutter/, engine_artifacts/ — gitignored runtime)
-```
+> **Closed beta.** The watchOS engine ships as pre-built binaries tied to your account; access is currently by invite. Request access at [flutterwatch.dev](https://flutterwatch.dev), then `flutter-watchos login`.
 
-Supporting material (engine packaging scripts, demo apps, federated plugins)
-lives **outside** this repo in the surrounding workspace so the CLI stays
-CLI-only — see the workspace README one level up.
+## Current version
 
-## How watchOS differs from a normal Flutter target
+- flutter-watchos: `0.1.0`
+- Flutter SDK: `3.44.4` (`ad70ec4617166f1c38e5d2bfd388af71fda14f06`)
+- watchOS engine artifacts: `v0.1.0-flutter3.44.4`
 
-- `create` scaffolds a **single independent watch app** (`WKWatchOnly`,
-  `Runner.app`) — the minimum needed to `build` and `run`. It installs and
-  launches directly on the simulator or a paired watch. (App Store submission
-  additionally needs an iOS container archive; that wrapping is handled
-  separately at submit time, not in the run template.)
-- The watch app is a **SwiftUI app driving the Flutter embedder C API with
-  software rendering** (no GPU on Apple Watch): `Runner/FlutterRunner.swift`
-  hosts the engine, publishes CGImage frames, and forwards Digital Crown + touch
-  input. This is **not** the iOS `Flutter.framework` / plugin-registrar model.
-- The watch executable needs an **arm64_32** slice when
-  `WATCHOS_DEPLOYMENT_TARGET < 27.0`; the engine is arm64-only, so the template
-  ships a stub arm64_32 slice + a "Requires Apple Watch Series 9 or later"
-  fallback (`#if arch(arm64_32)`).
+## Installation
 
-## Quick commands
-
-```bash
-flutter-watchos login    # connect to your flutterwatch.dev account
+```sh
+git clone https://github.com/flutterwatch/flutter-watchos.git
+cd flutter-watchos
+export PATH="$PATH:$PWD/bin"
+flutter-watchos login      # connect your flutterwatch.dev account (beta access)
+flutter-watchos precache   # download the watchOS engine
 flutter-watchos doctor
-flutter-watchos create my_app --platforms=watchos
-flutter-watchos build watchos --simulator --debug
-flutter-watchos run -d <watch-simulator-id>
 ```
 
-## Documentation
+See [Getting started](doc/get-started.md) for the full setup guide.
 
-| Guide | Covers |
-|---|---|
-| [doc/get-started.md](doc/get-started.md) | Install → sign in → create → run |
-| [doc/commands.md](doc/commands.md) | Every supported command, with examples |
-| [doc/architecture.md](doc/architecture.md) | How the embedder works (rendering, input, text entry, platform identity) |
-| [doc/debug-app.md](doc/debug-app.md) | Hot reload, attach, logs, device quirks |
-| [doc/publish-app.md](doc/publish-app.md) | Release builds, iOS container, App Store |
-| [doc/accounts.md](doc/accounts.md) | Login, credentials, environment variables |
-| [doc/plugins.md](doc/plugins.md) | Using and writing watchOS plugins |
+## Usage
 
-## Engine artifacts
+`flutter-watchos` substitutes the original [`flutter`](https://docs.flutter.dev/reference/flutter-cli) CLI command.
 
-Engine binaries are downloaded from flutterwatch.dev, tied to your account
-(`flutter-watchos login`); during the closed beta, access is by invite. For
-local engine development, point the CLI at a packaged engine output instead:
+```sh
+# Check the installed tooling and list all connected devices.
+flutter-watchos doctor -v
+flutter-watchos devices
 
-```bash
-export WATCHOS_ENGINE_ARTIFACTS=/path/to/engine_artifacts
+# Create a new app project.
+flutter-watchos create my_watch_app --platforms=watchos
+cd my_watch_app
+
+# Build and run on a watchOS Simulator (debug — hot reload + DevTools).
+flutter-watchos run -d <simulator_id>
+
+# Build and run on a paired Apple Watch (AOT — profile has logging + DevTools).
+flutter-watchos run -d <watch_id> --profile
+flutter-watchos run -d <watch_id> --release
 ```
 
-## Beta status & known limitations
+- See [Supported commands](doc/commands.md) for all available commands and usage examples.
+- See [Getting started](doc/get-started.md) to create your first app and try **hot reload**.
+- To **update** flutter-watchos to the latest released version, run `flutter-watchos upgrade` (use `flutter-watchos upgrade --verify-only` to just check).
 
-flutter-watchos is in **closed beta** (access by invite at
-[flutterwatch.dev](https://flutterwatch.dev)). Current limitations:
+## Platform identity & limitations
 
-- **Apple Watch Series 9 / Ultra 2 or later** for on-device runs (the engine
-  is arm64-only; older watches get the fallback screen).
-- **No debug mode on a physical watch** (watchOS cannot run the Dart JIT) —
-  debug + hot reload on the Simulator, `--profile`/`--release` on device.
-- **Software rendering** — fine for watch-sized UIs; Simulator performance
-  is not representative, profile on a real watch.
-- **iOS plugins don't automatically work** — packages need a watchOS
-  implementation (see [doc/plugins.md](doc/plugins.md)); pure-Dart packages
-  are unaffected.
+flutter-watchos treats watchOS as its **own platform** at both the build and runtime layers. Read this section before adding dependencies to an existing iOS codebase — the separation has real consequences for plugins and cross-platform apps.
 
-Found something else? Please file a bug or beta-feedback issue.
+### Runtime identity
 
-## License & attribution
+On a watchOS build, the Dart VM reports:
 
-The CLI is BSD-3-Clause ([LICENSE](LICENSE)); it incorporates code from the
-Flutter tools and flutter-tizen — see
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). The pre-built engine
-artifacts bundle the Flutter engine and Dart SDK; their aggregated
-open-source license file ships inside each artifact.
+| API | Value on watchOS | Value on iOS |
+|---|---|---|
+| `Platform.operatingSystem` | `"watchos"` | `"ios"` |
+| `Platform.isIOS` | **`true`** | `true` |
+| `Platform.isWatchOS` | `true` | `false` |
+| `defaultTargetPlatform` | `TargetPlatform.iOS` | `TargetPlatform.iOS` |
+
+**`Platform.isIOS` is `true` on watchOS.** Apple Watch runs the same Darwin kernel and Foundation as iPhone and iPad — it's part of the iOS family. Standard Flutter widgets that branch on `Platform.isIOS` or `defaultTargetPlatform` already render with iOS styling (Cupertino, SF font) on the watch, with no Flutter framework changes required.
+
+The Flutter framework that flutter-watchos uses is unmodified. watchOS identity is contributed entirely by the Dart VM in our engine build and by the `flutter-watchos` CLI itself.
+
+### Plugin platform key
+
+A Flutter plugin advertises which platforms it supports under `flutter.plugin.platforms` in its `pubspec.yaml`. Plugins target watchOS by adding a `watchos:` entry there:
+
+```yaml
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        pluginClass: MyPlugin
+```
+
+A watchOS build only loads plugins that declare this key. Plugins targeting only `ios:` are not picked up — Apple Watch has a different surface (no WebKit, no GPU, Digital Crown input, a tiny screen), so the safe default is to require explicit opt-in.
+
+The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the watch-specific APIs the framework doesn't cover: Digital Crown scrolling and raw input, Taptic Engine haptics, device info, and the system-clock toggle. A plugin that only implements iOS or macOS needs a watchOS implementation added under this key — see [Using and writing watchOS plugins](doc/plugins.md). (An automated `plugin port` scaffolder, like flutter-tvos's, is planned.)
+
+### Writing cross-platform apps (iOS + Android + watchOS)
+
+If your app already targets iOS/Android and you're adding watchOS support, keep these patterns in mind:
+
+**1. Don't rely on `Platform.isIOS` alone for "phone/tablet iOS" logic.** It's also `true` on Apple Watch. Refine with `Platform.isWatch`:
+
+```dart
+import 'package:flutter_watchos/flutter_watchos.dart';
+
+if (FlutterWatchosPlatform.isIos) {        // iPhone / iPad only (NOT watchOS)
+  // Use iPhone-specific plugin
+}
+
+if (FlutterWatchosPlatform.isWatch) {      // Apple Watch only
+  // compact, crown-driven UI
+}
+
+if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
+  // Any iOS-family OS (Foundation present)
+}
+```
+
+**2. Design for the watch screen and the Digital Crown.** Apps are small, scrollable, single-focus. Wrap scrollables in `WatchCrownScroll` for the native crown feel, or take the crown as raw input with `WatchCrown` for games and pickers — see the [`flutter_watchos`](packages/flutter_watchos) README.
+
+**3. Plugin dependencies:** if your iOS app uses `url_launcher`, `shared_preferences`, `path_provider`, etc., each one needs a watchOS federated package or your watch build will compile but calls will throw `MissingPluginException` at runtime. Audit your `pubspec.yaml` for plugins with native iOS code before porting.
+
+**4. `ios/` and `watchos/` directories are independent.** `flutter-watchos create` scaffolds a `watchos/` project with its own Info.plist and SwiftUI runner. Don't share it with `ios/` — the build settings diverge (watchOS SDK, software rendering, arm64-only).
+
+### Known limitations
+
+- **Apple Watch Series 9 / Ultra 2 or later** for on-device runs. The engine is arm64-only; when `WATCHOS_DEPLOYMENT_TARGET < 27.0` the executable needs an arm64_32 slice, so the template ships a stub slice and a "Requires Apple Watch Series 9 or later" fallback screen for older watches.
+- **No debug (JIT) on a physical watch.** The watchOS device SDK removes the Mach APIs the Dart JIT VM needs, so device-debug cannot even be built. **Debug + hot reload run on the Simulator; a physical watch runs AOT** (`--profile` for logging/DevTools, `--release` for shipping).
+- **Software rendering.** Apple Watch has no usable GPU, so the engine rasterizes on the CPU (Skia) and delivers ready-made frames. Fine for watch-sized UIs; Simulator performance is not representative — profile on a real watch.
+- **iOS plugins don't automatically work.** Packages need a watchOS implementation (see the plugin key above); pure-Dart packages are unaffected.
+- **No WebKit / `webview_flutter`.** watchOS does not ship WebKit; plugins depending on `WKWebView` will not compile.
+- **App Store submission needs an iOS container.** `create` scaffolds a single independent watch app for `build`/`run`; wrapping it in an iOS companion archive for submission is handled separately — see [Publishing](doc/publish-app.md).
+
+Text input (the system keyboard), Digital Crown scrolling and haptics, and app-lifecycle events (`WidgetsBindingObserver`) are all supported.
+
+## Docs
+
+#### App development
+
+- [Getting started](doc/get-started.md)
+- [Supported commands](doc/commands.md)
+- [Debugging apps](doc/debug-app.md)
+- [Publishing to the App Store](doc/publish-app.md)
+- [Accounts & engine artifacts](doc/accounts.md)
+
+#### Plugin development
+
+- [Using and writing watchOS plugins](doc/plugins.md)
+
+#### Project internals
+
+- [Architecture](doc/architecture.md)
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+```sh
+# Run tests
+flutter/bin/dart test test/general
+```
+
+## License
+
+BSD 3-Clause — see [LICENSE](LICENSE).
+
+This project incorporates code from Flutter and flutter-tizen (both BSD 3-Clause). The pre-built engine artifacts bundle the Flutter engine and Dart SDK; their aggregated open-source license ships inside each artifact. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full attribution.
 
 ---
 
-_flutter-watchos is an independent project and is not affiliated with,
-endorsed by, or sponsored by Google LLC or Apple Inc. Flutter and Dart are
-trademarks of Google LLC. Apple Watch and watchOS are trademarks of
-Apple Inc._
+_flutter-watchos is an independent project and is not affiliated with, endorsed by, or sponsored by Google LLC or Apple Inc. Flutter and Dart are trademarks of Google LLC. Apple Watch and watchOS are trademarks of Apple Inc._
