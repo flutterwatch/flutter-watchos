@@ -9,28 +9,18 @@
 #include "flutter_embedder.h"
 
 // -----------------------------------------------------------------------------
-// Engine-level watchOS host runtime (exported C ABI from
-// libflutter_engine.dylib).
-//
-// ALL runtime logic lives INSIDE the engine: bootstrap (renderer, Dart
-// snapshots, window metrics, semantics), the frame->CGImage pipeline, touch
-// mapping, the complete Digital Crown scroll model (including the
-// package:flutter_watchos raw-crown handoff, which the engine resolves via
-// dlsym itself), and the text-input subsystem. The Swift host is generic glue:
-// it displays frames, forwards gesture points and raw crown deltas, plays the
-// detent haptic when the engine asks, and renders the invisible text-field
-// overlay from the rects the engine publishes. These symbols are always
-// present because the host links the engine, so they are declared (not
-// dlsym'd) here.
+// watchOS host runtime — the C entry points the Swift runner links against.
+// The runner is generic glue: it displays frames, forwards gesture points and
+// raw crown deltas, plays the detent haptic on request, and renders the
+// text-field overlay. These symbols are always present, so they are declared
+// (not dlsym'd) here.
 // -----------------------------------------------------------------------------
 
-// A rendered frame, delivered on the engine's raster thread. The CGImageRef is
-// BORROWED (+0, released by the engine after the callback returns): Swift/ARC
-// retains it automatically when the callback captures it; hop to the main
-// thread to publish it.
+// A rendered frame. Swift/ARC retains the CGImageRef when the callback captures
+// it; hop to the main thread to publish it.
 typedef void (*FlutterWatchOSFrameCallback)(void* context, CGImageRef frame);
 
-// The engine asks for one detent click (already distance- and rate-limited).
+// Request for one detent click.
 typedef void (*FlutterWatchOSCrownTickCallback)(void* context);
 
 // Boot and run the Flutter engine for the app bundle. Idempotent; returns
@@ -42,7 +32,7 @@ bool FlutterWatchOSHostRun(const char* bundle_path,
                            FlutterWatchOSFrameCallback frame_callback,
                            void* frame_context);
 
-// One touch sample in logical points; the engine tracks down/move/up phases.
+// Forward one touch sample in logical points. `ended` marks the final sample.
 void FlutterWatchOSHostTouch(double x_points, double y_points, bool ended);
 
 // Register the detent-haptic callback (the engine cannot play WatchKit
@@ -55,9 +45,8 @@ void FlutterWatchOSCrownSetTickCallback(FlutterWatchOSCrownTickCallback callback
 void FlutterWatchOSCrownDelta(double delta);
 
 // -----------------------------------------------------------------------------
-// Engine-level watchOS text input. The host renders an invisible native proxy
-// per published rect and forwards focus/edits; every protocol decision is the
-// engine's.
+// watchOS text input. The host overlays a native field for each editable rect
+// and forwards focus and edits (see WatchTextInput in FlutterRunner.swift).
 // -----------------------------------------------------------------------------
 typedef struct {
   int32_t node_id;

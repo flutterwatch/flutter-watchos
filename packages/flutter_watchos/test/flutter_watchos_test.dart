@@ -205,10 +205,10 @@ void main() {
     });
 
     test('one huge crown sample crossing the edge is still capped', () {
-      // The engine delivers up to ~120 logical px per crown sample. Stock
-      // bouncing physics applies NO friction to an event that starts in
-      // range, so a single sample crossing the edge would plant content most
-      // of a screen deep. Split + integrated friction must bound it.
+      // A single crown sample can be large. Stock bouncing physics applies NO
+      // friction to an event that starts in range, so a large sample crossing
+      // the edge would plant content most of a screen deep. Split + integrated
+      // friction must bound it.
       final FixedScrollMetrics nearEnd = FixedScrollMetrics(
         minScrollExtent: 0,
         maxScrollExtent: 1000,

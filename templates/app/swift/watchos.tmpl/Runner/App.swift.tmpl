@@ -91,10 +91,10 @@ struct FlutterHostView: View {
             .onChange(of: crownValue) { oldValue, newValue in
                 runner.sendCrownDelta(newValue - oldValue)
             }
-            // Text entry. An invisible native proxy sits over every Flutter
-            // text field (`textInput.fields`). Because it is present from the
-            // start, the user's first tap lands on a real native field → the
-            // system keyboard opens immediately (masked for `obscured` fields),
+            // Text entry. A near-transparent native field is overlaid on each
+            // Flutter text field (`textInput.fields`). Because it is present
+            // from the start, the user's first tap lands on it → the system
+            // keyboard opens immediately (masked for `obscured` fields),
             // pre-filled with the field's current value.
             .overlay {
                 ForEach(textInput.fields) { field in

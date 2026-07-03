@@ -178,8 +178,8 @@ double flutter_watchos_crown_consume_delta(void) {
 }
 
 // --- Crown scroll options (native parity) -----------------------------------
-// Dart sets these (FFI/UI thread); the ENGINE reads them per crown sample
-// (main thread) via dlsym. Same lock discipline as the raw crown bridge.
+// Dart sets these (FFI/UI thread); they are read per crown sample on the
+// main thread. Same lock discipline as the raw crown bridge.
 static double s_crown_scroll_multiplier = 1.0;
 static int32_t s_crown_detent_haptics = 1;
 

@@ -90,14 +90,13 @@ FLUTTER_WATCHOS_EXPORT double flutter_watchos_crown_consume_delta(void);
 
 // --- Crown scroll options (native parity) -----------------------------------
 // SwiftUI gives native developers `.digitalCrownRotation(sensitivity:)` and
-// `isHapticFeedbackEnabled`. These flags give Dart the same knobs for the
-// engine's crown SCROLL mode: the engine reads them per crown sample (main
-// thread) via dlsym — exactly like `flutter_watchos_crown_mode` — and Dart
-// sets them (FFI/UI thread) via WatchCrownScrolling. Raw mode is unaffected
+// `isHapticFeedbackEnabled`. These flags give Dart the same knobs for crown
+// scroll mode: Dart sets them (FFI/UI thread) via WatchCrownScrolling, and
+// they are read per crown sample on the main thread. Raw mode is unaffected
 // (raw consumers get the unscaled delta).
 
-/// Scroll-sensitivity multiplier applied to each crown delta before the
-/// engine's scroll model (1.0 = default/high, 0.5 ≈ medium, 0.25 ≈ low).
+/// Scroll-sensitivity multiplier applied to each crown delta
+/// (1.0 = default/high, 0.5 ≈ medium, 0.25 ≈ low).
 FLUTTER_WATCHOS_EXPORT double flutter_watchos_crown_scroll_multiplier(void);
 
 /// Sets the scroll-sensitivity multiplier. Non-positive values are ignored.

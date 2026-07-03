@@ -84,11 +84,11 @@ class WatchScrollPhysics extends BouncingScrollPhysics {
   ///
   ///  1. Stock physics applies NO friction to an input event that STARTS in
   ///     range. Finger drags deliver a few pixels per event, so crossing the
-  ///     edge unfrictioned is invisible on a phone — but crown samples are up
-  ///     to ~120 logical pixels each (the engine's per-sample cap), and one
-  ///     sample crossing the edge would plant the content most of a screen
-  ///     deep with no resistance. Such an event is split at the edge: the
-  ///     in-range part moves freely, the excess is friction-integrated.
+  ///     edge unfrictioned is invisible on a phone — but a single crown sample
+  ///     can move much more than a finger drag, and one sample crossing the
+  ///     edge would plant the content most of a screen deep with no
+  ///     resistance. Such an event is split at the edge: the in-range part
+  ///     moves freely, the excess is friction-integrated.
   ///
   ///  2. Stock friction freezes at the stretch limit — a dead zone where the
   ///     crown visibly stops doing anything. The native edge stays live: while

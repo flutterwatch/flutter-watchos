@@ -32,7 +32,7 @@ bool FlutterWatchOSHostRun(const char* bundle_path,
                            FlutterWatchOSFrameCallback frame_callback,
                            void* frame_context);
 
-// One touch sample in logical points; the engine tracks down/move/up phases.
+// Forward one touch sample in logical points. `ended` marks the final sample.
 void FlutterWatchOSHostTouch(double x_points, double y_points, bool ended);
 
 // Register the detent-haptic callback (the engine cannot play WatchKit
@@ -45,9 +45,8 @@ void FlutterWatchOSCrownSetTickCallback(FlutterWatchOSCrownTickCallback callback
 void FlutterWatchOSCrownDelta(double delta);
 
 // -----------------------------------------------------------------------------
-// Engine-level watchOS text input. The host renders an invisible native proxy
-// per published rect and forwards focus/edits; every protocol decision is the
-// engine's.
+// watchOS text input. The host overlays a native field for each editable rect
+// and forwards focus and edits (see WatchTextInput in FlutterRunner.swift).
 // -----------------------------------------------------------------------------
 typedef struct {
   int32_t node_id;
