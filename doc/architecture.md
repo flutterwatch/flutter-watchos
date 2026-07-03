@@ -40,9 +40,6 @@ hosts the Flutter engine. It is generic glue — identical for every app — and
 rendering, input, and text input are handled by the engine, so improvements
 ship with engine updates without touching your app project:
 
-- **Rendering.** Your Flutter UI is displayed by the runner. GPU-intensive
-  effects (custom fragment shaders, heavy blurs) aren't a good fit for the
-  watch — keep visuals lightweight and profile on a real device.
 - **Input.** Touch and the Digital Crown work out of the box, with a native
   scroll feel. Raw crown input is available to Dart via the `flutter_watchos`
   package's `WatchCrown` for games, pickers, and custom controls.

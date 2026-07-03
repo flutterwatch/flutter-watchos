@@ -119,7 +119,7 @@ if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
 
 - **Apple Watch Series 9 / Ultra 2 or later** for on-device runs. The engine is arm64-only; when `WATCHOS_DEPLOYMENT_TARGET < 27.0` the executable needs an arm64_32 slice, so the template ships a stub slice and a "Requires Apple Watch Series 9 or later" fallback screen for older watches.
 - **No debug (JIT) on a physical watch.** The watchOS device SDK removes the Mach APIs the Dart JIT VM needs, so device-debug cannot even be built. **Debug + hot reload run on the Simulator; a physical watch runs AOT** (`--profile` for logging/DevTools, `--release` for shipping).
-- **Profile on a physical watch.** The Simulator does not reflect real on-device performance — always validate on an actual Apple Watch before shipping, and keep visuals lightweight for watch-sized UIs.
+- **Profile on a physical watch.** The Simulator does not reflect real on-device performance — always validate on an actual Apple Watch before shipping.
 - **iOS plugins don't automatically work.** Packages need a watchOS implementation (see the plugin key above); pure-Dart packages are unaffected.
 - **No WebKit / `webview_flutter`.** watchOS does not ship WebKit; plugins depending on `WKWebView` will not compile.
 - **App Store submission needs an iOS container.** `create` scaffolds a single independent watch app for `build`/`run`; wrapping it in an iOS companion archive for submission is handled separately — see [Publishing](doc/publish-app.md).
