@@ -2,11 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:math' as math;
-
 import 'package:flutter/widgets.dart';
 
-import 'haptics.dart';
 import 'scroll_physics.dart';
 import 'watchos_ffi_bindings.dart';
 import 'watchos_info_platform.dart' as platform;
@@ -79,19 +76,19 @@ abstract final class WatchCrownScrolling {
   }
 }
 
-/// Gives the scrollables in [child] the full native watchOS feel.
+/// Gives the scrollables in [child] the native watchOS feel.
 ///
 /// The Digital Crown's scroll motion, acceleration and detent ticks are
-/// produced by the engine. This widget supplies the two pieces that can only
-/// come from the Flutter side:
+/// produced by the engine. This widget supplies the piece that can only come
+/// from the Flutter side: it installs [WatchScrollPhysics] for the subtree
+/// (via [ScrollConfiguration]), so content stops at its end with the small,
+/// live, firm bounce a native watchOS 26 list has, instead of the
+/// iPhone-style deep elastic stretch.
 ///
-///  * **Native edge feel** — installs [WatchScrollPhysics] for the subtree
-///    (via [ScrollConfiguration]), so content stops at its end with a small,
-///    firm bounce instead of the iPhone-style deep elastic stretch.
-///  * **Edge bump haptic** — plays the native "end of content" bump once per
-///    edge contact, because only Flutter knows when a scrollable has actually
-///    reached its limit. It listens for [OverscrollNotification] and re-arms
-///    when scrolling returns in-bounds.
+/// Note there is deliberately NO haptic at the list edge: native watchOS 26
+/// plays none — the end of content is communicated by the rubber-band alone.
+/// An app that wants its own edge cue can listen for its scrollable's metrics
+/// going out of range and call `WatchHaptics` itself.
 ///
 /// Wrap a scrollable subtree (commonly a whole screen or the app body):
 ///
@@ -103,84 +100,31 @@ abstract final class WatchCrownScrolling {
 ///
 /// Scrollables that pass an explicit `physics:` keep it (set
 /// [nativePhysics] to false to opt the subtree out entirely). On non-watchOS
-/// platforms and on the simulator the haptic is a safe no-op (see
-/// [WatchHaptics]), so this widget is harmless to leave in a cross-platform
-/// tree.
-class WatchCrownScroll extends StatefulWidget {
+/// platforms this simply applies the firmer physics, so it is harmless in a
+/// cross-platform tree.
+class WatchCrownScroll extends StatelessWidget {
   /// Creates a native-feel wrapper around [child].
   const WatchCrownScroll({
     super.key,
     required this.child,
-    this.edgeHaptic = WatchHapticType.stop,
-    this.minOverscroll = 0.5,
     this.nativePhysics = true,
   });
 
   /// The subtree containing the scrollable(s) to add native feel to.
   final Widget child;
 
-  /// Haptic played once when a scrollable first reaches its limit. Defaults to
-  /// [WatchHapticType.stop] — a firm "you've hit the end" bump.
-  final WatchHapticType edgeHaptic;
-
-  /// Minimum overscroll (in logical pixels) before the bump fires, to ignore
-  /// sub-pixel jitter at rest.
-  final double minOverscroll;
-
   /// Whether to install [WatchScrollPhysics] for the subtree. Defaults to
-  /// true; set false to keep Flutter's default physics and only add the edge
-  /// haptic.
+  /// true; set false to keep Flutter's default physics.
   final bool nativePhysics;
 
   @override
-  State<WatchCrownScroll> createState() => _WatchCrownScrollState();
-}
-
-class _WatchCrownScrollState extends State<WatchCrownScroll> {
-  // Debounce: one bump per edge entry, re-armed once scrolling leaves the edge.
-  bool _atEdge = false;
-
-  bool _onNotification(ScrollNotification notification) {
-    // Edge contact must be read from the METRICS going out of range, not from
-    // OverscrollNotification: with bouncing-style physics (ours included) the
-    // position elastically leaves the range and OverscrollNotification is
-    // NEVER dispatched — it is the clamping-physics "input rejected" event.
-    // Relying on it silently muted the bump for every bouncing scrollable.
-    if (notification is ScrollUpdateNotification ||
-        notification is OverscrollNotification ||
-        notification is ScrollEndNotification) {
-      final ScrollMetrics metrics = notification.metrics;
-      final double overscroll = metrics.hasPixels &&
-              metrics.hasContentDimensions
-          ? math.max(metrics.minScrollExtent - metrics.pixels,
-              metrics.pixels - metrics.maxScrollExtent)
-          : 0.0;
-      if (overscroll >= widget.minOverscroll) {
-        if (!_atEdge) {
-          _atEdge = true;
-          WatchHaptics.play(widget.edgeHaptic);
-        }
-      } else {
-        // Back in-bounds: re-arm so the next edge contact bumps.
-        _atEdge = false;
-      }
-    }
-    // Never consume the notification — let app listeners see it too.
-    return false;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    Widget result = NotificationListener<ScrollNotification>(
-      onNotification: _onNotification,
-      child: widget.child,
-    );
-    if (widget.nativePhysics) {
-      result = ScrollConfiguration(
-        behavior: const WatchScrollBehavior(),
-        child: result,
-      );
+    if (!nativePhysics) {
+      return child;
     }
-    return result;
+    return ScrollConfiguration(
+      behavior: const WatchScrollBehavior(),
+      child: child,
+    );
   }
 }
