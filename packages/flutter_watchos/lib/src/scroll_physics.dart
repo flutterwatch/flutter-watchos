@@ -35,17 +35,32 @@ import 'package:flutter/widgets.dart';
 /// it is safe in cross-platform code.
 class WatchScrollPhysics extends BouncingScrollPhysics {
   /// Creates watch-native scroll physics.
-  const WatchScrollPhysics({this.maxStretchFraction = 0.12, super.parent});
+  const WatchScrollPhysics({
+    this.maxStretchFraction = 0.12,
+    this.edgeRelaxation = 0.3,
+    super.parent,
+  });
 
   /// The maximum overscroll, as a fraction of the viewport, that a drag or
   /// crown turn can reach. Resistance grows steeply toward this limit and the
   /// content cannot be pulled past it.
   final double maxStretchFraction;
 
+  /// Fraction of the current overscroll released back toward the edge on
+  /// every input event while tensioning. This is what keeps the edge ALIVE
+  /// under sustained crown input, like the native home screen: instead of
+  /// freezing at the stretch cap (a dead zone where further rotation is
+  /// ignored), the stretch settles at an equilibrium proportional to how hard
+  /// the crown is being turned — slow turning holds a few points, a hard turn
+  /// holds near the cap, and the fluctuation of real crown deltas makes it
+  /// visibly breathe. When input stops, the regular spring settles it.
+  final double edgeRelaxation;
+
   @override
   WatchScrollPhysics applyTo(ScrollPhysics? ancestor) {
     return WatchScrollPhysics(
       maxStretchFraction: maxStretchFraction,
+      edgeRelaxation: edgeRelaxation,
       parent: buildParent(ancestor),
     );
   }
@@ -64,18 +79,29 @@ class WatchScrollPhysics extends BouncingScrollPhysics {
     return 0.52 * math.pow(1 - fraction, 2);
   }
 
-  /// Fixes an assumption of the stock bouncing physics that the Digital
-  /// Crown breaks: friction is only applied to input events that START out
-  /// of range. Finger drags deliver a few pixels per event, so crossing the
-  /// edge unfrictioned is invisible on a phone — but crown samples are up to
-  /// ~120 logical pixels each (the engine's per-sample cap), and one sample
-  /// crossing the edge would plant the content most of a screen deep with no
-  /// resistance at all. Split such an event at the edge: the in-range part
-  /// moves freely, the excess is friction-integrated from zero overscroll
-  /// (and therefore obeys [maxStretchFraction] like everything else).
+  /// Reworks overscroll input handling for crown-scale events. Two stock
+  /// assumptions break on the watch:
+  ///
+  ///  1. Stock physics applies NO friction to an input event that STARTS in
+  ///     range. Finger drags deliver a few pixels per event, so crossing the
+  ///     edge unfrictioned is invisible on a phone — but crown samples are up
+  ///     to ~120 logical pixels each (the engine's per-sample cap), and one
+  ///     sample crossing the edge would plant the content most of a screen
+  ///     deep with no resistance. Such an event is split at the edge: the
+  ///     in-range part moves freely, the excess is friction-integrated.
+  ///
+  ///  2. Stock friction freezes at the stretch limit — a dead zone where the
+  ///     crown visibly stops doing anything. The native edge stays live: while
+  ///     tensioning, each event both pushes (frictioned) and relaxes the
+  ///     stretch back by [edgeRelaxation], reaching a breathing equilibrium
+  ///     that tracks how hard the crown is turned (never past the cap, never
+  ///     dead).
   @override
   double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
-    if (!position.outOfRange && offset != 0) {
+    if (offset == 0) {
+      return 0;
+    }
+    if (!position.outOfRange) {
       // In-range travel available before the edge in the travel direction
       // (positive offset moves pixels toward min, negative toward max).
       final double free = offset > 0
@@ -84,24 +110,53 @@ class WatchScrollPhysics extends BouncingScrollPhysics {
       if (offset.abs() > free) {
         final double excess = offset.abs() - free;
         return offset.sign *
-            (free + _frictionedFromEdge(position.viewportDimension, excess));
+            (free + _integrateFriction(position.viewportDimension, 0, excess));
       }
       return offset;
     }
-    return super.applyPhysicsToUserOffset(position, offset);
+
+    final double overscrollPastStart =
+        math.max(position.minScrollExtent - position.pixels, 0.0);
+    final double overscrollPastEnd =
+        math.max(position.pixels - position.maxScrollExtent, 0.0);
+    final double overscrollPast =
+        math.max(overscrollPastStart, overscrollPastEnd);
+    final bool easing = (overscrollPastStart > 0.0 && offset < 0.0) ||
+        (overscrollPastEnd > 0.0 && offset > 0.0);
+    if (easing) {
+      // Turning back toward the content: stock behavior reads fine.
+      return super.applyPhysicsToUserOffset(position, offset);
+    }
+
+    // Tensioning while already stretched: push out (frictioned from the
+    // current stretch) minus the live relaxation pull-back. Net can be
+    // negative — the stretch shrinking under weak input IS the alive feel —
+    // but never snaps past the edge itself.
+    final double pushed = _integrateFriction(
+        position.viewportDimension, overscrollPast, offset.abs());
+    double net = pushed - overscrollPast * edgeRelaxation;
+    if (net < -overscrollPast) {
+      net = -overscrollPast;
+    }
+    return offset.sign * net;
   }
 
-  /// Overscroll produced by `input` pixels of user movement starting exactly
-  /// at the edge, integrating [frictionFactor] as the stretch grows. Bounded
-  /// by the stretch cap (friction reaches zero there).
-  double _frictionedFromEdge(double viewport, double input) {
-    double over = 0;
+  /// Overscroll produced by `input` pixels of user movement starting at
+  /// `startOverscroll` of existing stretch, integrating [frictionFactor] as
+  /// the stretch grows. Bounded by the stretch cap (friction reaches zero
+  /// there).
+  double _integrateFriction(
+      double viewport, double startOverscroll, double input) {
+    double over = startOverscroll;
+    double moved = 0;
     const int steps = 24;
     final double h = input / steps;
     for (int i = 0; i < steps; i++) {
-      over += h * frictionFactor(over / viewport);
+      final double step = h * frictionFactor(over / viewport);
+      over += step;
+      moved += step;
     }
-    return over;
+    return moved;
   }
 
   /// A stiff, slightly overdamped spring: the fling bounce is shallow and the

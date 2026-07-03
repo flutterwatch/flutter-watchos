@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 
 import 'haptics.dart';
@@ -139,15 +141,29 @@ class _WatchCrownScrollState extends State<WatchCrownScroll> {
   bool _atEdge = false;
 
   bool _onNotification(ScrollNotification notification) {
-    if (notification is OverscrollNotification) {
-      if (!_atEdge && notification.overscroll.abs() >= widget.minOverscroll) {
-        _atEdge = true;
-        WatchHaptics.play(widget.edgeHaptic);
-      }
-    } else if (notification is ScrollUpdateNotification ||
+    // Edge contact must be read from the METRICS going out of range, not from
+    // OverscrollNotification: with bouncing-style physics (ours included) the
+    // position elastically leaves the range and OverscrollNotification is
+    // NEVER dispatched — it is the clamping-physics "input rejected" event.
+    // Relying on it silently muted the bump for every bouncing scrollable.
+    if (notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification ||
         notification is ScrollEndNotification) {
-      // Back in-bounds (or stopped): re-arm so the next edge contact bumps.
-      _atEdge = false;
+      final ScrollMetrics metrics = notification.metrics;
+      final double overscroll = metrics.hasPixels &&
+              metrics.hasContentDimensions
+          ? math.max(metrics.minScrollExtent - metrics.pixels,
+              metrics.pixels - metrics.maxScrollExtent)
+          : 0.0;
+      if (overscroll >= widget.minOverscroll) {
+        if (!_atEdge) {
+          _atEdge = true;
+          WatchHaptics.play(widget.edgeHaptic);
+        }
+      } else {
+        // Back in-bounds: re-arm so the next edge contact bumps.
+        _atEdge = false;
+      }
     }
     // Never consume the notification — let app listeners see it too.
     return false;

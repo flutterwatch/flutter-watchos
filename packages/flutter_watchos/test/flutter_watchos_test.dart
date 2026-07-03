@@ -184,10 +184,12 @@ void main() {
 
     test('content cannot be dragged past the stretch cap', () {
       // Negative user offset past the END = tensioning further out. At the
-      // cap (12% of a 248-pt viewport ≈ 29.8), it moves the content nowhere.
+      // cap (12% of a 248-pt viewport ≈ 29.8) the push contributes nothing —
+      // the event's net movement is the RELAXATION back toward the edge
+      // (positive here = pixels decrease), never further out.
       final double atCap =
           physics.applyPhysicsToUserOffset(overscrolled(248 * 0.12), -50);
-      expect(atCap.abs(), lessThan(0.001));
+      expect(atCap, greaterThan(0)); // toward in-range, not frozen, not out
       // Well inside the cap, input still moves it (with resistance).
       final double inside =
           physics.applyPhysicsToUserOffset(overscrolled(5), -10);
@@ -231,6 +233,51 @@ void main() {
         devicePixelRatio: 2.0,
       );
       expect(physics.applyPhysicsToUserOffset(middle, -120), -120);
+    });
+
+    test('sustained crown input at the edge stays LIVE (native equilibrium)',
+        () {
+      // Simulate holding a fast crown turn at the end of the list: repeated
+      // max-size samples while out of range. The stretch must settle into a
+      // breathing equilibrium — never frozen (the old dead-cap behavior where
+      // further rotation was visibly ignored), never past the cap.
+      double pixels = 1000.0; // exactly at the end
+      final List<double> stretches = <double>[];
+      for (int i = 0; i < 40; i++) {
+        final FixedScrollMetrics metrics = FixedScrollMetrics(
+          minScrollExtent: 0,
+          maxScrollExtent: 1000,
+          pixels: pixels,
+          viewportDimension: 248,
+          axisDirection: AxisDirection.down,
+          devicePixelRatio: 2.0,
+        );
+        final double moved = physics.applyPhysicsToUserOffset(metrics, -120);
+        pixels -= moved; // negative offset increases pixels (see framework)
+        stretches.add(pixels - 1000);
+      }
+      final double equilibrium = stretches.last;
+      // Settled well below the hard cap but meaningfully stretched.
+      expect(equilibrium, greaterThan(5));
+      expect(equilibrium, lessThan(248 * 0.12));
+      // Converged: the last steps barely move (stable equilibrium)…
+      expect((stretches[39] - stretches[38]).abs(), lessThan(0.5));
+      // …and a WEAKER sustained input settles to a SMALLER stretch: the edge
+      // tracks how hard the crown is turned instead of pinning at a cap.
+      double weakPixels = 1000.0;
+      for (int i = 0; i < 40; i++) {
+        final FixedScrollMetrics metrics = FixedScrollMetrics(
+          minScrollExtent: 0,
+          maxScrollExtent: 1000,
+          pixels: weakPixels,
+          viewportDimension: 248,
+          axisDirection: AxisDirection.down,
+          devicePixelRatio: 2.0,
+        );
+        weakPixels -= physics.applyPhysicsToUserOffset(metrics, -10);
+      }
+      expect(weakPixels - 1000, greaterThan(0));
+      expect(weakPixels - 1000, lessThan(equilibrium));
     });
 
     test('ballistic entry velocity is clamped (bounded bounce depth)', () {
