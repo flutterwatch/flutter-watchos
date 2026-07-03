@@ -10,11 +10,12 @@ import 'package:flutter_tools/src/base/platform.dart';
 /// The production flutterwatch.dev API base (auth + artifact downloads).
 const String kDefaultWatchosApiBase = 'https://api.flutterwatch.dev';
 
-/// Feature flag for API-gated artifact downloads. While `false`, downloads
-/// use the public GitHub Releases URL unless `WATCHOS_ARTIFACTS_API` is set.
-/// Flip to `true` once the artifact service is live to make the API the
-/// default for everyone.
-const bool kArtifactApiByDefault = false;
+/// Feature flag for API-gated artifact downloads. When `true`, downloads route
+/// through the authenticated flutterwatch.dev service ([kDefaultWatchosApiBase]).
+/// Enabled 2026-07-03 now that the service is live at api.flutterwatch.dev with
+/// the engine artifacts uploaded. `WATCHOS_ARTIFACTS_API` still overrides the
+/// base URL (e.g. for a staging Worker).
+const bool kArtifactApiByDefault = true;
 
 /// The artifact API base URL, or `null` when the legacy GitHub Releases
 /// download path should be used.
