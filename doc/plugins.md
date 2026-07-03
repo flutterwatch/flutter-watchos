@@ -16,9 +16,15 @@ the toolchain's first-party package (FFI, no method channels):
 - `WatchCrown` — Digital Crown as a raw rotation input for games and custom
   controls
 
+During the closed beta the package isn't on pub.dev yet — depend on it from
+the repo you cloned (via a git or path dependency):
+
 ```yaml
 dependencies:
-  flutter_watchos: ^latest
+  flutter_watchos:
+    git:
+      url: https://github.com/flutterwatch/flutter-watchos.git
+      path: packages/flutter_watchos
 ```
 
 ## Using existing pub.dev plugins
@@ -28,11 +34,9 @@ dependencies:
   runner is not the iOS `Flutter.framework` model, so a plugin's `ios/`
   implementation is never loaded. A plugin needs an explicit watchOS
   implementation (a federated `*_watchos` package) to do native work.
-- Check what a project pulls in with:
-
-  ```sh
-  flutter-watchos plugin list
-  ```
+- To see what native plugins a project pulls in, audit its `pubspec.yaml`
+  for packages with an `ios:`/`macos:` platform key but no `watchos:` one —
+  those compile but throw `MissingPluginException` at runtime.
 
 ## Writing a watchOS plugin
 
