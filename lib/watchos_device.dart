@@ -8,6 +8,7 @@ import 'dart:io' show Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -472,6 +473,40 @@ class WatchosDevice extends Device {
     bool prebuiltApplication = false,
     String? userIdentifier,
   }) async {
+    // Mode/target contradictions fail here, with guidance, before anything is
+    // built: debug needs the JIT engine, which exists only for the Simulator
+    // (the watchOS device SDK removes the Mach APIs the Dart JIT VM relies
+    // on), and the Simulator engine is JIT-only, so AOT modes need a physical
+    // watch. Without this check the engine lookup fails mid-build with a bare
+    // "libflutter_engine.dylib not found — run precache", which cannot help.
+    // `build watchos` enforces the same rules; `run` must too, because the
+    // daemon (IDE) path skips RunCommand's supportsRuntimeMode check.
+    if (!prebuiltApplication) {
+      final BuildMode mode = debuggingOptions.buildInfo.mode;
+      if (!isSimulator && mode == BuildMode.debug) {
+        throwToolExit(
+          'Debug mode is not supported on a physical Apple Watch: it needs a '
+          'JIT engine, which cannot be built for watchOS (the device SDK '
+          'removes the Mach APIs the Dart JIT VM relies on).\n'
+          'Use one of:\n'
+          '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
+          '  flutter-watchos run -d $id --release   # AOT, fastest\n'
+          'For hot reload and fast iteration, run on the watchOS Simulator, '
+          'where debug (JIT) mode works.',
+        );
+      }
+      if (isSimulator && mode != BuildMode.debug) {
+        throwToolExit(
+          '--${mode.cliName} is not supported on the watchOS Simulator: its '
+          'engine is JIT-only, so Simulator runs are always debug. AOT '
+          '(profile/release) runs target a physical watch.\n'
+          'Use one of:\n'
+          '  flutter-watchos run -d $id             # debug, on the Simulator\n'
+          '  flutter-watchos run -d <watch> --${mode.cliName}',
+        );
+      }
+    }
+
     final FlutterProject project = FlutterProject.current();
 
     // 1. Build the watchOS app (unless prebuilt)

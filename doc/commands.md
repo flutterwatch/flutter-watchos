@@ -145,6 +145,11 @@ where possible; watchOS-specific behaviour is called out per command.
   flutter-watchos run -d <watch-id> --profile      # AOT on a physical watch
   ```
 
+  Mode and target must agree: a physical watch needs `--profile` or
+  `--release` (there is no device debug/JIT engine), and a simulator run is
+  always debug (its engine is JIT-only). The tool rejects the impossible
+  combinations with guidance instead of attempting the build.
+
   Physical-watch installs go through `devicectl` to the paired watch; see
   [debug-app.md](debug-app.md) for pairing/tunnel troubleshooting.
 

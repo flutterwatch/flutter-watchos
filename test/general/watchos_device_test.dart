@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 
 import '../src/common.dart';
@@ -110,6 +111,43 @@ void main() {
       expect(device.supportsRuntimeMode(BuildMode.profile), isTrue);
       expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
+    });
+
+    // There is no device debug engine (the watchOS device SDK removes the
+    // Mach APIs the Dart JIT VM needs) and no Simulator AOT engine, so
+    // startApp must reject the two impossible mode/target combinations with
+    // guidance — BEFORE building, where the failure would otherwise surface
+    // as a bare "libflutter_engine.dylib not found → run precache".
+    testWithoutContext('startApp rejects debug mode on a physical watch with guidance', () async {
+      final device = WatchosDevice(
+        'physical-id',
+        name: 'My Watch',
+        logger: BufferLogger.test(),
+        isSimulator: false,
+      );
+
+      await expectLater(
+        device.startApp(null, debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug)),
+        throwsToolExit(message: RegExp(r'Debug mode is not supported on a physical Apple Watch[\s\S]*--profile[\s\S]*--release[\s\S]*Simulator')),
+      );
+    });
+
+    testWithoutContext('startApp rejects AOT modes on the Simulator with guidance', () async {
+      final device = WatchosDevice(
+        'sim-id',
+        name: 'Apple Watch Series 11 (46mm)',
+        logger: BufferLogger.test(),
+        isSimulator: true,
+      );
+
+      await expectLater(
+        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.release)),
+        throwsToolExit(message: RegExp(r'--release is not supported on the watchOS Simulator[\s\S]*JIT-only[\s\S]*physical watch')),
+      );
+      await expectLater(
+        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.profile)),
+        throwsToolExit(message: RegExp(r'--profile is not supported on the watchOS Simulator')),
+      );
     });
   });
 }
