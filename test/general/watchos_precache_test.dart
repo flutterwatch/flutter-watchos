@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/file.dart';
+import 'package:file/memory.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_watchos/commands/precache.dart';
+import 'package:flutter_watchos/watchos_cache.dart';
 
 import '../src/common.dart';
 
@@ -68,6 +71,38 @@ void main() {
       // --all-platforms. The featureless `universal` stays.
       expect(_names(selected), isNot(contains('web')));
       expect(_names(selected), contains('universal'));
+    });
+  });
+
+  group('apiGateErrorCode', () {
+    // The download loop uses this to decide whether an artifact-API gate is
+    // fatal (auth problems) or skippable (release zips during the beta).
+    late MemoryFileSystem fs;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+    });
+
+    testWithoutContext('extracts the error code from a JSON gate response', () {
+      final File file = fs.file('resp.json')
+        ..writeAsStringSync(
+            '{"error":"release_not_in_beta","message":"Release engine '
+            'artifacts are not part of the closed beta."}');
+      expect(apiGateErrorCode(file), 'release_not_in_beta');
+    });
+
+    testWithoutContext('returns null for binary zip payloads', () {
+      final File file = fs.file('artifact.zip')
+        ..writeAsBytesSync(<int>[0x50, 0x4B, 0x03, 0x04, 0xFF, 0xFE]);
+      expect(apiGateErrorCode(file), isNull);
+    });
+
+    testWithoutContext('returns null when the file is missing or shapeless', () {
+      expect(apiGateErrorCode(fs.file('nope.json')), isNull);
+      final File list = fs.file('list.json')..writeAsStringSync('[1,2,3]');
+      expect(apiGateErrorCode(list), isNull);
+      final File noError = fs.file('ok.json')..writeAsStringSync('{"ok":true}');
+      expect(apiGateErrorCode(noError), isNull);
     });
   });
 }

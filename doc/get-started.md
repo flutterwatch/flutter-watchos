@@ -16,8 +16,10 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 - A watchOS Simulator runtime (Xcode → Settings → Components), or a paired
   physical Apple Watch (Series 9 / Ultra 2 or later) for on-device runs.
 - A [flutterwatch.dev](https://flutterwatch.dev) account — engine artifact
-  downloads are tied to your account. During the closed beta, access is by
-  invite.
+  downloads are tied to your account. Joining the closed beta is self-serve:
+  sign in with GitHub at [api.flutterwatch.dev](https://api.flutterwatch.dev)
+  and click "Join the beta" — you're in immediately. Beta accounts build and
+  run in debug and profile modes.
 
 ## 1. Install the CLI
 
@@ -41,6 +43,10 @@ flutter-watchos doctor   # verifies Xcode, SDKs, simulators, and engine
 `login` prints a URL and a short code — open the URL, sign in with GitHub, and
 confirm the code. Only the `Flutter` and `Xcode` entries in `doctor` are
 required; Android-related warnings can be ignored.
+
+During the closed beta, `precache` fetches the debug (Simulator) and profile
+(device) engines; the release engines are reported as "not in the closed
+beta, skipped" — that is expected and everything you need.
 
 ```
 $ flutter-watchos doctor

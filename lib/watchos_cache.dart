@@ -22,6 +22,29 @@ import 'watchos_auth.dart';
 
 const String kWatchosEngineStampName = 'watchos-sdk';
 
+/// Extracts the machine-readable `error` code from an artifact-API gate
+/// response body (e.g. `beta_access_required`, `release_not_in_beta`), or
+/// null when the file is missing or not a JSON gate response.
+String? apiGateErrorCode(File responseFile) {
+  if (!responseFile.existsSync()) {
+    return null;
+  }
+  try {
+    final Object? data = json.decode(responseFile.readAsStringSync());
+    if (data is Map<String, Object?>) {
+      final Object? error = data['error'];
+      if (error is String && error.isNotEmpty) {
+        return error;
+      }
+    }
+  } on FormatException {
+    // Binary zip data or truncated body — not a gate response.
+  } on FileSystemException {
+    // Disappeared between existsSync() and read.
+  }
+  return null;
+}
+
 /// The default GitHub Releases base URL for engine artifact zips.
 /// Tag and filename are appended: {base}/{tag}/{name}.zip
 const String kDefaultEngineBaseUrl =
@@ -296,6 +319,17 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           if (apiMode) {
             final String httpCode = curlResult.stdout.trim();
             if (curlResult.exitCode != 0 || httpCode != '200') {
+              // Release engines are not part of the closed beta. Skip them so
+              // `precache` completes with the debug + profile artifacts a
+              // beta account can actually use; anything else stays fatal.
+              if (apiGateErrorCode(tempZip) == 'release_not_in_beta') {
+                status.cancel();
+                _logger.printStatus(
+                  _treeLine(index, _artifactZipNames.length,
+                      '${_friendlyName(zipName)} — not in the closed beta, skipped'),
+                );
+                continue;
+              }
               status.cancel();
               throwToolExit(_apiGateMessage(zipName, httpCode, tempZip, curlResult));
             }
@@ -342,6 +376,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   /// (not signed in, no access) arrive as JSON with a human-readable
   /// `message` — surface that verbatim so access policy and wording stay
   /// entirely server-side.
+  ///
+  /// See also [apiGateErrorCode], which extracts the machine-readable
+  /// `error` code used to decide whether a gate is fatal or skippable.
   String _apiGateMessage(
     String zipName,
     String httpCode,
