@@ -3,4 +3,4 @@
 // found in the LICENSE file.
 
 // Web stub — dart:io is not available on Web.
-bool get isApple => false;
+bool get isWatch => false;

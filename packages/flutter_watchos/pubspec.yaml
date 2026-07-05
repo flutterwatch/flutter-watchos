@@ -1,6 +1,6 @@
 name: flutter_watchos
 description: Platform detection and utilities for Flutter apps running on Apple Watch (watchOS). Provides runtime checks for watchOS, device info, capability queries, and Taptic Engine haptics.
-version: 0.1.0-beta.1
+version: 0.1.0-beta.2
 homepage: https://flutterwatch.dev
 repository: https://github.com/flutterwatch/flutter-watchos
 issue_tracker: https://github.com/flutterwatch/flutter-watchos/issues

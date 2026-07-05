@@ -30,7 +30,7 @@ abstract final class WatchStatusBar {
 
   static WatchOSNativeBindings get _native {
     if (_bindings == null) {
-      if (platform.isApple) {
+      if (platform.isWatch) {
         _bindings = WatchOSNativeBindings();
       } else {
         _bindings = WatchOSNativeBindings.forTesting();
@@ -40,13 +40,13 @@ abstract final class WatchStatusBar {
   }
 
   /// Whether the app has requested the system time hidden.
-  static bool get hidden => platform.isApple && _native.statusBarHidden;
+  static bool get hidden => platform.isWatch && _native.statusBarHidden;
 
   /// Requests the system time hidden (`true`) or shown (`false`, default).
   ///
   /// The watch host applies the change on the next rendered frame.
   static set hidden(bool value) {
-    if (!platform.isApple) return;
+    if (!platform.isWatch) return;
     _native.statusBarHidden = value;
   }
 }

@@ -48,7 +48,7 @@ abstract final class WatchCrownScrolling {
   static WatchOSNativeBindings? _bindings;
   static WatchCrownSensitivity _sensitivity = WatchCrownSensitivity.high;
 
-  static WatchOSNativeBindings get _native => _bindings ??= platform.isApple
+  static WatchOSNativeBindings get _native => _bindings ??= platform.isWatch
       ? WatchOSNativeBindings()
       : WatchOSNativeBindings.forTesting();
 

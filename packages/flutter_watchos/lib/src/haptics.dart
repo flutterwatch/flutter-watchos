@@ -59,7 +59,7 @@ abstract final class WatchHaptics {
 
   static WatchOSNativeBindings get _native {
     if (_bindings == null) {
-      if (platform.isApple) {
+      if (platform.isWatch) {
         _bindings = WatchOSNativeBindings();
       } else {
         _bindings = WatchOSNativeBindings.forTesting();
@@ -70,7 +70,7 @@ abstract final class WatchHaptics {
 
   /// Plays the given haptic [type]. No-op off-device.
   static void play(WatchHapticType type) {
-    if (!platform.isApple) return;
+    if (!platform.isWatch) return;
     _native.playHaptic(type.rawValue);
   }
 

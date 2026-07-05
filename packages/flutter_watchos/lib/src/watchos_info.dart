@@ -67,11 +67,12 @@ class WatchOSInfo {
 
   static WatchOSNativeBindings get _native {
     if (_bindings == null) {
-      // Only attempt FFI symbol lookup on Apple platforms where the native
-      // watchOS library is linked. platform.isApple returns false on Web at
-      // compile time via conditional imports, so no dart:io usage reaches the
-      // Web compiler.
-      if (platform.isApple) {
+      // Only attempt FFI symbol lookup in an actual watchOS process — the
+      // symbols are not linked on iPhone/iPad, macOS, or test hosts, where a
+      // lookup would throw "symbol not found". platform.isWatch returns false
+      // on Web at compile time via conditional imports, so no dart:io usage
+      // reaches the Web compiler.
+      if (platform.isWatch) {
         _bindings = WatchOSNativeBindings();
       } else {
         _bindings = _UnsupportedPlatformBindings();

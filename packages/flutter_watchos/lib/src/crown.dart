@@ -72,7 +72,7 @@ class WatchCrown {
 
   WatchOSNativeBindings? _bindings;
 
-  WatchOSNativeBindings get _native => _bindings ??= platform.isApple
+  WatchOSNativeBindings get _native => _bindings ??= platform.isWatch
       ? WatchOSNativeBindings()
       : WatchOSNativeBindings.forTesting();
 

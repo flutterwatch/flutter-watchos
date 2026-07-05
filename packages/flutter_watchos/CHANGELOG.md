@@ -1,3 +1,15 @@
+## 0.1.0-beta.2
+
+* **Fix:** the package now no-ops correctly on iPhone/iPad. The native-symbol
+  gate used `Platform.isIOS`, which is also `true` on real iOS, so
+  cross-platform apps crashed with "symbol not found" when calling
+  `WatchCrown`, `WatchHaptics`, `WatchStatusBar`, `WatchCrownScrolling`, or
+  `WatchOSInfo` off-watch. The gate now checks for an actual watchOS process
+  (`Platform.operatingSystem == 'watchos'`), so the documented
+  "safe no-op on non-watchOS platforms" behavior holds everywhere: haptics and
+  status-bar calls do nothing, the crown stream never emits, `drain()`
+  returns 0, and `WatchOSInfo.isWatchOS` reports `false`.
+
 ## 0.1.0-beta.1
 
 * Initial beta release.
