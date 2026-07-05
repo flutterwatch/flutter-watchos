@@ -338,6 +338,61 @@ List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPlug
   return messages;
 }
 
+/// Federated platform-implementation packages (`foo_android`,
+/// `foo_foundation`, …) and platform interfaces. These are internal halves of
+/// some other plugin the user chose; auditing them individually would only
+/// repeat the aggregator's line as noise.
+final RegExp _federatedImplementationSuffix = RegExp(
+  r'_(android|ios|linux|macos|windows|web|foundation|darwin|avfoundation|platform_interface)$',
+);
+
+/// Builds the developer-facing warning lines for plugins in the dependency
+/// graph that ship native code for other platforms but have no watchOS
+/// implementation. Such plugins never break the build — their native code is
+/// simply not bundled — but calling them on the watch fails at runtime
+/// (`MissingPluginException`, or an FFI "symbol not found" `ArgumentError`).
+///
+/// [pluginPlatforms] maps each plugin package name to the platform keys it
+/// declares under `flutter.plugin.platforms` (empty list = legacy pre-federated
+/// plugin, which is implicitly ios/android). Public so tests can drive it
+/// without faking a project tree.
+List<String> auditPluginsWithoutWatchosSupport({
+  required Map<String, List<String>> pluginPlatforms,
+}) {
+  final Set<String> allNames = pluginPlatforms.keys.toSet();
+  final unsupported = <String>[];
+  for (final MapEntry<String, List<String>> entry in pluginPlatforms.entries) {
+    final String name = entry.key;
+    final platforms = List<String>.of(entry.value)..sort();
+    if (platforms.contains('watchos')) {
+      continue;
+    }
+    if (_federatedImplementationSuffix.hasMatch(name)) {
+      continue;
+    }
+    // A manually added (not yet endorsed) watchOS implementation counts.
+    if (allNames.contains('${name}_watchos')) {
+      continue;
+    }
+    final String label = platforms.isEmpty ? 'legacy ios/android' : platforms.join(', ');
+    unsupported.add('  - $name ($label)');
+  }
+  if (unsupported.isEmpty) {
+    return const <String>[];
+  }
+  unsupported.sort();
+  const header =
+      'The following plugin(s) have no watchOS implementation. The build will '
+      'succeed, but calling them on the watch fails at runtime '
+      '(MissingPluginException, or an FFI "symbol not found" error) unless '
+      'the calls are guarded with FlutterWatchosPlatform.isWatch:';
+  return <String>[
+    header,
+    ...unsupported,
+    'See doc/plugins.md in the flutter-watchos repo for details.',
+  ];
+}
+
 /// Collects the C symbols that must be force-referenced from the Runner so the
 /// static linker keeps them in the binary, in stable declaration order with
 /// duplicates removed.
@@ -432,6 +487,22 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
     allPluginNames: _findAllPluginNames(project),
   );
   recommendations.forEach(globals.logger.printWarning);
+
+  // Surface plugins that will silently lack native code on the watch, so the
+  // first hint isn't a runtime exception on the device.
+  final pluginPlatforms = <String, List<String>>{};
+  for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
+    final dynamic platformsYaml = dep.pluginYaml['platforms'];
+    pluginPlatforms[dep.name] = platformsYaml is YamlMap
+        ? platformsYaml.keys.whereType<String>().toList()
+        : <String>[];
+  }
+  final List<String> unsupported = auditPluginsWithoutWatchosSupport(
+    pluginPlatforms: pluginPlatforms,
+  );
+  if (unsupported.isNotEmpty) {
+    globals.logger.printWarning(unsupported.join('\n'));
+  }
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
 

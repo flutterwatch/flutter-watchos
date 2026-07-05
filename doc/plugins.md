@@ -34,9 +34,22 @@ dependencies:
   runner is not the iOS `Flutter.framework` model, so a plugin's `ios/`
   implementation is never loaded. A plugin needs an explicit watchOS
   implementation (a federated `*_watchos` package) to do native work.
-- To see what native plugins a project pulls in, audit its `pubspec.yaml`
-  for packages with an `ios:`/`macos:` platform key but no `watchos:` one —
-  those compile but throw `MissingPluginException` at runtime.
+- You don't have to audit this by hand: `flutter-watchos build` / `run`
+  print a warning listing every plugin in the dependency graph that has
+  native code for other platforms but no `watchos:` implementation.
+- Those plugins compile fine — their native code just isn't bundled — and
+  throw `MissingPluginException` at runtime on the watch.
+- **FFI packages behave the same way, just with a different error.** A
+  package that does `DynamicLibrary.open(...)` or process-symbol lookups
+  never breaks the *build* — its native library simply isn't bundled into
+  the watch target (native-assets build hooks are skipped for watchOS too).
+  But the first *call* on the watch throws an `ArgumentError`
+  ("Failed to load dynamic library" / "Failed to lookup symbol").
+  Watch out for plugins that guard their FFI behind `Platform.isIOS`: that
+  is also `true` on watchOS, so they will confidently attempt the load and
+  fail. Guard watch code paths with `FlutterWatchosPlatform.isWatch` and
+  only call such plugins when it is `false` — or on strict
+  `FlutterWatchosPlatform.isIos`.
 
 ## Writing a watchOS plugin
 

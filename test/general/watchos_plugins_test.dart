@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_watchos/watchos_plugins.dart'
     show
         WatchosPlugin,
+        auditPluginsWithoutWatchosSupport,
         ensureReadyForWatchosTooling,
         recommendWatchosPluginsToInstall;
 
@@ -168,6 +169,76 @@ void main() {
         recommendWatchosPluginsToInstall(
           allPluginNames: const <String>['some_plugin', 'url_launcher'],
         ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('auditPluginsWithoutWatchosSupport', () {
+    testWithoutContext('lists a plugin with native platforms but no watchos', () {
+      final List<String> lines = auditPluginsWithoutWatchosSupport(
+        pluginPlatforms: <String, List<String>>{
+          'sensors_plus': <String>['ios', 'android', 'web'],
+        },
+      );
+      expect(lines, isNotEmpty);
+      expect(lines.first, contains('no watchOS implementation'));
+      expect(lines.join('\n'), contains('sensors_plus (android, ios, web)'));
+      expect(lines.join('\n'), contains('FlutterWatchosPlatform.isWatch'));
+    });
+
+    testWithoutContext('skips plugins that declare watchos support', () {
+      expect(
+        auditPluginsWithoutWatchosSupport(
+          pluginPlatforms: <String, List<String>>{
+            'flutter_watchos': <String>['watchos'],
+            'hybrid': <String>['ios', 'watchos'],
+          },
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('skips federated implementation packages', () {
+      // Only the aggregator should be reported — not its per-platform halves,
+      // which the user never chose directly.
+      final List<String> lines = auditPluginsWithoutWatchosSupport(
+        pluginPlatforms: <String, List<String>>{
+          'path_provider': <String>['ios', 'android'],
+          'path_provider_android': <String>['android'],
+          'path_provider_foundation': <String>['ios', 'macos'],
+          'path_provider_platform_interface': <String>[],
+        },
+      );
+      final String joined = lines.join('\n');
+      expect(joined, contains('- path_provider (android, ios)'));
+      expect(joined, isNot(contains('path_provider_android')));
+      expect(joined, isNot(contains('path_provider_foundation')));
+      expect(joined, isNot(contains('platform_interface')));
+    });
+
+    testWithoutContext('a manually added <name>_watchos package silences the aggregator', () {
+      expect(
+        auditPluginsWithoutWatchosSupport(
+          pluginPlatforms: <String, List<String>>{
+            'gadget': <String>['ios'],
+            'gadget_watchos': <String>['watchos'],
+          },
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('labels legacy plugins with no platforms map', () {
+      final List<String> lines = auditPluginsWithoutWatchosSupport(
+        pluginPlatforms: <String, List<String>>{'ancient_plugin': <String>[]},
+      );
+      expect(lines.join('\n'), contains('ancient_plugin (legacy ios/android)'));
+    });
+
+    testWithoutContext('returns nothing when every plugin is covered', () {
+      expect(
+        auditPluginsWithoutWatchosSupport(pluginPlatforms: const <String, List<String>>{}),
         isEmpty,
       );
     });
