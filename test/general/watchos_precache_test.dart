@@ -74,6 +74,44 @@ void main() {
     });
   });
 
+  group('pending engine zips marker', () {
+    // Written when a download skips gated zips (release engines during the
+    // beta); read by `precache` to retry them after an account upgrade.
+    late MemoryFileSystem fs;
+    late Directory artifactDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      artifactDir = fs.directory('engine_artifacts')..createSync();
+    });
+
+    testWithoutContext('round-trips zip names through the marker file', () {
+      writePendingEngineZips(artifactDir,
+          <String>['watchos_release_arm64.zip', 'host_release.zip']);
+      expect(readPendingEngineZips(artifactDir),
+          <String>['watchos_release_arm64.zip', 'host_release.zip']);
+    });
+
+    testWithoutContext('reads empty when the marker is absent', () {
+      expect(readPendingEngineZips(artifactDir), isEmpty);
+    });
+
+    testWithoutContext('an empty write deletes the marker', () {
+      writePendingEngineZips(artifactDir, <String>['host_release.zip']);
+      writePendingEngineZips(artifactDir, const <String>[]);
+      expect(artifactDir.childFile(kWatchosPendingDownloadsFileName).existsSync(),
+          isFalse);
+      expect(readPendingEngineZips(artifactDir), isEmpty);
+    });
+
+    testWithoutContext('unknown names in the marker are ignored', () {
+      artifactDir.childFile(kWatchosPendingDownloadsFileName).writeAsStringSync(
+          'watchos_release_arm64.zip\n../../etc/passwd\ntotally_made_up.zip\n');
+      expect(readPendingEngineZips(artifactDir),
+          <String>['watchos_release_arm64.zip']);
+    });
+  });
+
   group('apiGateErrorCode', () {
     // The download loop uses this to decide whether an artifact-API gate is
     // fatal (auth problems) or skippable (release zips during the beta).

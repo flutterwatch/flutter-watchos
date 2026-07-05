@@ -22,6 +22,59 @@ import 'watchos_auth.dart';
 
 const String kWatchosEngineStampName = 'watchos-sdk';
 
+/// Every engine artifact zip, in download order.
+///
+/// NOTE: there is deliberately no `watchos_debug_arm64` — debug (JIT) cannot
+/// exist on a physical watch (the device SDK removes the Mach APIs the Dart
+/// JIT VM needs). The Simulator is the debug path; devices use profile/release.
+const List<String> kWatchosEngineZipNames = <String>[
+  'watchos_debug_sim_arm64.zip',
+  'watchos_profile_arm64.zip',
+  'watchos_release_arm64.zip',
+  'host_debug_unopt.zip',
+  'host_release.zip',
+];
+
+/// Marker file inside the artifact directory listing the zips a previous
+/// download was not entitled to (e.g. release engines during the closed
+/// beta). While it is non-empty, `flutter-watchos precache` re-checks those
+/// zips — so an account that gains release access picks the release engines
+/// up with a plain `precache`, no cache-nuking required.
+const String kWatchosPendingDownloadsFileName = '.pending_downloads';
+
+/// The zips still owed to this artifact directory, newline-separated in the
+/// marker file. Unknown names are ignored so a stale or hand-edited marker
+/// can never make the tool fetch arbitrary URLs.
+List<String> readPendingEngineZips(Directory artifactDir) {
+  final File marker = artifactDir.childFile(kWatchosPendingDownloadsFileName);
+  if (!marker.existsSync()) {
+    return const <String>[];
+  }
+  try {
+    return marker
+        .readAsLinesSync()
+        .map((String line) => line.trim())
+        .where(kWatchosEngineZipNames.contains)
+        .toList();
+  } on FileSystemException {
+    return const <String>[];
+  }
+}
+
+/// Records [zipNames] as still-pending downloads (deletes the marker when
+/// the list is empty).
+void writePendingEngineZips(Directory artifactDir, Iterable<String> zipNames) {
+  final File marker = artifactDir.childFile(kWatchosPendingDownloadsFileName);
+  final List<String> names = zipNames.toList();
+  if (names.isEmpty) {
+    if (marker.existsSync()) {
+      marker.deleteSync();
+    }
+    return;
+  }
+  marker.writeAsStringSync('${names.join('\n')}\n');
+}
+
 /// Extracts the machine-readable `error` code from an artifact-API gate
 /// response body (e.g. `beta_access_required`, `release_not_in_beta`), or
 /// null when the file is missing or not a JSON gate response.
@@ -166,16 +219,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   final Platform _platform;
   final ProcessUtils _processUtils;
 
-  // NOTE: there is deliberately no `watchos_debug_arm64` — debug (JIT) cannot
-  // exist on a physical watch (the device SDK removes the Mach APIs the Dart
-  // JIT VM needs). The Simulator is the debug path; devices use profile/release.
-  static const List<String> _artifactZipNames = <String>[
-    'watchos_debug_sim_arm64.zip',
-    'watchos_profile_arm64.zip',
-    'watchos_release_arm64.zip',
-    'host_debug_unopt.zip',
-    'host_release.zip',
-  ];
+  static const List<String> _artifactZipNames = kWatchosEngineZipNames;
 
   @override
   String get displayName => 'watchOS Engine';
@@ -254,12 +298,19 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     // --- Strategy 1b: the resolved artifact dir is already populated ---
     // `location` (watchosArtifactDirectory) may resolve to a pre-extracted
     // engine_artifacts/ at the workspace root, or a previous download. If it
-    // already holds extracted engine variant dirs, use it as-is — no download.
+    // already holds extracted engine variant dirs, use it as-is — except for
+    // zips a previous download was not yet entitled to, which are retried
+    // here (this is how release engines arrive after an account upgrade).
     if (location.existsSync() &&
         location
             .listSync()
             .whereType<Directory>()
             .any((Directory d) => fileSystem.path.basename(d.path).startsWith('watchos_'))) {
+      final List<String> pending = readPendingEngineZips(location);
+      if (pending.isNotEmpty && watchosArtifactApiBase(_platform) != null) {
+        await _fetchPendingZips(pending, fileSystem, operatingSystemUtils);
+        return;
+      }
       _logger.printTrace('Using pre-extracted watchOS engine artifacts at ${location.path}');
       return;
     }
@@ -291,6 +342,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     final apiMode = watchosArtifactApiBase(_platform) != null;
     final String? token = apiMode ? readWatchosToken(globals.fs, _platform) : null;
 
+    final skippedZips = <String>[];
     try {
       var index = 0;
       for (final String zipName in _artifactZipNames) {
@@ -322,8 +374,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
               // Release engines are not part of the closed beta. Skip them so
               // `precache` completes with the debug + profile artifacts a
               // beta account can actually use; anything else stays fatal.
+              // The skip is recorded so a later `precache` retries it once
+              // the account has release access.
               if (apiGateErrorCode(tempZip) == 'release_not_in_beta') {
                 status.cancel();
+                skippedZips.add(zipName);
                 _logger.printStatus(
                   _treeLine(index, _artifactZipNames.length,
                       '${_friendlyName(zipName)} — not in the closed beta, skipped'),
@@ -364,12 +419,97 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       tempDir.deleteSync(recursive: true);
     }
 
+    writePendingEngineZips(location, skippedZips);
+
     final Directory macOsMetaDir = location.childDirectory('__MACOSX');
     if (macOsMetaDir.existsSync()) {
       macOsMetaDir.deleteSync(recursive: true);
     }
 
     _makeFilesExecutable(location, operatingSystemUtils);
+  }
+
+  /// Retries the zips a previous download was not entitled to, on top of an
+  /// otherwise-populated artifact directory.
+  ///
+  /// Nothing here is fatal: the existing debug/profile engines keep working
+  /// whatever happens, so a still-gated zip is re-skipped (and stays pending)
+  /// and a transient failure is reported and retried on the next `precache`.
+  Future<void> _fetchPendingZips(
+    List<String> pending,
+    FileSystem fileSystem,
+    OperatingSystemUtils operatingSystemUtils,
+  ) async {
+    final String? token = readWatchosToken(globals.fs, _platform);
+    final Directory tempDir = fileSystem.systemTempDirectory.createTempSync(
+      'flutter_watchos_artifacts.',
+    );
+    final stillPending = <String>[];
+    var extractedAny = false;
+    try {
+      var index = 0;
+      for (final zipName in pending) {
+        index++;
+        final String url = artifactDownloadUrl(zipName);
+        final File tempZip = tempDir.childFile(zipName);
+        final Status status = _logger.startProgress(
+          _treeLine(index, pending.length, _friendlyName(zipName)),
+        );
+        try {
+          final RunResult curlResult = await _processUtils.run(<String>[
+            'curl',
+            '--location',
+            '--silent',
+            '--show-error',
+            '--write-out', '%{http_code}',
+            if (token != null) ...<String>['--header', 'Authorization: Bearer $token'],
+            '--output', tempZip.path,
+            url,
+          ]);
+
+          final String httpCode = curlResult.stdout.trim();
+          if (curlResult.exitCode != 0 || httpCode != '200') {
+            status.cancel();
+            stillPending.add(zipName);
+            final note = apiGateErrorCode(tempZip) == 'release_not_in_beta'
+                ? 'not in the closed beta, skipped'
+                : 'unavailable right now, will retry on the next precache';
+            _logger.printStatus(
+              _treeLine(index, pending.length, '${_friendlyName(zipName)} — $note'),
+            );
+            continue;
+          }
+
+          final RunResult unzipResult = await _processUtils.run(<String>[
+            'unzip',
+            '-q',
+            '-o',
+            tempZip.path,
+            '-d',
+            location.path,
+          ]);
+          if (unzipResult.exitCode != 0) {
+            status.cancel();
+            throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
+          }
+          extractedAny = true;
+        } finally {
+          status.stop();
+        }
+      }
+    } finally {
+      tempDir.deleteSync(recursive: true);
+    }
+
+    writePendingEngineZips(location, stillPending);
+
+    final Directory macOsMetaDir = location.childDirectory('__MACOSX');
+    if (macOsMetaDir.existsSync()) {
+      macOsMetaDir.deleteSync(recursive: true);
+    }
+    if (extractedAny) {
+      _makeFilesExecutable(location, operatingSystemUtils);
+    }
   }
 
   /// The tool-exit message for a failed API-mode download. Gate responses

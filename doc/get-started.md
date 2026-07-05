@@ -46,7 +46,11 @@ required; Android-related warnings can be ignored.
 
 During the closed beta, `precache` fetches the debug (Simulator) and profile
 (device) engines; the release engines are reported as "not in the closed
-beta, skipped" — that is expected and everything you need.
+beta, skipped" — that is expected and everything you need. If your account
+later gains release access (your dashboard at
+[api.flutterwatch.dev](https://api.flutterwatch.dev) will say "release engine
+enabled"), just run `flutter-watchos precache` again — the release engines
+download automatically.
 
 ```
 $ flutter-watchos doctor

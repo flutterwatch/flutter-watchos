@@ -65,11 +65,17 @@ class WatchosPrecacheCommand extends PrecacheCommand {
   @override
   Future<FlutterCommandResult> runCommand() async {
     if (boolArg('watchos')) {
+      final Directory artifactDir = watchosArtifactDirectory(globals.fs);
       if (boolArg('force')) {
-        final Directory artifactDir = watchosArtifactDirectory(globals.fs);
         if (artifactDir.existsSync()) {
           artifactDir.deleteSync(recursive: true);
         }
+      } else if (readPendingEngineZips(artifactDir).isNotEmpty) {
+        // Zips a previous download was not entitled to (release engines
+        // during the beta). Invalidate the stamp so the cache re-enters the
+        // artifact update, which retries exactly those zips — this is how an
+        // account that gained release access picks up the release engines.
+        globals.cache.setStampFor(kWatchosEngineStampName, 'pending-downloads');
       }
       await globals.cache.updateAll(<DevelopmentArtifact>{WatchosDevelopmentArtifact.watchos});
     }
