@@ -159,6 +159,13 @@ class WatchosArchiveCommand extends BuildSubCommand with WatchosRequiredArtifact
     final String identity =
         await packager.findDistributionIdentity(override: stringArg('signing-cert'));
 
+    // The host container and the framework Info.plists inherit the watch
+    // app's own minimum OS version (the accepted reference package uses the
+    // same value in all three places).
+    final String minimumOSVersion = (await packager.readMinimumOSVersion(archivedApp)) ?? '26.0';
+    final Directory hostAppDir =
+        project.directory.childDirectory('watchos').childDirectory('HostApp');
+
     final Status packStatus =
         globals.logger.startProgress('Building watch-only App Store container...');
     File ipa;
@@ -169,12 +176,13 @@ class WatchosArchiveCommand extends BuildSubCommand with WatchosRequiredArtifact
         containerBundleId: containerId,
         shortVersion: identity0.shortVersion,
         buildNumber: identity0.buildNumber,
+        minimumOSVersion: minimumOSVersion,
         hostProfile: hostProfile,
         watchProfile: watchProfile,
         identity: identity,
         workDir: scratch,
+        hostAppDir: hostAppDir.existsSync() ? hostAppDir : null,
       );
-      await packager.collectSwiftSupport(payload);
       ipa = await packager.packageIpa(
         payload,
         ipaDir.childFile('${project.manifest.appName}.ipa'),

@@ -32,6 +32,8 @@ void main() {
       shortVersion: '1.1.0',
       buildNumber: '2',
       executableName: 'CrownBreaker',
+      minimumOSVersion: '26.0',
+      hasIcons: false,
       toolchainStamps: <String, String>{
         'DTXcode': '2601',
         'DTSDKName': 'iphoneos26.0',
@@ -66,6 +68,8 @@ void main() {
         shortVersion: '1.0.0',
         buildNumber: '1',
         executableName: 'App',
+        minimumOSVersion: '26.0',
+        hasIcons: false,
         toolchainStamps: const <String, String>{},
       );
       expect(escaped, contains('Rock &amp; Roll &lt;Watch&gt;'));

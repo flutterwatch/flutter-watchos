@@ -16,15 +16,22 @@ import 'package:meta/meta.dart';
 /// is reproduced here instead, which is what makes a fully scripted
 /// `flutter-watchos build ipa && flutter-watchos upload` possible.
 ///
-/// A watch-only App Store package is an **iOS container** app:
+/// A watch-only App Store package is an **iOS container** app. The layout
+/// below byte-mirrors a package Apple accepted and released (Crown Breaker
+/// 1.0.0) — deviations from it (bare dylibs instead of frameworks, a C stub
+/// instead of a real host, adding SwiftSupport) have all drawn ITMS
+/// processing rejections:
 ///
 /// ```text
-/// Payload/<AppName>.app/            iOS stub (no UI, never launched)
+/// Payload/<AppName>.app/            real (launch-prohibited) SwiftUI iOS host
 ///   Info.plist                      ITSWatchOnlyContainer + LSApplicationLaunchProhibited
-///   <stub binary>                   minimal arm64 iOS executable
+///   <host binary>                   compiled from watchos/HostApp/HostApp.swift
+///   Assets.car, AppIcon*.png        compiled from watchos/HostApp/Assets.xcassets
 ///   embedded.mobileprovision        App Store profile for <container-id>
 ///   Watch/Runner.app                the real watch app
 ///     Info.plist                    CFBundleIdentifier = <container-id>.watchkitapp
+///     Frameworks/Flutter.framework  engine, as a framework (never a bare dylib)
+///     Frameworks/App.framework      Dart AOT code, as a framework
 ///     embedded.mobileprovision      App Store profile for <container-id>.watchkitapp
 /// ```
 ///
@@ -73,6 +80,8 @@ String containerInfoPlistXml({
   required String shortVersion,
   required String buildNumber,
   required String executableName,
+  required String minimumOSVersion,
+  required bool hasIcons,
   required Map<String, String> toolchainStamps,
 }) {
   final stamps = StringBuffer();
@@ -81,6 +90,26 @@ String containerInfoPlistXml({
     stamps.writeln(
         '\t<key>${_xmlEscape(key)}</key><string>${_xmlEscape(toolchainStamps[key]!)}</string>');
   }
+  final icons = hasIcons
+      ? '''
+\t<key>CFBundleIcons</key>
+\t<dict>
+\t\t<key>CFBundlePrimaryIcon</key>
+\t\t<dict>
+\t\t\t<key>CFBundleIconFiles</key><array><string>AppIcon60x60</string></array>
+\t\t\t<key>CFBundleIconName</key><string>AppIcon</string>
+\t\t</dict>
+\t</dict>
+\t<key>CFBundleIcons~ipad</key>
+\t<dict>
+\t\t<key>CFBundlePrimaryIcon</key>
+\t\t<dict>
+\t\t\t<key>CFBundleIconFiles</key><array><string>AppIcon60x60</string><string>AppIcon76x76</string></array>
+\t\t\t<key>CFBundleIconName</key><string>AppIcon</string>
+\t\t</dict>
+\t</dict>
+'''
+      : '';
   return '''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -89,18 +118,23 @@ String containerInfoPlistXml({
 \t<key>CFBundleDevelopmentRegion</key><string>en</string>
 \t<key>CFBundleDisplayName</key><string>${_xmlEscape(appName)}</string>
 \t<key>CFBundleExecutable</key><string>${_xmlEscape(executableName)}</string>
-\t<key>CFBundleIdentifier</key><string>${_xmlEscape(bundleId)}</string>
+${icons.trimRight().isEmpty ? '' : '${icons.trimRight()}\n'}\t<key>CFBundleIdentifier</key><string>${_xmlEscape(bundleId)}</string>
 \t<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-\t<key>CFBundleName</key><string>${_xmlEscape(appName)}</string>
+\t<key>CFBundleName</key><string>${_xmlEscape(executableName)}</string>
 \t<key>CFBundlePackageType</key><string>APPL</string>
 \t<key>CFBundleShortVersionString</key><string>${_xmlEscape(shortVersion)}</string>
 \t<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
 \t<key>CFBundleVersion</key><string>${_xmlEscape(buildNumber)}</string>
 \t<key>ITSWatchOnlyContainer</key><true/>
 \t<key>LSApplicationLaunchProhibited</key><true/>
-\t<key>MinimumOSVersion</key><string>15.0</string>
+\t<key>LSRequiresIPhoneOS</key><true/>
+\t<key>MinimumOSVersion</key><string>${_xmlEscape(minimumOSVersion)}</string>
+\t<key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 \t<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+\t<key>UILaunchScreen</key><dict/>
 \t<key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>
+\t<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+\t<key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 ${stamps.toString().trimRight()}
 </dict>
 </plist>
@@ -313,17 +347,10 @@ class WatchosIpaPackager {
     final Directory frameworks = watchApp.childDirectory('Frameworks');
     if (frameworks.existsSync()) {
       for (final FileSystemEntity f in frameworks.listSync()) {
-        if (f is File && f.path.endsWith('.dylib')) {
+        if (f is Directory && f.path.endsWith('.framework')) {
           await _runOrExit(<String>['codesign', '--force', '--sign', identity, f.path],
               'Signing ${f.basename}');
         }
-      }
-    }
-    // Swift libraries embedded at the bundle root (see embedSwiftLibraries).
-    for (final FileSystemEntity f in watchApp.listSync()) {
-      if (f is File && f.basename.startsWith('libswift') && f.path.endsWith('.dylib')) {
-        await _runOrExit(<String>['codesign', '--force', '--sign', identity, f.path],
-            'Signing ${f.basename}');
       }
     }
     await _runOrExit(
@@ -331,72 +358,143 @@ class WatchosIpaPackager {
         'Signing watch app');
   }
 
-  /// The toolchain back-deployment directory holding watchOS Swift dylibs.
-  Future<Directory?> _swiftBackDeploymentDir() async {
-    final String xcodePath =
-        await _runOrExit(<String>['xcode-select', '-p'], 'Locating Xcode');
-    final Directory dir = _fs.directory(_fs.path.join(
-        xcodePath, 'Toolchains', 'XcodeDefault.xctoolchain',
-        'usr', 'lib', 'swift-5.0', 'watchos'));
-    return dir.existsSync() ? dir : null;
+  /// Framework Info.plist for a wrapped engine/app library.
+  String _frameworkInfoPlist({
+    required String executable,
+    required String bundleId,
+    required String minimumOSVersion,
+  }) {
+    return '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleExecutable</key><string>$executable</string>
+\t<key>CFBundleIdentifier</key><string>$bundleId</string>
+\t<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+\t<key>CFBundleName</key><string>$executable</string>
+\t<key>CFBundlePackageType</key><string>FMWK</string>
+\t<key>CFBundleShortVersionString</key><string>1.0</string>
+\t<key>CFBundleSupportedPlatforms</key><array><string>WatchOS</string></array>
+\t<key>CFBundleVersion</key><string>1</string>
+\t<key>MinimumOSVersion</key><string>$minimumOSVersion</string>
+</dict>
+</plist>
+''';
   }
 
-  /// The transitive set of Swift standard libraries referenced by the
-  /// Mach-Os inside [scope], resolved against the toolchain copies.
-  Future<Set<String>> resolveSwiftLibraries(Directory scope) async {
-    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
-    if (swiftLibDir == null) {
-      return const <String>{};
-    }
-    final needed = <String>{};
-    for (final FileSystemEntity entity in scope.listSync(recursive: true)) {
-      if (entity is! File || !_isMachO(entity)) {
-        continue;
-      }
-      final RunResult otool = await _run(<String>['otool', '-L', entity.path]);
-      if (otool.exitCode == 0) {
-        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout));
-      }
-    }
-    final resolved = <String>{};
-    while (needed.isNotEmpty) {
-      final String name = needed.first;
-      needed.remove(name);
-      if (!resolved.add(name)) {
-        continue;
-      }
-      final File lib = swiftLibDir.childFile(name);
-      if (!lib.existsSync()) {
-        resolved.remove(name); // Not back-deployable — omit everywhere.
-        continue;
-      }
-      final RunResult otool = await _run(<String>['otool', '-L', lib.path]);
-      if (otool.exitCode == 0) {
-        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout).difference(resolved));
-      }
-    }
-    return resolved;
-  }
-
-  /// Copies the Swift standard libraries in [names] to the watch app's
-  /// bundle root.
+  /// Repackages the watch app's bare dylibs as proper framework bundles —
+  /// `Frameworks/libflutter_engine.dylib` becomes
+  /// `Frameworks/Flutter.framework/Flutter` and `Frameworks/App.dylib`
+  /// becomes `Frameworks/App.framework/App` — and repoints the Runner
+  /// binary's engine load command.
   ///
-  /// App Store Connect's watch-app pipeline expects the Swift runtime
-  /// embedded at the WATCH APP ROOT (its ITMS-90428 paths point there, not
-  /// at Frameworks/), with byte-matching toolchain originals under the
-  /// ipa's SwiftSupport/ — both sides are required, and the embedded copies
-  /// are re-signed while the SwiftSupport ones must stay untouched.
-  Future<void> embedSwiftLibraries(Directory watchApp, Set<String> names) async {
-    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
-    if (swiftLibDir == null) {
-      return;
+  /// App Store packages must not contain bare dylibs; the engine's App
+  /// loader probes both `Frameworks/App.dylib` and
+  /// `Frameworks/App.framework/App`, so this is runtime-safe.
+  Future<void> wrapDylibsAsFrameworks({
+    required Directory watchApp,
+    required String watchBundleId,
+    required String minimumOSVersion,
+  }) async {
+    final Directory frameworks = watchApp.childDirectory('Frameworks');
+    const wraps = <(String, String, String)>[
+      ('libflutter_engine.dylib', 'Flutter', 'flutterfw'),
+      ('App.dylib', 'App', 'appfw'),
+    ];
+    for (final (String dylibName, String fwName, String idSuffix) in wraps) {
+      final File dylib = frameworks.childFile(dylibName);
+      if (!dylib.existsSync()) {
+        continue;
+      }
+      final Directory fw = frameworks.childDirectory('$fwName.framework')
+        ..createSync(recursive: true);
+      final File binary = fw.childFile(fwName);
+      dylib.renameSync(binary.path);
+      await _runOrExit(
+          <String>['install_name_tool', '-id', '@rpath/$fwName.framework/$fwName', binary.path],
+          'Setting $fwName.framework install name');
+      fw.childFile('Info.plist').writeAsStringSync(_frameworkInfoPlist(
+            executable: fwName,
+            bundleId: '$watchBundleId.$idSuffix',
+            minimumOSVersion: minimumOSVersion,
+          ));
     }
-    for (final name in names) {
-      final File lib = swiftLibDir.childFile(name);
-      if (lib.existsSync()) {
-        lib.copySync(watchApp.childFile(name).path);
+    // The Runner binary links the engine by its old dylib name.
+    final File runner = watchApp.childFile('Runner');
+    if (runner.existsSync()) {
+      await _runOrExit(<String>[
+        'install_name_tool', '-change',
+        '@rpath/libflutter_engine.dylib', '@rpath/Flutter.framework/Flutter',
+        runner.path,
+      ], 'Repointing Runner engine load command');
+    }
+  }
+
+  /// Compiles the (launch-prohibited) iOS host app binary.
+  ///
+  /// Uses the project's `watchos/HostApp/HostApp.swift` when present so apps
+  /// can brand the host screen; otherwise a generic SwiftUI host is
+  /// generated. Also compiles `HostApp/Assets.xcassets` (app icons) with
+  /// actool when present; returns true when icons were produced.
+  Future<bool> buildHostApp({
+    required Directory container,
+    required String executableName,
+    required String appName,
+    required Directory? hostAppDir,
+    required String minimumOSVersion,
+    required Directory scratch,
+  }) async {
+    final String sdkPath = await _runOrExit(
+        <String>['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], 'Locating iOS SDK');
+
+    File source;
+    if (hostAppDir != null && hostAppDir.childFile('HostApp.swift').existsSync()) {
+      source = hostAppDir.childFile('HostApp.swift');
+    } else {
+      source = scratch.childFile('HostApp.swift');
+      source.writeAsStringSync('''
+import SwiftUI
+
+// Minimal iOS host: App Store watch-only submissions ship inside an iOS
+// container app. This host is never launched (LSApplicationLaunchProhibited).
+@main
+struct GeneratedHostApp: App {
+  var body: some Scene {
+    WindowGroup {
+      VStack(spacing: 16) {
+        Image(systemName: "applewatch").font(.system(size: 64))
+        Text("$appName").font(.title.bold())
+        Text("This app runs on Apple Watch.").foregroundStyle(.secondary)
       }
     }
+  }
+}
+''');
+    }
+    await _runOrExit(<String>[
+      'xcrun', 'swiftc',
+      '-sdk', sdkPath,
+      '-target', 'arm64-apple-ios$minimumOSVersion',
+      '-parse-as-library', '-O',
+      source.path,
+      '-o', container.childFile(executableName).path,
+    ], 'Compiling host app');
+
+    final Directory? assets = hostAppDir?.childDirectory('Assets.xcassets');
+    if (assets == null || !assets.existsSync()) {
+      return false;
+    }
+    await _runOrExit(<String>[
+      'xcrun', 'actool',
+      '--compile', container.path,
+      '--platform', 'iphoneos',
+      '--minimum-deployment-target', minimumOSVersion,
+      '--app-icon', 'AppIcon',
+      '--output-partial-info-plist', scratch.childFile('actool-partial.plist').path,
+      assets.path,
+    ], 'Compiling host app icons');
+    return true;
   }
 
   /// Toolchain stamp keys for the container plist, read from the local Xcode.
@@ -432,22 +530,6 @@ class WatchosIpaPackager {
     };
   }
 
-  /// Compiles the minimal iOS stub executable the container needs.
-  Future<void> compileContainerStub(File output, Directory scratch) async {
-    final File source = scratch.childFile('stub.c');
-    source.writeAsStringSync('int main(void) { return 0; }\n');
-    final String sdkPath = await _runOrExit(
-        <String>['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], 'Locating iOS SDK');
-    await _runOrExit(<String>[
-      'xcrun', 'clang',
-      '-arch', 'arm64',
-      '-isysroot', sdkPath,
-      '-miphoneos-version-min=15.0',
-      source.path,
-      '-o', output.path,
-    ], 'Compiling container stub');
-  }
-
   /// Builds and signs the full container, returning the Payload directory.
   Future<Directory> synthesizeContainer({
     required Directory archivedWatchApp,
@@ -455,10 +537,12 @@ class WatchosIpaPackager {
     required String containerBundleId,
     required String shortVersion,
     required String buildNumber,
+    required String minimumOSVersion,
     required ProvisioningProfileInfo hostProfile,
     required ProvisioningProfileInfo watchProfile,
     required String identity,
     required Directory workDir,
+    Directory? hostAppDir,
   }) async {
     final Directory payload = workDir.childDirectory('Payload')..createSync(recursive: true);
     // The .app directory name is cosmetic; the executable name must match
@@ -466,29 +550,43 @@ class WatchosIpaPackager {
     final String executableName = appName.replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '');
     final Directory container = payload.childDirectory('$executableName.app')
       ..createSync(recursive: true);
+    final watchBundleId = '$containerBundleId.watchkitapp';
 
-    // Embedded watch app (copy, re-identify, re-sign).
+    // Embedded watch app (copy, frameworks, re-identify, re-sign).
     final Directory watchDir = container.childDirectory('Watch')..createSync();
     final Directory watchApp = watchDir.childDirectory(archivedWatchApp.basename);
     await _runOrExit(<String>['cp', '-R', archivedWatchApp.path, watchApp.path],
         'Copying watch app');
-    await embedSwiftLibraries(watchApp, await resolveSwiftLibraries(watchApp));
+    await wrapDylibsAsFrameworks(
+      watchApp: watchApp,
+      watchBundleId: watchBundleId,
+      minimumOSVersion: minimumOSVersion,
+    );
     await resignWatchApp(
       watchApp: watchApp,
-      watchBundleId: '$containerBundleId.watchkitapp',
+      watchBundleId: watchBundleId,
       profile: watchProfile,
       identity: identity,
       scratch: workDir,
     );
 
-    // Container stub + metadata.
-    await compileContainerStub(container.childFile(executableName), workDir);
+    // Host app + metadata.
+    final bool hasIcons = await buildHostApp(
+      container: container,
+      executableName: executableName,
+      appName: appName,
+      hostAppDir: hostAppDir,
+      minimumOSVersion: minimumOSVersion,
+      scratch: workDir,
+    );
     container.childFile('Info.plist').writeAsStringSync(containerInfoPlistXml(
           appName: appName,
           bundleId: containerBundleId,
           shortVersion: shortVersion,
           buildNumber: buildNumber,
           executableName: executableName,
+          minimumOSVersion: minimumOSVersion,
+          hasIcons: hasIcons,
           toolchainStamps: await toolchainStamps(),
         ));
     container.childFile('PkgInfo').writeAsStringSync('APPL????');
@@ -505,69 +603,18 @@ class WatchosIpaPackager {
     return payload;
   }
 
-  /// Populates `SwiftSupport/watchos/` next to [payload] with toolchain
-  /// copies of every Swift standard library the packaged binaries reference
-  /// (transitively, the way Xcode's export resolves them).
+  /// Zips [payload] into [output] — a standard .ipa.
   ///
-  /// App Store Connect processing rejects Swift-linking watch apps without
-  /// this folder (ITMS-90426), even when the app only links the ABI-stable
-  /// `/usr/lib/swift` system libraries. The dylibs are Apple-signed originals
-  /// from the toolchain's back-deployment directory and must not be re-signed.
-  Future<Directory?> collectSwiftSupport(Directory payload) async {
-    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
-    if (swiftLibDir == null) {
-      _logger.printTrace('No Swift back-deployment libraries in the toolchain.');
-      return null;
-    }
-    final Set<String> names = await resolveSwiftLibraries(payload);
-    if (names.isEmpty) {
-      return null;
-    }
-    final Directory support = payload.parent
-        .childDirectory('SwiftSupport')
-        .childDirectory('watchos')
-      ..createSync(recursive: true);
-    for (final name in names) {
-      swiftLibDir.childFile(name).copySync(support.childFile(name).path);
-    }
-    _logger.printTrace('SwiftSupport: bundled ${names.length} Swift libraries.');
-    return support.parent;
-  }
-
-  bool _isMachO(File file) {
-    try {
-      final RandomAccessFile raf = file.openSync();
-      try {
-        final List<int> magic = raf.readSync(4);
-        if (magic.length < 4) {
-          return false;
-        }
-        const machMagics = <List<int>>[
-          <int>[0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 (little-endian)
-          <int>[0xca, 0xfe, 0xba, 0xbe], // FAT_MAGIC
-          <int>[0xbe, 0xba, 0xfe, 0xca], // FAT_CIGAM
-        ];
-        return machMagics.any((List<int> m) =>
-            m[0] == magic[0] && m[1] == magic[1] && m[2] == magic[2] && m[3] == magic[3]);
-      } finally {
-        raf.closeSync();
-      }
-    } on FileSystemException {
-      return false;
-    }
-  }
-
-  /// Zips [payload] (and a sibling `SwiftSupport/`, when present) into
-  /// [output] — a standard .ipa.
+  /// Deliberately no SwiftSupport folder: the accepted reference package
+  /// ships without one (min watchOS >= 6 is ABI-stable), and adding one
+  /// draws ITMS-90428.
   Future<File> packageIpa(Directory payload, File output) async {
     if (output.existsSync()) {
       output.deleteSync();
     }
     output.parent.createSync(recursive: true);
-    final bool hasSwiftSupport =
-        payload.parent.childDirectory('SwiftSupport').existsSync();
     final RunResult result = await _processUtils.run(
-      <String>['zip', '-qr', output.path, 'Payload', if (hasSwiftSupport) 'SwiftSupport'],
+      <String>['zip', '-qr', output.path, 'Payload'],
       workingDirectory: payload.parent.path,
     );
     if (result.exitCode != 0) {
@@ -586,6 +633,15 @@ class WatchosIpaPackager {
       buildNumber: await _plutilRaw('CFBundleVersion', plist),
       displayName: await _plutilRaw('CFBundleDisplayName', plist),
     );
+  }
+
+  /// The watch app's MinimumOSVersion, or null when unreadable.
+  Future<String?> readMinimumOSVersion(Directory app) async {
+    final RunResult result = await _run(<String>[
+      'plutil', '-extract', 'MinimumOSVersion', 'raw', '-o', '-',
+      app.childFile('Info.plist').path,
+    ]);
+    return result.exitCode == 0 ? result.stdout.trim() : null;
   }
 
   /// Human guidance for a missing App Store profile.
