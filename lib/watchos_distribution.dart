@@ -107,6 +107,15 @@ ${stamps.toString().trimRight()}
 ''';
 }
 
+/// Swift standard-library dylib names referenced by `otool -L` output
+/// (system `/usr/lib/swift/…` and `@rpath/…` references alike).
+Set<String> swiftDylibsInOtoolOutput(String output) {
+  return RegExp(r'(?:/usr/lib/swift/|@rpath/)(libswift[A-Za-z0-9_]+\.dylib)')
+      .allMatches(output)
+      .map((RegExpMatch m) => m.group(1)!)
+      .toSet();
+}
+
 /// A parsed provisioning profile, as far as store packaging cares.
 @immutable
 class ProvisioningProfileInfo {
@@ -420,14 +429,103 @@ class WatchosIpaPackager {
     return payload;
   }
 
-  /// Zips [payload]'s parent into [output] (a standard .ipa).
+  /// Populates `SwiftSupport/watchos/` next to [payload] with toolchain
+  /// copies of every Swift standard library the packaged binaries reference
+  /// (transitively, the way Xcode's export resolves them).
+  ///
+  /// App Store Connect processing rejects Swift-linking watch apps without
+  /// this folder (ITMS-90426), even when the app only links the ABI-stable
+  /// `/usr/lib/swift` system libraries. The dylibs are Apple-signed originals
+  /// from the toolchain's back-deployment directory and must not be re-signed.
+  Future<Directory?> collectSwiftSupport(Directory payload) async {
+    final String xcodePath =
+        await _runOrExit(<String>['xcode-select', '-p'], 'Locating Xcode');
+    final Directory swiftLibDir = _fs.directory(_fs.path.join(
+        xcodePath, 'Toolchains', 'XcodeDefault.xctoolchain',
+        'usr', 'lib', 'swift-5.0', 'watchos'));
+    if (!swiftLibDir.existsSync()) {
+      _logger.printTrace('No Swift back-deployment libraries at ${swiftLibDir.path}.');
+      return null;
+    }
+
+    // Every Mach-O in the payload (executables + dylibs) contributes refs.
+    final needed = <String>{};
+    for (final FileSystemEntity entity in payload.listSync(recursive: true)) {
+      if (entity is! File || !_isMachO(entity)) {
+        continue;
+      }
+      final RunResult otool = await _run(<String>['otool', '-L', entity.path]);
+      if (otool.exitCode == 0) {
+        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout));
+      }
+    }
+    if (needed.isEmpty) {
+      return null;
+    }
+
+    // Transitive closure over the toolchain copies themselves.
+    final Directory support = payload.parent
+        .childDirectory('SwiftSupport')
+        .childDirectory('watchos')
+      ..createSync(recursive: true);
+    final copied = <String>{};
+    while (needed.isNotEmpty) {
+      final String name = needed.first;
+      needed.remove(name);
+      if (!copied.add(name)) {
+        continue;
+      }
+      final File lib = swiftLibDir.childFile(name);
+      if (!lib.existsSync()) {
+        // Newer-than-back-deployment library (weak-linked) — Xcode omits
+        // these from SwiftSupport too.
+        _logger.printTrace('SwiftSupport: $name not in toolchain, skipped.');
+        continue;
+      }
+      lib.copySync(support.childFile(name).path);
+      final RunResult otool = await _run(<String>['otool', '-L', lib.path]);
+      if (otool.exitCode == 0) {
+        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout).difference(copied));
+      }
+    }
+    _logger.printTrace('SwiftSupport: bundled ${copied.length} Swift libraries.');
+    return support.parent;
+  }
+
+  bool _isMachO(File file) {
+    try {
+      final RandomAccessFile raf = file.openSync();
+      try {
+        final List<int> magic = raf.readSync(4);
+        if (magic.length < 4) {
+          return false;
+        }
+        const machMagics = <List<int>>[
+          <int>[0xcf, 0xfa, 0xed, 0xfe], // MH_MAGIC_64 (little-endian)
+          <int>[0xca, 0xfe, 0xba, 0xbe], // FAT_MAGIC
+          <int>[0xbe, 0xba, 0xfe, 0xca], // FAT_CIGAM
+        ];
+        return machMagics.any((List<int> m) =>
+            m[0] == magic[0] && m[1] == magic[1] && m[2] == magic[2] && m[3] == magic[3]);
+      } finally {
+        raf.closeSync();
+      }
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  /// Zips [payload] (and a sibling `SwiftSupport/`, when present) into
+  /// [output] — a standard .ipa.
   Future<File> packageIpa(Directory payload, File output) async {
     if (output.existsSync()) {
       output.deleteSync();
     }
     output.parent.createSync(recursive: true);
+    final bool hasSwiftSupport =
+        payload.parent.childDirectory('SwiftSupport').existsSync();
     final RunResult result = await _processUtils.run(
-      <String>['zip', '-qr', output.path, 'Payload'],
+      <String>['zip', '-qr', output.path, 'Payload', if (hasSwiftSupport) 'SwiftSupport'],
       workingDirectory: payload.parent.path,
     );
     if (result.exitCode != 0) {

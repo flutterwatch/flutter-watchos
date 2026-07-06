@@ -639,6 +639,8 @@ class NativeWatchosBundle extends Target {
       //  - `aot`: gen_snapshot intermediates (snapshot_assembly.S/.o, ~22 MB)
       //    from _compileAotSnapshot — copying them shipped 22 MB of assembly
       //    text inside every release app bundle.
+      //  - `ipa`: the `flutter-watchos archive` output (archive + store
+      //    package) — it must never be swept into the next build's assets.
       //  - `*.xcarchive` / `Exported` / `*xportOptions.plist` / `.DS_Store`:
       //    manual archive/export runs and Finder droppings left in the build
       //    dir. Sweeping an old .xcarchive into flutter_assets shipped a
@@ -646,6 +648,7 @@ class NativeWatchosBundle extends Target {
       //    archive` (strip chokes on the nested dSYM).
       if (entity is Directory &&
           (name == 'aot' ||
+              name == 'ipa' ||
               name == 'Exported' ||
               name.endsWith('.xcarchive') ||
               name.contains('Debug-') ||

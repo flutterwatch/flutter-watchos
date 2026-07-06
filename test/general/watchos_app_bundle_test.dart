@@ -39,6 +39,7 @@ void main() {
       // sweeping an .xcarchive into the bundle ships the whole app inside
       // itself.
       fs.file('/build/watchos/Runner.xcarchive/Info.plist').createSync(recursive: true);
+      fs.file('/build/watchos/ipa/crown.ipa').createSync(recursive: true);
       fs.file('/build/watchos/Exported/app.ipa').createSync(recursive: true);
       fs.file('/build/watchos/exportOptions.plist').createSync(recursive: true);
       fs.file('/build/watchos/ExportOptions.plist').createSync(recursive: true);
@@ -51,6 +52,7 @@ void main() {
 
       expect(fs.file('/watchos/Flutter/flutter_assets/kernel_blob.bin').existsSync(), isTrue);
       expect(fs.directory('/watchos/Flutter/flutter_assets/Runner.xcarchive').existsSync(), isFalse);
+      expect(fs.directory('/watchos/Flutter/flutter_assets/ipa').existsSync(), isFalse);
       expect(fs.directory('/watchos/Flutter/flutter_assets/Exported').existsSync(), isFalse);
       expect(fs.file('/watchos/Flutter/flutter_assets/exportOptions.plist').existsSync(), isFalse);
       expect(fs.file('/watchos/Flutter/flutter_assets/ExportOptions.plist').existsSync(), isFalse);

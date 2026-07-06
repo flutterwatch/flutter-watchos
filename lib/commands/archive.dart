@@ -174,6 +174,7 @@ class WatchosArchiveCommand extends BuildSubCommand with WatchosRequiredArtifact
         identity: identity,
         workDir: scratch,
       );
+      await packager.collectSwiftSupport(payload);
       ipa = await packager.packageIpa(
         payload,
         ipaDir.childFile('${project.manifest.appName}.ipa'),

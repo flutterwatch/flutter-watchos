@@ -73,6 +73,25 @@ void main() {
     });
   });
 
+  group('swiftDylibsInOtoolOutput', () {
+    test('collects system and rpath Swift libraries, ignores the rest', () {
+      const otool = '''
+Runner:
+\t/System/Library/Frameworks/SwiftUI.framework/SwiftUI (compatibility version 1.0.0)
+\t/usr/lib/swift/libswiftCore.dylib (compatibility version 0.0.0)
+\t/usr/lib/swift/libswift_Concurrency.dylib (compatibility version 1.0.0, weak)
+\t@rpath/libswiftWatchKit.dylib (compatibility version 1.0.0)
+\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0)
+\t@rpath/libflutter_engine.dylib (compatibility version 0.0.0)
+''';
+      expect(swiftDylibsInOtoolOutput(otool), <String>{
+        'libswiftCore.dylib',
+        'libswift_Concurrency.dylib',
+        'libswiftWatchKit.dylib',
+      });
+    });
+  });
+
   group('selectStoreProfile', () {
     final now = DateTime(2026, 7, 6);
 
