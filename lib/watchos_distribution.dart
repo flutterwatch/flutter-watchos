@@ -319,9 +319,84 @@ class WatchosIpaPackager {
         }
       }
     }
+    // Swift libraries embedded at the bundle root (see embedSwiftLibraries).
+    for (final FileSystemEntity f in watchApp.listSync()) {
+      if (f is File && f.basename.startsWith('libswift') && f.path.endsWith('.dylib')) {
+        await _runOrExit(<String>['codesign', '--force', '--sign', identity, f.path],
+            'Signing ${f.basename}');
+      }
+    }
     await _runOrExit(
         <String>['codesign', '--force', '--sign', identity, '--entitlements', ents.path, watchApp.path],
         'Signing watch app');
+  }
+
+  /// The toolchain back-deployment directory holding watchOS Swift dylibs.
+  Future<Directory?> _swiftBackDeploymentDir() async {
+    final String xcodePath =
+        await _runOrExit(<String>['xcode-select', '-p'], 'Locating Xcode');
+    final Directory dir = _fs.directory(_fs.path.join(
+        xcodePath, 'Toolchains', 'XcodeDefault.xctoolchain',
+        'usr', 'lib', 'swift-5.0', 'watchos'));
+    return dir.existsSync() ? dir : null;
+  }
+
+  /// The transitive set of Swift standard libraries referenced by the
+  /// Mach-Os inside [scope], resolved against the toolchain copies.
+  Future<Set<String>> resolveSwiftLibraries(Directory scope) async {
+    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
+    if (swiftLibDir == null) {
+      return const <String>{};
+    }
+    final needed = <String>{};
+    for (final FileSystemEntity entity in scope.listSync(recursive: true)) {
+      if (entity is! File || !_isMachO(entity)) {
+        continue;
+      }
+      final RunResult otool = await _run(<String>['otool', '-L', entity.path]);
+      if (otool.exitCode == 0) {
+        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout));
+      }
+    }
+    final resolved = <String>{};
+    while (needed.isNotEmpty) {
+      final String name = needed.first;
+      needed.remove(name);
+      if (!resolved.add(name)) {
+        continue;
+      }
+      final File lib = swiftLibDir.childFile(name);
+      if (!lib.existsSync()) {
+        resolved.remove(name); // Not back-deployable — omit everywhere.
+        continue;
+      }
+      final RunResult otool = await _run(<String>['otool', '-L', lib.path]);
+      if (otool.exitCode == 0) {
+        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout).difference(resolved));
+      }
+    }
+    return resolved;
+  }
+
+  /// Copies the Swift standard libraries in [names] to the watch app's
+  /// bundle root.
+  ///
+  /// App Store Connect's watch-app pipeline expects the Swift runtime
+  /// embedded at the WATCH APP ROOT (its ITMS-90428 paths point there, not
+  /// at Frameworks/), with byte-matching toolchain originals under the
+  /// ipa's SwiftSupport/ — both sides are required, and the embedded copies
+  /// are re-signed while the SwiftSupport ones must stay untouched.
+  Future<void> embedSwiftLibraries(Directory watchApp, Set<String> names) async {
+    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
+    if (swiftLibDir == null) {
+      return;
+    }
+    for (final name in names) {
+      final File lib = swiftLibDir.childFile(name);
+      if (lib.existsSync()) {
+        lib.copySync(watchApp.childFile(name).path);
+      }
+    }
   }
 
   /// Toolchain stamp keys for the container plist, read from the local Xcode.
@@ -358,8 +433,8 @@ class WatchosIpaPackager {
   }
 
   /// Compiles the minimal iOS stub executable the container needs.
-  Future<void> compileContainerStub(File output) async {
-    final File source = output.parent.childFile('stub.c');
+  Future<void> compileContainerStub(File output, Directory scratch) async {
+    final File source = scratch.childFile('stub.c');
     source.writeAsStringSync('int main(void) { return 0; }\n');
     final String sdkPath = await _runOrExit(
         <String>['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], 'Locating iOS SDK');
@@ -397,6 +472,7 @@ class WatchosIpaPackager {
     final Directory watchApp = watchDir.childDirectory(archivedWatchApp.basename);
     await _runOrExit(<String>['cp', '-R', archivedWatchApp.path, watchApp.path],
         'Copying watch app');
+    await embedSwiftLibraries(watchApp, await resolveSwiftLibraries(watchApp));
     await resignWatchApp(
       watchApp: watchApp,
       watchBundleId: '$containerBundleId.watchkitapp',
@@ -406,7 +482,7 @@ class WatchosIpaPackager {
     );
 
     // Container stub + metadata.
-    await compileContainerStub(container.childFile(executableName));
+    await compileContainerStub(container.childFile(executableName), workDir);
     container.childFile('Info.plist').writeAsStringSync(containerInfoPlistXml(
           appName: appName,
           bundleId: containerBundleId,
@@ -438,57 +514,23 @@ class WatchosIpaPackager {
   /// `/usr/lib/swift` system libraries. The dylibs are Apple-signed originals
   /// from the toolchain's back-deployment directory and must not be re-signed.
   Future<Directory?> collectSwiftSupport(Directory payload) async {
-    final String xcodePath =
-        await _runOrExit(<String>['xcode-select', '-p'], 'Locating Xcode');
-    final Directory swiftLibDir = _fs.directory(_fs.path.join(
-        xcodePath, 'Toolchains', 'XcodeDefault.xctoolchain',
-        'usr', 'lib', 'swift-5.0', 'watchos'));
-    if (!swiftLibDir.existsSync()) {
-      _logger.printTrace('No Swift back-deployment libraries at ${swiftLibDir.path}.');
+    final Directory? swiftLibDir = await _swiftBackDeploymentDir();
+    if (swiftLibDir == null) {
+      _logger.printTrace('No Swift back-deployment libraries in the toolchain.');
       return null;
     }
-
-    // Every Mach-O in the payload (executables + dylibs) contributes refs.
-    final needed = <String>{};
-    for (final FileSystemEntity entity in payload.listSync(recursive: true)) {
-      if (entity is! File || !_isMachO(entity)) {
-        continue;
-      }
-      final RunResult otool = await _run(<String>['otool', '-L', entity.path]);
-      if (otool.exitCode == 0) {
-        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout));
-      }
-    }
-    if (needed.isEmpty) {
+    final Set<String> names = await resolveSwiftLibraries(payload);
+    if (names.isEmpty) {
       return null;
     }
-
-    // Transitive closure over the toolchain copies themselves.
     final Directory support = payload.parent
         .childDirectory('SwiftSupport')
         .childDirectory('watchos')
       ..createSync(recursive: true);
-    final copied = <String>{};
-    while (needed.isNotEmpty) {
-      final String name = needed.first;
-      needed.remove(name);
-      if (!copied.add(name)) {
-        continue;
-      }
-      final File lib = swiftLibDir.childFile(name);
-      if (!lib.existsSync()) {
-        // Newer-than-back-deployment library (weak-linked) — Xcode omits
-        // these from SwiftSupport too.
-        _logger.printTrace('SwiftSupport: $name not in toolchain, skipped.');
-        continue;
-      }
-      lib.copySync(support.childFile(name).path);
-      final RunResult otool = await _run(<String>['otool', '-L', lib.path]);
-      if (otool.exitCode == 0) {
-        needed.addAll(swiftDylibsInOtoolOutput(otool.stdout).difference(copied));
-      }
+    for (final name in names) {
+      swiftLibDir.childFile(name).copySync(support.childFile(name).path);
     }
-    _logger.printTrace('SwiftSupport: bundled ${copied.length} Swift libraries.');
+    _logger.printTrace('SwiftSupport: bundled ${names.length} Swift libraries.');
     return support.parent;
   }
 
