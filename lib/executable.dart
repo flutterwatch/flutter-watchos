@@ -43,6 +43,7 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
+import 'commands/archive.dart';
 import 'commands/attach.dart';
 import 'commands/build.dart';
 import 'commands/clean.dart';
@@ -55,6 +56,7 @@ import 'commands/precache.dart';
 import 'commands/run.dart';
 import 'commands/test.dart';
 import 'commands/upgrade.dart';
+import 'commands/upload.dart';
 import 'watchos_application_package.dart';
 import 'watchos_artifacts.dart';
 import 'watchos_cache.dart';
@@ -127,6 +129,7 @@ Future<void> main(List<String> args) async {
       // upstream (which stock UpgradeCommand would do, breaking the
       // engine-artifact pin).
       WatchosUpgradeCommand(verboseHelp: verboseHelp),
+      WatchosArchiveCommand(logger: globals.logger, verboseHelp: verboseHelp),
       WatchosAttachCommand(
         verboseHelp: verboseHelp,
         stdio: globals.stdio,
@@ -181,6 +184,7 @@ Future<void> main(List<String> args) async {
       ),
       WatchosRunCommand(verboseHelp: verboseHelp),
       WatchosTestCommand(verboseHelp: verboseHelp),
+      WatchosUploadCommand(),
     ],
     verbose: verbose,
     verboseHelp: verboseHelp,

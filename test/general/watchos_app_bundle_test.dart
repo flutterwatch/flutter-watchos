@@ -32,6 +32,31 @@ void main() {
         ..writeAsStringSync('data');
     }
 
+    test('skips archive/export leftovers dropped into the build dir', () {
+      seedSource();
+      // Manual `xcodebuild archive` / Organizer export runs (and Finder)
+      // leave these in build/watchos/ — none of them are Flutter assets, and
+      // sweeping an .xcarchive into the bundle ships the whole app inside
+      // itself.
+      fs.file('/build/watchos/Runner.xcarchive/Info.plist').createSync(recursive: true);
+      fs.file('/build/watchos/Exported/app.ipa').createSync(recursive: true);
+      fs.file('/build/watchos/exportOptions.plist').createSync(recursive: true);
+      fs.file('/build/watchos/ExportOptions.plist').createSync(recursive: true);
+      fs.file('/build/watchos/.DS_Store').createSync(recursive: true);
+
+      NativeWatchosBundle.copyFlutterAssetsTree(
+        source: fs.directory('/build/watchos'),
+        target: fs.directory('/watchos/Flutter/flutter_assets'),
+      );
+
+      expect(fs.file('/watchos/Flutter/flutter_assets/kernel_blob.bin').existsSync(), isTrue);
+      expect(fs.directory('/watchos/Flutter/flutter_assets/Runner.xcarchive').existsSync(), isFalse);
+      expect(fs.directory('/watchos/Flutter/flutter_assets/Exported').existsSync(), isFalse);
+      expect(fs.file('/watchos/Flutter/flutter_assets/exportOptions.plist').existsSync(), isFalse);
+      expect(fs.file('/watchos/Flutter/flutter_assets/ExportOptions.plist').existsSync(), isFalse);
+      expect(fs.file('/watchos/Flutter/flutter_assets/.DS_Store').existsSync(), isFalse);
+    });
+
     test('mirrors the source tree without nesting on the first copy', () {
       seedSource();
       NativeWatchosBundle.copyFlutterAssetsTree(

@@ -47,6 +47,8 @@
 		AF000000000000000000000A /* vm_isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = vm_isolate_snapshot.bin; sourceTree = "<group>"; };
 		AF000000000000000000000B /* isolate_snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = isolate_snapshot.bin; sourceTree = "<group>"; };
 		AF000000000000000000000C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AF000000000000000000000D /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		AF000000000000000000000E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,6 +101,8 @@
 				AF0000000000000000000006 /* icudtl.dat */,
 				AF000000000000000000000A /* vm_isolate_snapshot.bin */,
 				AF000000000000000000000B /* isolate_snapshot.bin */,
+				AF000000000000000000000D /* Debug.xcconfig */,
+				AF000000000000000000000E /* Release.xcconfig */,
 			);
 			path = Flutter;
 			sourceTree = "<group>";
@@ -209,6 +213,7 @@
 		};
 		BB0000000000000000000002 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AF000000000000000000000D /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -253,6 +258,7 @@
 		};
 		BB0000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AF000000000000000000000E /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "Apple Development";

@@ -19,6 +19,21 @@ where possible; watchOS-specific behaviour is called out per command.
 
 ## Commands and examples
 
+- ### `archive`
+
+  Build an App Store `.ipa` for a standalone (watch-only) app: release
+  build, `xcodebuild archive`, distribution signing, and the watch-only
+  container packaging — in one step, no Xcode UI. Alias: `ipa`.
+
+  ```sh
+  flutter-watchos archive
+  flutter-watchos upload        # then send it to App Store Connect
+  ```
+
+  Requires an "Apple Distribution" certificate in the keychain and App Store
+  provisioning profiles for the app and its `.watchkitapp` id — see
+  [publish-app.md](publish-app.md) for the one-time setup.
+
 - ### `attach`
 
   Attach to an already-running app (debug/profile) for hot reload and
@@ -170,6 +185,21 @@ where possible; watchOS-specific behaviour is called out per command.
   ```sh
   flutter-watchos upgrade
   ```
+
+- ### `upload`
+
+  Validate and upload an `.ipa` built by `archive` to App Store Connect,
+  authenticated with an App Store Connect API key.
+
+  ```sh
+  flutter-watchos upload --api-key-id ABC123XYZ --api-issuer 12345678-...
+  flutter-watchos upload --validate-only    # App Store checks, no upload
+  ```
+
+  The key id/issuer can also come from `APP_STORE_CONNECT_API_KEY_ID` /
+  `APP_STORE_CONNECT_API_ISSUER`; the `.p8` secret is read by Apple's
+  tooling from `~/.appstoreconnect/private_keys/` and never touched by
+  flutter-watchos.
 
 ## Forwarded commands
 

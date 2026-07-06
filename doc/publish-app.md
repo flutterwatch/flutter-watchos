@@ -1,36 +1,60 @@
 # Publish an app
 
-## Build for release
+A standalone (watch-only) app ships to the App Store entirely from the
+terminal:
 
 ```sh
-flutter-watchos build watchos --release
+flutter-watchos archive   # release build → signed App Store .ipa
+flutter-watchos upload    # validate + upload to App Store Connect
 ```
 
-This AOT-compiles your Dart code and produces a signed watch `Runner.app`.
-Requirements:
+The version comes from `pubspec.yaml` (`version: 1.2.0+3` →
+`1.2.0` / build `3`), so a release is: bump the pubspec, `archive`, `upload`.
 
-- Xcode code signing configured with your development team (open
-  `watchos/Runner.xcodeproj` once and set the team, or set
-  `DEVELOPMENT_TEAM` in the project).
-- Release engine artifacts on your machine — downloads are tied to your
-  flutterwatch.dev account ([accounts.md](accounts.md)).
+## Why a dedicated command
 
-Test the release build on a physical watch before submitting:
+App Store submission wraps a watch-only app in a thin iOS container
+(`ITSWatchOnlyContainer`) with the watch app embedded at `Watch/Runner.app`.
+Xcode 26 only performs that packaging in the Organizer UI — `xcodebuild
+-exportArchive` no longer offers App Store distribution for watch-only
+archives. `flutter-watchos archive` produces the same container itself
+(validated against App Store Connect), which keeps the whole release
+scriptable and CI-friendly.
+
+## One-time setup
+
+1. **App Store Connect record** — create the app (platform iOS) with your
+   bundle id, e.g. `com.acme.myapp`.
+2. **Certificates** — an **Apple Distribution** certificate in your keychain
+   (Xcode → Settings → Accounts → Manage Certificates, or the developer
+   portal).
+3. **Provisioning profiles** — two App Store profiles, downloaded and
+   double-clicked so Xcode installs them:
+   - one for `com.acme.myapp` (the container),
+   - one for `com.acme.myapp.watchkitapp` (the embedded watch app).
+   (Projects created by `flutter-watchos create` use
+   `<org>.<app>.watchkitapp` as the Xcode bundle id; `archive` derives the
+   container/watch id pair from it automatically, so either form works.)
+4. **API key** — an App Store Connect API key (Users and Access →
+   Integrations, role App Manager). Put the `.p8` in
+   `~/.appstoreconnect/private_keys/` and pass the key id + issuer id to
+   `upload` (or export `APP_STORE_CONNECT_API_KEY_ID` /
+   `APP_STORE_CONNECT_API_ISSUER`).
+
+## Test before you ship
 
 ```sh
-flutter-watchos run -d <watch-id> --release
+flutter-watchos run -d <watch-id> --release   # release build on a real watch
+flutter-watchos upload --validate-only        # App Store checks, no upload
 ```
 
-## The iOS container
+## Companion apps (iOS app + watch app)
 
-Unlike tvOS, a watch app is **not submitted standalone**: App Store
-submission packages the watch app inside a thin iOS host container
-(`ITSWatchOnlyContainer`), with the watch app embedded at
-`Watch/Runner.app`. The container is a shell — your Flutter code runs
-entirely on the watch.
-
-Archive and upload through Xcode (Product → Archive → Distribute) or
-`xcodebuild -exportArchive`, exactly as for a native watch-only app.
+If your project also ships an iOS app, the watch app is embedded in the iOS
+host and submitted as a normal iOS build — archive the `ios/` project and
+export with method `app-store-connect` (works fine in `xcodebuild`), or use
+Xcode. First-class companion wiring in `flutter-watchos create`/`build` is
+on the roadmap.
 
 ## arm64_32 and the deployment target
 
@@ -51,9 +75,10 @@ arm64-only either way.
 
 ## Checklist
 
-- [ ] `flutter-watchos build watchos --release` succeeds
+- [ ] `version:` bumped in pubspec.yaml (App Store rejects duplicates)
 - [ ] Release build runs on a physical watch
 - [ ] App icons + `Info.plist` metadata set in `watchos/Runner`
 - [ ] Deployment-target decision made (stub fallback vs. 27.0+)
-- [ ] Archive validates in Xcode's Organizer (watch-only container checks,
-      including ITMS-90426-style framework layout, surface here)
+- [ ] `flutter-watchos archive` succeeds
+- [ ] `flutter-watchos upload` — build appears in App Store Connect →
+      TestFlight after processing

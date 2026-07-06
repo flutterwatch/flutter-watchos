@@ -639,8 +639,23 @@ class NativeWatchosBundle extends Target {
       //  - `aot`: gen_snapshot intermediates (snapshot_assembly.S/.o, ~22 MB)
       //    from _compileAotSnapshot — copying them shipped 22 MB of assembly
       //    text inside every release app bundle.
+      //  - `*.xcarchive` / `Exported` / `*xportOptions.plist` / `.DS_Store`:
+      //    manual archive/export runs and Finder droppings left in the build
+      //    dir. Sweeping an old .xcarchive into flutter_assets shipped a
+      //    stale copy of the whole app inside itself and broke `xcodebuild
+      //    archive` (strip chokes on the nested dSYM).
       if (entity is Directory &&
-          (name == 'aot' || name.contains('Debug-') || name.contains('Release-'))) {
+          (name == 'aot' ||
+              name == 'Exported' ||
+              name.endsWith('.xcarchive') ||
+              name.contains('Debug-') ||
+              name.contains('Release-'))) {
+        continue;
+      }
+      if (entity is File &&
+          (name == '.DS_Store' ||
+              name == 'exportOptions.plist' ||
+              name == 'ExportOptions.plist')) {
         continue;
       }
       final String destPath = target.fileSystem.path.join(target.path, name);
