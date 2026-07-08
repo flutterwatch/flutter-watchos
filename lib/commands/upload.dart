@@ -10,8 +10,9 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:meta/meta.dart';
 
-/// Uploads an App Store `.ipa` (built by `flutter-watchos build ipa`) to
-/// App Store Connect via `xcrun altool`, validating first.
+/// Uploads an App Store `.ipa` (exported from Xcode's Archive → Distribute,
+/// or passed with `--ipa`) to App Store Connect via `xcrun altool`,
+/// validating first.
 ///
 /// Authentication uses an App Store Connect API key: pass `--api-key-id` and
 /// `--api-issuer` (or set APP_STORE_CONNECT_API_KEY_ID /
@@ -111,7 +112,8 @@ class WatchosUploadCommand extends FlutterCommand {
     if (candidates.isEmpty) {
       throwToolExit(
         'No .ipa found under build/watchos/ipa/. '
-        'Run `flutter-watchos build ipa` first, or pass --ipa.',
+        'Export one from Xcode (Product → Archive → Distribute App), then '
+        'pass it with --ipa (or drop it under build/watchos/ipa/).',
       );
     }
     return candidates.first;

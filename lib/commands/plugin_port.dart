@@ -10,10 +10,10 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 ///
 /// NOTE: This is a placeholder. The full porter subsystem (source analyzer,
 /// scaffolder, Swift/ObjC transformers, compatibility database, report
-/// emitter) is ported from flutter-tvos's `lib/plugin_porting/*` in a
-/// dedicated pass — it is generic (no plugin-specific code) and self-contained,
-/// so it does not block the build/run path. Until then this command exits with
-/// a clear message rather than pretending to scaffold.
+/// emitter) lands in a dedicated pass — it is generic (no plugin-specific
+/// code) and self-contained, so it does not block the build/run path. Until
+/// then this command exits with a clear message rather than pretending to
+/// scaffold.
 class WatchosPluginPortCommand extends FlutterCommand {
   WatchosPluginPortCommand() {
     argParser
@@ -37,8 +37,8 @@ class WatchosPluginPortCommand extends FlutterCommand {
     throwToolExit(
       'The watchOS plugin porter is not yet available in this build of '
       'flutter-watchos.\n'
-      'It is being ported from the flutter-tvos porter and will scaffold a '
-      'federated `*_watchos` package from an iOS/macOS plugin.',
+      'When ready it will scaffold a federated `*_watchos` package from an '
+      'iOS/macOS plugin.',
     );
   }
 }

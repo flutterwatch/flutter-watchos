@@ -34,9 +34,10 @@ debug is Simulator-only.
 
 ## The embedder: a SwiftUI runner
 
-watchOS has no UIKit, so the iOS `Flutter.framework` model doesn't apply.
-The `create` template emits a small SwiftUI runner (`watchos/Runner/`) that
-hosts the Flutter engine. It is generic glue — identical for every app — and
+watchOS has no UIKit, so the iOS runner/plugin-registrar model doesn't apply
+(the engine still ships as an embedded `Flutter.framework`, but there is no
+`FlutterViewController` or registrar). The `create` template emits a small
+SwiftUI runner (`watchos/Runner/`) that hosts the Flutter engine. It is generic glue — identical for every app — and
 rendering, input, and text input are handled by the engine, so improvements
 ship with engine updates without touching your app project:
 
@@ -67,11 +68,13 @@ Branch watch-specific UI on `Platform.isWatchOS` (or
 ## Build pipeline
 
 - **Simulator (debug):** kernel compile (JIT) + `xcodebuild` against
-  `watchsimulator`, engine dylib embedded. Hot reload/restart work as usual.
-- **Device (profile/release):** `gen_snapshot` AOT-compiles your Dart to an
-  `App.dylib` against the patched host SDK, then `xcodebuild` against
-  `watchos` with code signing. `--target-os` folding is deliberately
-  disabled so platform identity resolves at runtime against the engine.
+  `watchsimulator`, engine embedded as `Flutter.framework`. Hot
+  reload/restart work as usual.
+- **Device (profile/release):** `gen_snapshot` AOT-compiles your Dart into an
+  `App.framework`, then `xcodebuild` against `watchos` with code signing.
+  Both `Flutter.framework` and `App.framework` are linked/embedded by the
+  Xcode project. `--target-os` folding is deliberately disabled so platform
+  identity resolves at runtime against the engine.
 - **arm64_32:** when `WATCHOS_DEPLOYMENT_TARGET < 27.0` the App Store
   requires an `arm64_32` slice in the watch executable. The engine is
   arm64-only, so the template ships a stub arm64_32 slice with a "Requires

@@ -1,7 +1,6 @@
 # flutter-watchos Tests
 
-Unit tests for the flutter-watchos CLI tool. Structure and harness mirror the
-sibling flutter-tvos test suite.
+Unit tests for the flutter-watchos CLI tool.
 
 ## Structure
 
