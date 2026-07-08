@@ -1,3 +1,7 @@
+## 0.1.0-beta.4
+
+* **Meta:** add pub.dev `topics` and a `documentation` link. No API changes.
+
 ## 0.1.0-beta.3
 
 * **Docs:** README now links to the GitHub source/issues and drops a broken
