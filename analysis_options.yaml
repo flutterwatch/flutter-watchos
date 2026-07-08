@@ -17,6 +17,12 @@ analyzer:
     # globs above don't match through symlinks, so analyse-resolved paths still
     # land in the SDK trees. Exclude the proxy tree explicitly.
     - "proxy_root/**"
+    # `packages/` holds the first-party `flutter_watchos` Flutter plugin — a
+    # separate package with its own pubspec + analysis_options (flutter_test,
+    # flutter_lints). The CLI's root analyze must not pull it in: on a clean
+    # checkout its deps aren't resolved, so `expect`/`test`/widget types read
+    # as undefined and fail CI. It is analysed on its own, from its own dir.
+    - "packages/**"
 
 linter:
   rules:
