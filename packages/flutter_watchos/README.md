@@ -1,11 +1,13 @@
 # flutter_watchos
 
 Platform detection and utilities for Flutter apps running on **Apple Watch
-(watchOS)**, built for the [flutter-watchos](../../README.md) toolchain.
+(watchOS)**, built for the
+[flutter-watchos](https://github.com/flutterwatch/flutter-watchos) toolchain.
 
-It is the watchOS companion to the way `flutter_tvos` serves Apple TV: a small
-FFI package with zero-overhead, synchronous native calls — no method channels,
-no async.
+A small FFI package with zero-overhead, synchronous native calls — no method
+channels, no async.
+
+**Source & issues:** https://github.com/flutterwatch/flutter-watchos
 
 ## Features
 

@@ -1,3 +1,8 @@
+## 0.1.0-beta.3
+
+* **Docs:** README now links to the GitHub source/issues and drops a broken
+  relative link. No API changes.
+
 ## 0.1.0-beta.2
 
 * **Fix:** the package now no-ops correctly on iPhone/iPad. The native-symbol
