@@ -308,21 +308,21 @@ class NativeWatchosBundle extends Target {
       throw Exception('Missing watchOS project directory');
     }
 
-    // 1. Copy the embedder engine bits into watchos/Flutter/:
-    //    libflutter_engine.dylib + flutter_embedder.h + icudtl.dat + the JIT
-    //    core snapshots. watchOS uses the Flutter embedder C API with software
-    //    rendering (driven by Runner/FlutterRunner.swift), NOT an iOS-style
-    //    Flutter.framework / plugin registrar.
+    // 1. Stage the engine into watchos/Flutter/ as Flutter.framework, alongside
+    //    flutter_embedder.h + icudtl.dat + the core snapshots. watchOS uses the
+    //    Flutter embedder C API with software rendering (driven by
+    //    Runner/FlutterRunner.swift); the engine ships as a real framework the
+    //    Xcode project links and embeds.
     await _copyEngine(watchosProjectDir);
 
     // 2. Copy flutter_assets into watchos/Flutter/
     _copyFlutterAssets(project, watchosProjectDir);
 
-    // 3. App.dylib — the Dart code FlutterRunner loads.
-    //    - Release/device (AOT): gen_snapshot → assembly → App.dylib exporting
-    //      kDartVm/IsolateSnapshot symbols (dlsym'd by FlutterRunner).
-    //    - Debug/simulator (JIT): a tiny stub dylib so the Xcode embed phase
-    //      always has its input; the real snapshots come from the .bin files.
+    // 3. App.framework — the compiled Dart the engine loads.
+    //    - Release/device (AOT): gen_snapshot → assembly → App.framework/App
+    //      exporting kDartVm/IsolateSnapshot symbols the engine binds.
+    //    - Debug/simulator (JIT): a tiny stub App.framework so the Xcode embed
+    //      phase always has its input; real snapshots come from the .bin files.
     if (!buildInfo.buildInfo.isDebug) {
       await _buildAotAppDylib(project, watchosProjectDir, environment);
     } else {
@@ -338,8 +338,9 @@ class NativeWatchosBundle extends Target {
     await ensureReadyForWatchosTooling(project);
 
     // 6. Compile federated watchOS plugin native code (FFI plugins) into a
-    //    static archive and force-load it into the Runner link.
-    final String? pluginLdflags = await _buildPluginStaticArchive(project, watchosProjectDir);
+    //    static archive and wire its watch-scoped force-load flag into
+    //    Generated.xcconfig (so it survives the HostApp-scheme archive too).
+    await _buildPluginStaticArchive(project, watchosProjectDir);
 
     // 7. Run pod install if Podfile exists
     if (watchosProjectDir.childFile('Podfile').existsSync()) {
@@ -399,7 +400,6 @@ class NativeWatchosBundle extends Target {
         // executable; forcing arm64 here would strip the required slice. See
         // the arm64_32 gate in CLAUDE.md.
         if (buildInfo.simulator) 'ARCHS=arm64',
-        if (pluginLdflags != null) pluginLdflags,
         ...signingArgs,
         if (!buildInfo.simulator) '-allowProvisioningUpdates',
         'build',
@@ -420,9 +420,10 @@ class NativeWatchosBundle extends Target {
         ? '$configuration-watchsimulator'
         : '$configuration-watchos';
 
-    // The embedder build embeds App.dylib (+ the engine dylib, icudtl, and JIT
-    // snapshots) via the Xcode project's resources/embed phases, so there is no
-    // separate App.framework embed step here (unlike the iOS/tvOS pipeline).
+    // The Xcode project links Flutter.framework and embeds both
+    // Flutter.framework and App.framework via its embed-frameworks phase, and
+    // copies icudtl.dat + the core snapshots to the app root via its resources
+    // phase — Xcode does the signing and thinning, so no post-build wrapping.
 
     globals.logger.printTrace(
       'watchOS application built: build/watchos/$platformSuffix/Runner.app',
@@ -502,15 +503,18 @@ class NativeWatchosBundle extends Target {
     }
   }
 
-  /// Copies the embedder engine bits from the engine artifact into the watchos
-  /// project's `Flutter/` directory: `libflutter_engine.dylib`,
-  /// `flutter_embedder.h`, `clang_arm64/icudtl.dat`, and the JIT core snapshots
+  /// Stages the embedder engine bits into the watchos project's `Flutter/`
+  /// directory: the engine dylib as `Flutter.framework/Flutter`,
+  /// `flutter_embedder.h`, `clang_arm64/icudtl.dat`, and the core snapshots
   /// (`gen/flutter/lib/snapshot/{vm_isolate_snapshot,isolate_snapshot}.bin`).
   ///
   /// watchOS consumes the Flutter **embedder C API** (software rendering, driven
-  /// by `Runner/FlutterRunner.swift`) — there is no `Flutter.framework`. The JIT
-  /// snapshots are always copied (they are referenced by the Xcode project's
-  /// resources phase even on device builds, where they go unused).
+  /// by `Runner/FlutterRunner.swift`), but the engine ships as a real
+  /// `Flutter.framework` bundle — the Xcode project links and embeds it, and
+  /// App Store packages must contain framework bundles, not bare dylibs.
+  /// `icudtl.dat` and the snapshots stay as loose files here; the Xcode
+  /// resources phase copies them to the watch app bundle root, where the engine
+  /// resolves them relative to `Bundle.main.bundlePath`.
   Future<void> _copyEngine(Directory watchosProjectDir) async {
     final watchosArtifacts = globals.artifacts! as WatchosArtifacts;
     final EnvironmentType envType = buildInfo.simulator
@@ -550,14 +554,22 @@ class NativeWatchosBundle extends Target {
       src.copySync(dest);
     }
 
-    copyInto(engineDylib.path, 'libflutter_engine.dylib');
-    // The engine dylib must be loadable via @rpath from the watch executable.
-    globals.processManager.runSync(<String>[
-      'install_name_tool',
-      '-id',
-      '@rpath/libflutter_engine.dylib',
-      globals.fs.path.join(flutterDir.path, 'libflutter_engine.dylib'),
-    ]);
+    // Stage the engine as a real Flutter.framework (Frameworks/Flutter.framework
+    // in the built app), not a bare dylib. The Xcode project links `-framework
+    // Flutter` and embeds it with CodeSignOnCopy.
+    _stageFramework(
+      sourceDylib: engineDylib,
+      flutterDir: flutterDir,
+      frameworkName: 'Flutter',
+      bundleId: _flutterFrameworkBundleId,
+    );
+    // Sweep away any bare engine dylib left by an earlier toolchain version so
+    // the framework is the single source of the engine binary.
+    final File staleEngineDylib =
+        globals.fs.file(globals.fs.path.join(flutterDir.path, 'libflutter_engine.dylib'));
+    if (staleEngineDylib.existsSync()) {
+      staleEngineDylib.deleteSync();
+    }
     copyInto(globals.fs.path.join(engineDir, 'flutter_embedder.h'), 'flutter_embedder.h');
     copyInto(globals.fs.path.join(engineDir, 'clang_arm64', 'icudtl.dat'), 'icudtl.dat');
     copyInto(
@@ -616,17 +628,41 @@ class NativeWatchosBundle extends Target {
         '(${watchosOutputDir.path}) — cannot stage ${flutterAssetsTarget.path}.',
       );
     }
-    copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
+    // AOT (profile/release) runs from App.framework; the JIT kernel + VM
+    // snapshots must not ship (they are debug-only and, for this app, ~52 MB —
+    // enough to blow past the App Store's 75 MB watch-app thinning limit).
+    copyFlutterAssetsTree(
+      source: flutterAssetsSource,
+      target: flutterAssetsTarget,
+      stripJitArtifacts: !buildInfo.buildInfo.isDebug,
+    );
     globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
   }
+
+  /// JIT-only Dart payload that must not ship in an AOT (profile/release)
+  /// bundle: the release engine runs `App.framework`, so the kernel and VM/
+  /// isolate snapshot data are dead weight. Stock Flutter's release bundle
+  /// omits them; for this app they were ~52 MB, tripping the App Store's
+  /// 75 MB watch-app size limit (ITMS-90389).
+  static const Set<String> _jitOnlyAssets = <String>{
+    'kernel_blob.bin',
+    'vm_snapshot_data',
+    'isolate_snapshot_data',
+  };
 
   /// Mirrors the build output's flutter_assets tree into [target].
   ///
   /// The target is wiped first so the result is an exact mirror of [source].
   /// xcodebuild output dirs (`Debug-*`, `Release-*`) that may sit alongside the
   /// assets in `build/watchos/` are skipped — they are not Flutter assets.
+  /// When [stripJitArtifacts] is set (AOT builds) the JIT-only Dart payload in
+  /// [_jitOnlyAssets] is skipped too.
   @visibleForTesting
-  static void copyFlutterAssetsTree({required Directory source, required Directory target}) {
+  static void copyFlutterAssetsTree({
+    required Directory source,
+    required Directory target,
+    required bool stripJitArtifacts,
+  }) {
     if (target.existsSync()) {
       target.deleteSync(recursive: true);
     }
@@ -639,7 +675,7 @@ class NativeWatchosBundle extends Target {
       //  - `aot`: gen_snapshot intermediates (snapshot_assembly.S/.o, ~22 MB)
       //    from _compileAotSnapshot — copying them shipped 22 MB of assembly
       //    text inside every release app bundle.
-      //  - `ipa`: the `flutter-watchos archive` output (archive + store
+      //  - `ipa`: the `flutter-watchos build ipa` output (archive + store
       //    package) — it must never be swept into the next build's assets.
       //  - `*.xcarchive` / `Exported` / `*xportOptions.plist` / `.DS_Store`:
       //    manual archive/export runs and Finder droppings left in the build
@@ -658,7 +694,8 @@ class NativeWatchosBundle extends Target {
       if (entity is File &&
           (name == '.DS_Store' ||
               name == 'exportOptions.plist' ||
-              name == 'ExportOptions.plist')) {
+              name == 'ExportOptions.plist' ||
+              (stripJitArtifacts && _jitOnlyAssets.contains(name)))) {
         continue;
       }
       final String destPath = target.fileSystem.path.join(target.path, name);
@@ -670,16 +707,90 @@ class NativeWatchosBundle extends Target {
     }
   }
 
-  /// Builds `App.dylib` for release/device (AOT): gen_snapshot → assembly →
-  /// clang dylib exporting the `kDartVmSnapshot*` / `kDartIsolateSnapshot*`
-  /// symbols that `FlutterRunner.swift` dlopen/dlsym's at runtime. Reuses the
-  /// `app.dill` produced by [WatchosKernelSnapshot].
+  /// Fixed, app-independent bundle identifiers for the embedded engine/Dart
+  /// frameworks. Like stock Flutter's `io.flutter.flutter`, these need not be
+  /// prefixed by the host app's id — every watchOS app embeds the same two
+  /// framework bundles, and App Store Connect accepts them.
+  static const String _flutterFrameworkBundleId = 'dev.flutterwatch.Flutter';
+  static const String _appFrameworkBundleId = 'dev.flutterwatch.App';
+
+  /// `MinimumOSVersion` stamped into the staged framework Info.plists. Tracks
+  /// the template's `WATCHOS_DEPLOYMENT_TARGET` (the arm64 engine is Series 9+ /
+  /// watchOS 26). Kept ≤ the watch app's own minimum so validation never sees a
+  /// framework that demands a newer OS than its host.
+  static const String _frameworkMinimumOSVersion = '26.0';
+
+  /// Wraps [sourceDylib] as `<frameworkName>.framework/<frameworkName>` under
+  /// [flutterDir], with an `@rpath/<name>.framework/<name>` install name and an
+  /// FMWK Info.plist — the exact structure the Xcode "Embed Frameworks" phase
+  /// and App Store Connect require. Any pre-existing framework dir is replaced.
+  void _stageFramework({
+    required File sourceDylib,
+    required Directory flutterDir,
+    required String frameworkName,
+    required String bundleId,
+  }) {
+    final Directory fw = flutterDir.childDirectory('$frameworkName.framework');
+    if (fw.existsSync()) {
+      fw.deleteSync(recursive: true);
+    }
+    fw.createSync(recursive: true);
+    final File binary = fw.childFile(frameworkName);
+    sourceDylib.copySync(binary.path);
+    final ProcessResult idResult = globals.processManager.runSync(<String>[
+      'install_name_tool',
+      '-id',
+      '@rpath/$frameworkName.framework/$frameworkName',
+      binary.path,
+    ]);
+    if (idResult.exitCode != 0) {
+      throwToolExit(
+        'Setting the install name for $frameworkName.framework failed:\n'
+        '${idResult.stderr}',
+      );
+    }
+    fw.childFile('Info.plist').writeAsStringSync(
+      _frameworkInfoPlist(executable: frameworkName, bundleId: bundleId),
+    );
+  }
+
+  /// FMWK Info.plist for a staged engine/Dart framework. The supported platform
+  /// follows the build SDK (WatchSimulator for the debug/JIT simulator loop,
+  /// WatchOS for AOT device/App Store builds).
+  String _frameworkInfoPlist({
+    required String executable,
+    required String bundleId,
+  }) {
+    final platform = buildInfo.simulator ? 'WatchSimulator' : 'WatchOS';
+    return '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleExecutable</key><string>$executable</string>
+\t<key>CFBundleIdentifier</key><string>$bundleId</string>
+\t<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+\t<key>CFBundleName</key><string>$executable</string>
+\t<key>CFBundlePackageType</key><string>FMWK</string>
+\t<key>CFBundleShortVersionString</key><string>1.0</string>
+\t<key>CFBundleSupportedPlatforms</key><array><string>$platform</string></array>
+\t<key>CFBundleVersion</key><string>1</string>
+\t<key>MinimumOSVersion</key><string>$_frameworkMinimumOSVersion</string>
+</dict>
+</plist>
+''';
+  }
+
+  /// Builds `App.framework/App` for release/device (AOT): gen_snapshot →
+  /// assembly → clang dylib exporting the `kDartVmSnapshot*` /
+  /// `kDartIsolateSnapshot*` symbols the engine's App loader binds at runtime.
+  /// Reuses the `app.dill` produced by [WatchosKernelSnapshot].
   Future<void> _buildAotAppDylib(
     FlutterProject project,
     Directory watchosProjectDir,
     Environment environment,
   ) async {
-    globals.logger.printTrace('Compiling AOT App.dylib for watchOS...');
+    globals.logger.printTrace('Compiling AOT App.framework for watchOS...');
 
     final watchosArtifacts = globals.artifacts! as WatchosArtifacts;
     final String genSnapshotPath = watchosArtifacts.getGenSnapshotPath(buildInfo.buildInfo.mode);
@@ -745,10 +856,8 @@ class NativeWatchosBundle extends Target {
       throw Exception('Assembly compilation failed');
     }
 
-    final String appDylib = globals.fs.path.join(
-      watchosProjectDir.childDirectory('Flutter').path,
-      'App.dylib',
-    );
+    final File appBinary =
+        _prepareAppFramework(watchosProjectDir).childFile('App');
     final ProcessResult linkResult = await globals.processManager.run(<String>[
       'xcrun',
       '-sdk',
@@ -758,23 +867,47 @@ class NativeWatchosBundle extends Target {
       clangTarget,
       '-dynamiclib',
       '-install_name',
-      '@rpath/App.dylib',
+      '@rpath/App.framework/App',
       '-o',
-      appDylib,
+      appBinary.path,
       objectPath,
     ]);
     if (linkResult.exitCode != 0) {
-      globals.logger.printError('Linking App.dylib failed:');
+      globals.logger.printError('Linking App.framework failed:');
       globals.logger.printError(linkResult.stderr as String);
-      throw Exception('Linking App.dylib failed');
+      throw Exception('Linking App.framework failed');
     }
-    globals.logger.printTrace('AOT App.dylib built: $appDylib');
+    _finalizeAppFramework(appBinary.parent);
+    globals.logger.printTrace('AOT App.framework built: ${appBinary.path}');
   }
 
-  /// Builds a tiny stub `App.dylib` for debug/JIT builds so the Xcode embed
-  /// phase always has its input. The real Dart code runs from the JIT core
-  /// snapshots (`*_snapshot.bin`) + `kernel_blob.bin` in flutter_assets;
-  /// nothing dlsym's this stub.
+  /// Creates a clean `Flutter/App.framework/` directory (removing any prior
+  /// framework or bare `App.dylib`) ready to receive the linked `App` binary.
+  Directory _prepareAppFramework(Directory watchosProjectDir) {
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
+    final Directory appFramework = flutterDir.childDirectory('App.framework');
+    if (appFramework.existsSync()) {
+      appFramework.deleteSync(recursive: true);
+    }
+    appFramework.createSync(recursive: true);
+    final File staleAppDylib = flutterDir.childFile('App.dylib');
+    if (staleAppDylib.existsSync()) {
+      staleAppDylib.deleteSync();
+    }
+    return appFramework;
+  }
+
+  /// Writes the FMWK Info.plist alongside the linked `App` binary.
+  void _finalizeAppFramework(Directory appFramework) {
+    appFramework.childFile('Info.plist').writeAsStringSync(
+      _frameworkInfoPlist(executable: 'App', bundleId: _appFrameworkBundleId),
+    );
+  }
+
+  /// Builds a tiny stub `App.framework/App` for debug/JIT builds so the Xcode
+  /// embed phase always has its input. The real Dart code runs from the JIT
+  /// core snapshots (`*_snapshot.bin`) + `kernel_blob.bin` in flutter_assets;
+  /// nothing binds this stub.
   Future<void> _buildJitStubAppDylib(Directory watchosProjectDir) async {
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('fw_stub.');
     try {
@@ -782,10 +915,8 @@ class NativeWatchosBundle extends Target {
         ..writeAsStringSync(
           '__attribute__((visibility("default"))) int flutter_watchos_jit_stub;\n',
         );
-      final String appDylib = globals.fs.path.join(
-        watchosProjectDir.childDirectory('Flutter').path,
-        'App.dylib',
-      );
+      final File appBinary =
+          _prepareAppFramework(watchosProjectDir).childFile('App');
       final clangTarget = buildInfo.simulator
           ? 'arm64-apple-watchos9.0-simulator'
           : 'arm64-apple-watchos9.0';
@@ -798,16 +929,17 @@ class NativeWatchosBundle extends Target {
         clangTarget,
         '-dynamiclib',
         '-install_name',
-        '@rpath/App.dylib',
+        '@rpath/App.framework/App',
         '-o',
-        appDylib,
+        appBinary.path,
         stubC.path,
       ]);
       if (r.exitCode != 0) {
-        globals.logger.printError('Building JIT stub App.dylib failed: ${r.stderr}');
-        throw Exception('Building JIT stub App.dylib failed');
+        globals.logger.printError('Building JIT stub App.framework failed: ${r.stderr}');
+        throw Exception('Building JIT stub App.framework failed');
       }
-      globals.logger.printTrace('JIT stub App.dylib built: $appDylib');
+      _finalizeAppFramework(appBinary.parent);
+      globals.logger.printTrace('JIT stub App.framework built: ${appBinary.path}');
     } finally {
       try {
         tmp.deleteSync(recursive: true);
@@ -818,9 +950,9 @@ class NativeWatchosBundle extends Target {
   }
 
   /// Compiles the native sources of every federated watchOS plugin that ships
-  /// a `watchos/Package.swift` into a single static archive, and returns the
-  /// `OTHER_LDFLAGS=` assignment that force-loads it into the Runner link — or
-  /// null when there are no such plugins.
+  /// a `watchos/Package.swift` into a single static archive and wires an
+  /// `OTHER_LDFLAGS` assignment into `Generated.xcconfig` that force-loads it
+  /// into the watch (Runner) link. No-op when there are no such plugins.
   ///
   /// watchOS plugins here are **FFI-only** (the software-rendering embedder
   /// exposes no `Flutter` Swift module or plugin registrar), so instead of
@@ -829,15 +961,21 @@ class NativeWatchosBundle extends Target {
   /// FFI symbols have no compile-time caller, so they would otherwise be
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
-  /// `DynamicLibrary.process()` / dlsym. This needs no Xcode project edits:
-  /// the flag is passed on the `xcodebuild` command line.
-  Future<String?> _buildPluginStaticArchive(
+  /// `DynamicLibrary.process()` / dlsym.
+  ///
+  /// The flag is written into the xcconfig — not passed on the `xcodebuild`
+  /// command line — with an `[sdk=watch…*]` qualifier so it applies ONLY to
+  /// the watch target. That is what lets `flutter-watchos archive` build the
+  /// `HostApp` scheme (Runner + the iOS container) in one pass: a global
+  /// `OTHER_LDFLAGS` would try to force-load this watchOS archive into the iOS
+  /// host's link and fail.
+  Future<void> _buildPluginStaticArchive(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
     final List<WatchosSpmPlugin> plugins = discoverWatchosSpmPlugins(project);
     if (plugins.isEmpty) {
-      return null;
+      return;
     }
 
     final sources = <String>[];
@@ -862,7 +1000,7 @@ class NativeWatchosBundle extends Target {
       frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
     }
     if (sources.isEmpty) {
-      return null;
+      return;
     }
     // watchOS plugins virtually always need these; harmless if already linked.
     frameworks.addAll(<String>['WatchKit', 'Foundation']);
@@ -923,12 +1061,36 @@ class NativeWatchosBundle extends Target {
       'force-loading into Runner with frameworks: ${frameworks.join(', ')}',
     );
 
-    final ldflags = StringBuffer(r'OTHER_LDFLAGS=$(inherited) -force_load ');
+    // Force-load flags, qualified to the watch SDK so they never reach the iOS
+    // HostApp link during `flutter-watchos archive` (which builds both targets
+    // via the HostApp scheme).
+    final ldflags = StringBuffer(r'$(inherited) -force_load ');
     ldflags.write(archive);
     for (final fw in frameworks) {
       ldflags.write(' -framework $fw');
     }
-    return ldflags.toString();
+    // `_generateXcconfigs` (step 4) already rewrote Generated.xcconfig this
+    // build; append the qualified assignment so the watch target picks it up
+    // via its base configuration. Debug builds link the simulator SDK, device
+    // builds link `watchos` — qualify to the active one.
+    final sdkQualifier = '${buildInfo.sdkName}*';
+    flutterDir.childFile('Generated.xcconfig').writeAsStringSync(
+          'OTHER_LDFLAGS[sdk=$sdkQualifier]=$ldflags\n'
+          // The FFI exports above are reached only via dlsym(RTLD_DEFAULT) at
+          // runtime, so they have no link-time caller. `xcodebuild archive`
+          // runs the install-time strip (DEPLOYMENT_POSTPROCESSING /
+          // STRIP_INSTALLED_PRODUCT=YES) which, with the default
+          // STRIP_STYLE=all, prunes them from the symbol table — the app then
+          // throws "Failed to lookup symbol …: symbol not found" on the first
+          // FFI call, its root widget's initState blows up, and it renders a
+          // blank/gray screen. This ONLY bites archived/TestFlight builds:
+          // `flutter-watchos run` builds without the install strip, so the
+          // symbols survive there (which is why on-device run works but the
+          // App Store build is gray). Keep global symbols so the exports
+          // survive the strip; locals are still stripped.
+          'STRIP_STYLE = non-global\n',
+          mode: FileMode.append,
+        );
   }
 
   /// Parses `.linkedFramework("X")` entries from a plugin's `Package.swift`.

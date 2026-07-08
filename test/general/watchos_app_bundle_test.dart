@@ -48,6 +48,7 @@ void main() {
       NativeWatchosBundle.copyFlutterAssetsTree(
         source: fs.directory('/build/watchos'),
         target: fs.directory('/watchos/Flutter/flutter_assets'),
+        stripJitArtifacts: false,
       );
 
       expect(fs.file('/watchos/Flutter/flutter_assets/kernel_blob.bin').existsSync(), isTrue);
@@ -64,6 +65,7 @@ void main() {
       NativeWatchosBundle.copyFlutterAssetsTree(
         source: fs.directory('/build/watchos'),
         target: fs.directory('/watchos/Flutter/flutter_assets'),
+        stripJitArtifacts: false,
       );
 
       expect(fs.file('/watchos/Flutter/flutter_assets/kernel_blob.bin').existsSync(), isTrue);
@@ -76,8 +78,8 @@ void main() {
       final Directory source = fs.directory('/build/watchos');
       final Directory target = fs.directory('/watchos/Flutter/flutter_assets');
 
-      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target);
-      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target);
+      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target, stripJitArtifacts: false);
+      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target, stripJitArtifacts: false);
 
       expect(
         fs.directory('/watchos/Flutter/flutter_assets/assets/assets').existsSync(),
@@ -91,11 +93,11 @@ void main() {
       seedSource();
       final Directory source = fs.directory('/build/watchos');
       final Directory target = fs.directory('/watchos/Flutter/flutter_assets');
-      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target);
+      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target, stripJitArtifacts: false);
 
       // Simulate an asset removed from the project between builds.
       fs.file('/build/watchos/assets/logo.png').deleteSync();
-      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target);
+      NativeWatchosBundle.copyFlutterAssetsTree(source: source, target: target, stripJitArtifacts: false);
 
       expect(
         fs.file('/watchos/Flutter/flutter_assets/assets/logo.png').existsSync(),
@@ -103,6 +105,26 @@ void main() {
         reason: 'a clean target should not retain assets deleted from the source',
       );
       expect(fs.file('/watchos/Flutter/flutter_assets/assets/nested/data.bin').existsSync(), isTrue);
+    });
+
+    test('strips JIT-only Dart payload in AOT builds', () {
+      seedSource();
+      fs.file('/build/watchos/isolate_snapshot_data').createSync(recursive: true);
+      fs.file('/build/watchos/vm_snapshot_data').createSync(recursive: true);
+
+      NativeWatchosBundle.copyFlutterAssetsTree(
+        source: fs.directory('/build/watchos'),
+        target: fs.directory('/watchos/Flutter/flutter_assets'),
+        stripJitArtifacts: true,
+      );
+
+      // JIT-only payload gone...
+      expect(fs.file('/watchos/Flutter/flutter_assets/kernel_blob.bin').existsSync(), isFalse);
+      expect(fs.file('/watchos/Flutter/flutter_assets/isolate_snapshot_data').existsSync(), isFalse);
+      expect(fs.file('/watchos/Flutter/flutter_assets/vm_snapshot_data').existsSync(), isFalse);
+      // ...but real assets stay.
+      expect(fs.file('/watchos/Flutter/flutter_assets/assets/logo.png').existsSync(), isTrue);
+      expect(fs.file('/watchos/Flutter/flutter_assets/AssetManifest.json').existsSync(), isTrue);
     });
 
     test('skips xcodebuild output dirs sitting alongside the assets', () {
@@ -113,6 +135,7 @@ void main() {
       NativeWatchosBundle.copyFlutterAssetsTree(
         source: fs.directory('/build/watchos'),
         target: fs.directory('/watchos/Flutter/flutter_assets'),
+        stripJitArtifacts: false,
       );
 
       expect(
@@ -133,6 +156,7 @@ void main() {
       NativeWatchosBundle.copyFlutterAssetsTree(
         source: fs.directory('/build/watchos'),
         target: fs.directory('/watchos/Flutter/flutter_assets'),
+        stripJitArtifacts: false,
       );
 
       expect(

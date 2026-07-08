@@ -43,7 +43,6 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
-import 'commands/archive.dart';
 import 'commands/attach.dart';
 import 'commands/build.dart';
 import 'commands/clean.dart';
@@ -129,7 +128,6 @@ Future<void> main(List<String> args) async {
       // upstream (which stock UpgradeCommand would do, breaking the
       // engine-artifact pin).
       WatchosUpgradeCommand(verboseHelp: verboseHelp),
-      WatchosArchiveCommand(logger: globals.logger, verboseHelp: verboseHelp),
       WatchosAttachCommand(
         verboseHelp: verboseHelp,
         stdio: globals.stdio,
