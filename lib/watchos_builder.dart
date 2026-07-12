@@ -6,6 +6,8 @@ import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/analyze_size.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/terminal.dart' show TerminalColor;
+import 'package:flutter_tools/src/base/utils.dart' show getSizeAsPlatformMB;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -105,5 +107,21 @@ class WatchosBuilder {
     } finally {
       status.stop();
     }
+
+    // Close like stock `flutter build ios` (`✓ Built <path> (<size>)`). The
+    // path matters doubly here: it is what a companion iOS app's
+    // "Embed Prebuilt watchOS App" phase consumes.
+    final Directory appDir = outputDir
+        .childDirectory(watchosBuildInfo.productsDirName)
+        .childDirectory('Runner.app');
+    final int? directorySize = globals.os.getDirectorySize(appDir);
+    final appSize = (buildInfo.mode == BuildMode.debug || directorySize == null)
+        ? '' // Don't display the size when building a debug variant.
+        : ' (${getSizeAsPlatformMB(directorySize)})';
+    globals.logger.printStatus(
+      '${globals.terminal.successMark} '
+      'Built ${globals.fs.path.relative(appDir.path)}$appSize',
+      color: TerminalColor.green,
+    );
   }
 }

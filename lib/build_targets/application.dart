@@ -362,7 +362,7 @@ class NativeWatchosBundle extends Target {
     // 8. Run xcodebuild.
     globals.logger.printTrace('Executing xcodebuild for watchOS (${buildInfo.sdkName})...');
 
-    final configuration = buildInfo.buildInfo.isDebug ? 'Debug' : 'Release';
+    final String configuration = buildInfo.configuration;
     final String symroot = project.directory.childDirectory('build').childDirectory('watchos').path;
 
     final bool hasWorkspace = watchosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
@@ -416,17 +416,15 @@ class NativeWatchosBundle extends Target {
     }
     globals.logger.printStatus('Xcode build done.');
 
-    final platformSuffix = buildInfo.simulator
-        ? '$configuration-watchsimulator'
-        : '$configuration-watchos';
-
     // The Xcode project links Flutter.framework and embeds both
     // Flutter.framework and App.framework via its embed-frameworks phase, and
     // copies icudtl.dat + the core snapshots to the app root via its resources
     // phase — Xcode does the signing and thinning, so no post-build wrapping.
+    // The "✓ Built <path>" close is printed by WatchosBuilder once the
+    // overall build progress stops, matching stock `flutter build ios`.
 
     globals.logger.printTrace(
-      'watchOS application built: build/watchos/$platformSuffix/Runner.app',
+      'watchOS application built: build/watchos/${buildInfo.productsDirName}/Runner.app',
     );
   }
 
@@ -436,21 +434,34 @@ class NativeWatchosBundle extends Target {
       return const <String>[];
     }
 
+    // Status-level like stock `flutter build ios`'s "Automatically signing
+    // iOS for device deployment using specified development team in Xcode
+    // project" — which team signs (and where it came from) is the first thing
+    // to check when a device install fails.
     final String? envTeam = globals.platform.environment['DEVELOPMENT_TEAM'];
     if (envTeam != null && envTeam.isNotEmpty) {
-      globals.logger.printTrace('Using DEVELOPMENT_TEAM from environment: $envTeam');
+      globals.logger.printStatus(
+        'Automatically signing watchOS for device deployment using development '
+        'team from the DEVELOPMENT_TEAM environment variable: $envTeam',
+      );
       return <String>['DEVELOPMENT_TEAM=$envTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
     final String? pbxprojTeam = _readTeamFromPbxproj(watchosProjectDir);
     if (pbxprojTeam != null) {
-      globals.logger.printTrace('Using DEVELOPMENT_TEAM from project.pbxproj: $pbxprojTeam');
+      globals.logger.printStatus(
+        'Automatically signing watchOS for device deployment using specified '
+        'development team in Xcode project: $pbxprojTeam',
+      );
       return <String>['DEVELOPMENT_TEAM=$pbxprojTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
     final String? keychainTeam = await _discoverTeamFromKeychain();
     if (keychainTeam != null) {
-      globals.logger.printTrace('Auto-detected development team: $keychainTeam');
+      globals.logger.printStatus(
+        'Automatically signing watchOS for device deployment using development '
+        'team auto-detected from the keychain: $keychainTeam',
+      );
       return <String>['DEVELOPMENT_TEAM=$keychainTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 

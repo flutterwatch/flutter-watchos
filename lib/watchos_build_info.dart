@@ -28,4 +28,13 @@ class WatchosBuildInfo {
   /// The Xcode destination for this build configuration.
   String get destination =>
       simulator ? 'generic/platform=watchOS Simulator' : 'generic/platform=watchOS';
+
+  /// The Xcode build configuration (`Debug`/`Release`) for this build.
+  String get configuration => buildInfo.isDebug ? 'Debug' : 'Release';
+
+  /// The products directory under `build/watchos/` that xcodebuild (SYMROOT)
+  /// writes the built `Runner.app` into, e.g. `Debug-watchsimulator` or
+  /// `Release-watchos`. A companion iOS app's "Embed Prebuilt watchOS App"
+  /// build phase reads from the same location.
+  String get productsDirName => '$configuration-$sdkName';
 }
