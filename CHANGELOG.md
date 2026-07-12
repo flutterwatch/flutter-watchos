@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Standalone vs. companion host modes, derived from the project shape (no
+  configuration): a project without an iOS app ships the watch-only
+  (`WKWatchOnly`) watch app inside the thin HostApp container in `watchos/`;
+  a project with an `ios/` Flutter app ships the watch app inside it — the
+  iOS Runner gets an "Embed Prebuilt watchOS App" build phase and the watch
+  Info.plist declares `WKCompanionAppBundleIdentifier`. `create` wires the
+  right mode up front, `build`/`run` re-derive and self-heal it (add or
+  remove `ios/` and the wiring follows), and the new `host` command reports
+  the state.
+
 ## 0.1.0-beta.1 (closed beta)
 
 First public (closed-beta) release. Flutter 3.44.4, engine artifacts

@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:yaml/yaml.dart';
 
+import 'watchos_host_mode.dart';
 import 'watchos_swift_package_manager.dart';
 
 /// Pubspec key, nested under `flutter.plugin.platforms.watchos`, by which an
@@ -480,6 +481,14 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   if (!watchosDir.existsSync()) {
     return;
   }
+
+  // Keep the host-mode wiring (standalone thin container vs companion iOS
+  // app) consistent on every build/run. The mode is derived from the project
+  // shape — an ios/ Flutter app means the watch app ships inside it as its
+  // companion, no iOS app means watch-only — the same way stock Flutter
+  // treats platform directories as the source of truth. Idempotent and
+  // silent when the project is already consistent.
+  await syncWatchosHostMode(projectDir: project.directory, logger: globals.logger);
 
   final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
 

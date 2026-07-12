@@ -59,11 +59,23 @@ flutter-watchos upload --validate-only        # App Store checks, no upload
 
 ## Companion apps (iOS app + watch app)
 
-If your project also ships an iOS app, the watch app is embedded in the iOS
-host and submitted as a normal iOS build — archive the `ios/` project and
-export with method `app-store-connect` (works fine in `xcodebuild`), or use
-Xcode. First-class companion wiring in `flutter-watchos create`/`build` is
-on the roadmap.
+If your project also ships an iOS app (`ios/` exists), the watch app is a
+**companion**: it is embedded in the iOS host and submitted as a normal iOS
+build. The wiring is automatic — `create`/`build`/`run` derive the mode
+from the project shape and keep the iOS Runner's "Embed Prebuilt watchOS
+App" build phase and the watch Info.plist's
+`WKCompanionAppBundleIdentifier` in sync (`flutter-watchos host` reports
+the state). To ship:
+
+1. `flutter-watchos build watchos --release` — produces the prebuilt watch
+   `Runner.app` the embed phase picks up.
+2. Archive the `ios/` project as usual (Xcode Product → Archive, or stock
+   `flutter build ipa`) and distribute — the watch app rides along inside
+   the iOS build. The HostApp-container steps in the rest of this guide
+   don't apply.
+
+Without an iOS app the project is **standalone** (watch-only), which is
+what the rest of this guide covers.
 
 ## arm64_32 and the deployment target
 

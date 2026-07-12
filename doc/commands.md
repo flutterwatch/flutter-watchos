@@ -82,6 +82,13 @@ where possible; watchOS-specific behaviour is called out per command.
   `--platforms=watchos` is accepted even though stock Flutter would reject
   it; combined lists like `--platforms=ios,watchos` work too.
 
+  `create` also wires up the app's **host mode** from the project shape: a
+  watchOS-only project is *standalone* (watch-only app inside a thin iOS
+  container), while a project with an `ios/` app gets the watch app embedded
+  as its *companion*. Nothing is configured anywhere — like stock Flutter
+  platforms, the `ios/` directory is the source of truth, and
+  `build`/`run` re-derive the mode the same way. See the `host` command.
+
 - ### `devices`
 
   List available watch targets: Simulators (via `simctl`) and paired
@@ -107,6 +114,31 @@ where possible; watchOS-specific behaviour is called out per command.
   ```sh
   flutter-watchos drive --target=integration_test/app_test.dart -d <simulator-id>
   ```
+
+- ### `host`
+
+  Report how the watch app ships to the App Store, and heal the wiring if
+  it has drifted. Apple has no watch-only submission path — every watch app
+  lives inside an iOS app's `Watch/` folder; what varies is what that iOS
+  app is, and the project shape decides it:
+
+  - **standalone** (no iOS app) — the watch app is watch-only
+    (`WKWatchOnly`) and ships inside the thin `HostApp` container generated
+    in `watchos/`.
+  - **companion** (`ios/` Flutter app present) — the watch app ships inside
+    it: the iOS Runner gets an "Embed Prebuilt watchOS App" build phase and
+    the watch Info.plist declares `WKCompanionAppBundleIdentifier`.
+
+  ```sh
+  flutter-watchos host    # report the mode + reconcile the wiring
+  ```
+
+  There is nothing to configure: add an iOS app (`flutter create
+  --platforms=ios .`) and the watch app becomes its companion on the next
+  `create`/`build`/`run`; remove `ios/` and it is watch-only again. In
+  companion mode, build the watch app first (`flutter-watchos build watchos
+  --release`), then archive the `ios/` project as usual — see
+  [publish-app.md](publish-app.md).
 
 - ### `login` / `logout`
 

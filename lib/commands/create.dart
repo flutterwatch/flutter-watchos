@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
 
+import '../watchos_host_mode.dart';
 import 'watchos_app_scaffold.dart';
 import 'watchos_runner.dart';
 
@@ -40,6 +41,7 @@ class WatchosCreateCommand extends CreateCommand {
       globals.logger.printStatus('Generating watchOS-only project...');
       WatchosAppScaffold(globals.fs).write(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);
+      await _adoptHostMode(projectDirPath);
       globals.logger.printStatus(
         'Created watchOS-only project (shared app + watchos/, no other platforms).',
       );
@@ -60,7 +62,39 @@ class WatchosCreateCommand extends CreateCommand {
 
   Future<FlutterCommandResult> _createApp(String projectDirPath, String name) async {
     await _renderWatchosRunner(projectDirPath, name);
+    await _adoptHostMode(projectDirPath);
     return FlutterCommandResult.success();
+  }
+
+  /// Applies the host mode the project's shape implies — companion when
+  /// `create` scaffolded (or found) an iOS app, standalone otherwise — and
+  /// tells the user which one they got and why. Nothing is recorded: like
+  /// stock Flutter platforms, the ios/ directory itself is the source of
+  /// truth, and build/run re-derive the mode the same way.
+  Future<void> _adoptHostMode(String projectDirPath) async {
+    final WatchosHostMode? mode = await syncWatchosHostMode(
+      projectDir: globals.fs.directory(projectDirPath),
+      logger: globals.logger,
+    );
+    switch (mode) {
+      case null:
+        break;
+      case WatchosHostMode.standalone:
+        globals.logger.printStatus(
+          'Host mode: standalone — this project has no iOS app, so the watch '
+          'app is watch-only (WKWatchOnly) and ships inside the thin HostApp '
+          'container in watchos/. Adding an iOS app later '
+          '(flutter create --platforms=ios .) makes the watch app its '
+          'companion automatically.',
+        );
+      case WatchosHostMode.companion:
+        globals.logger.printStatus(
+          'Host mode: companion — this project has an iOS app in ios/, so '
+          'the watch app ships inside it: the iOS Runner embeds the prebuilt '
+          'watch app and the watch Info.plist declares the iOS app as its '
+          'companion.',
+        );
+    }
   }
 
   /// Renders the `watchos/` Xcode runner into [projectDirPath], detecting the
