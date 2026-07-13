@@ -3,26 +3,109 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
-/// `flutter-watchos plugin port <ios-or-macos-plugin>` — scaffolds a federated
+import '../plugin_porting/example_porter.dart';
+import '../plugin_porting/porting_result.dart'
+    show FindingAction, PortingFinding;
+import '../plugin_porting/scaffolder.dart';
+import '../plugin_porting/source_analyzer.dart';
+import '../plugin_porting/source_fetcher.dart';
+import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
+import 'watchos_runner.dart';
+
+/// `flutter-watchos plugin port <source>` — scaffolds a federated
 /// `*_watchos` package from an existing iOS or macOS plugin.
 ///
-/// NOTE: This is a placeholder. The full porter subsystem (source analyzer,
-/// scaffolder, Swift/ObjC transformers, compatibility database, report
-/// emitter) lands in a dedicated pass — it is generic (no plugin-specific
-/// code) and self-contained, so it does not block the build/run path. Until
-/// then this command exits with a clear message rather than pretending to
-/// scaffold.
+/// Reads the source plugin, then runs the Swift transformer (`.swift`) and
+/// the Objective-C transformer (`.h/.m/.mm`): watchOS-incompatible imports
+/// are stripped and unsupported method handlers stubbed via the
+/// compatibility database, with a `PORTING_REPORT.md` summarising every
+/// change.
 class WatchosPluginPortCommand extends FlutterCommand {
   WatchosPluginPortCommand() {
     argParser
-      ..addFlag('dry-run', help: 'Print what would be written without writing.')
-      ..addFlag('force', help: 'Overwrite an existing output package.')
-      ..addFlag('report', defaultsTo: true, help: 'Write a PORTING_REPORT.md.')
-      ..addFlag('include-example', help: 'Wire the source plugin example for watchOS.')
-      ..addOption('from-pub', help: 'Fetch the source plugin from pub.dev.')
-      ..addOption('from-git', help: 'Fetch the source plugin from a git URL.');
+      ..addOption(
+        'from-pub',
+        help:
+            'Port a package downloaded from pub.dev instead of a local '
+            'directory, e.g. --from-pub url_launcher_ios. Mutually '
+            'exclusive with a positional path and --from-git.',
+      )
+      ..addOption(
+        'from-git',
+        help:
+            'Port a plugin from a git repository (cloned shallowly to a '
+            'temp dir), e.g. --from-git https://github.com/foo/bar.git. '
+            'Mutually exclusive with a positional path and --from-pub.',
+      )
+      ..addOption(
+        'ref',
+        help:
+            'Git ref (branch/tag/sha) to check out. Only valid with '
+            '--from-git.',
+      )
+      ..addOption(
+        'output',
+        abbr: 'o',
+        help:
+            'Where to write the generated `*_watchos` package. Defaults to a '
+            'sibling of <source> named `<plugin>_watchos` (or the current '
+            'directory for --from-pub / --from-git sources).',
+      )
+      ..addOption(
+        'base-platform',
+        defaultsTo: 'ios',
+        allowed: <String>['ios', 'macos'],
+        help:
+            'Which existing platform implementation to model the port on. '
+            "Default `ios`. Use `macos` when the source's macOS code is a "
+            'closer fit for watchOS than its iOS code (rare — watchOS '
+            'follows the iOS API shape).',
+      )
+      ..addOption(
+        'license-holder',
+        defaultsTo: kDefaultLicenseHolder,
+        help:
+            'Copyright holder line baked into generated source files. Set '
+            'this to your name or organisation when porting plugins you will '
+            'maintain yourself.',
+      )
+      ..addFlag(
+        'include-example',
+        negatable: false,
+        help:
+            "Also wire the source plugin's example/ app for watchOS: merge "
+            '`dependency_overrides` so it resolves the generated `*_watchos` '
+            'package, and append a run note to its README. Never writes '
+            'into the generated package itself.',
+      )
+      ..addFlag(
+        'force',
+        negatable: false,
+        help:
+            'Overwrite the output directory if it already exists. Without '
+            'this flag, the command refuses to clobber existing files.',
+      )
+      ..addFlag(
+        'dry-run',
+        negatable: false,
+        help:
+            'Report what would be written without touching the filesystem. '
+            'Useful for previewing the layout on a plugin you are not yet '
+            'sure you want to port.',
+      )
+      ..addFlag(
+        'report',
+        defaultsTo: true,
+        help:
+            'Write PORTING_REPORT.md alongside the package. Pass --no-report '
+            'to skip it; the Swift transform (import stripping, handler '
+            'stubbing) still runs either way.',
+      );
   }
 
   @override
@@ -30,15 +113,386 @@ class WatchosPluginPortCommand extends FlutterCommand {
 
   @override
   final String description =
-      'Scaffold a federated *_watchos plugin from an existing iOS or macOS plugin.';
+      'Scaffold a federated `*_watchos` package from an existing iOS or '
+      'macOS plugin directory.';
+
+  @override
+  final String category = 'Tools';
+
+  @override
+  String get invocation => 'flutter-watchos plugin port <source-dir> [options]';
 
   @override
   Future<FlutterCommandResult> runCommand() async {
-    throwToolExit(
-      'The watchOS plugin porter is not yet available in this build of '
-      'flutter-watchos.\n'
-      'When ready it will scaffold a federated `*_watchos` package from an '
-      'iOS/macOS plugin.',
+    final List<String> rest = argResults!.rest;
+    final FileSystem fs = globals.fs;
+    final Logger log = globals.logger;
+
+    if (rest.length > 1) {
+      throwToolExit(
+        'Too many positional arguments. Expected at most one source '
+        'directory; got ${rest.length} (${rest.join(', ')}).',
+      );
+    }
+
+    final SourceSpec spec;
+    try {
+      spec = SourceSpec.parse(
+        positional: rest.isEmpty ? null : rest.single,
+        fromPub: stringArg('from-pub'),
+        fromGit: stringArg('from-git'),
+        ref: stringArg('ref'),
+      );
+    } on SourceFetchError catch (e) {
+      throwToolExit(e.message);
+    }
+
+    // For --from-pub / --from-git the source is materialised under a temp
+    // dir we must clean up no matter how the command exits.
+    Directory? tempWork;
+    final Directory sourceDir;
+    if (spec.mode == FetchMode.localPath) {
+      sourceDir = fs.directory(fs.path.absolute(spec.identifier));
+      if (!sourceDir.existsSync()) {
+        throwToolExit('Source directory does not exist: ${sourceDir.path}');
+      }
+    } else {
+      tempWork = fs.systemTempDirectory.createTempSync('flutter_watchos_port_');
+      try {
+        sourceDir = await SourceFetcher(
+          fileSystem: fs,
+          processManager: globals.processManager,
+          logger: log,
+        ).resolve(spec, workDir: tempWork);
+      } on SourceFetchError catch (e) {
+        _safeDelete(tempWork);
+        throwToolExit(e.message);
+      }
+    }
+
+    try {
+      return await _portResolvedSource(fs, log, sourceDir, fetched: tempWork != null);
+    } finally {
+      _safeDelete(tempWork);
+    }
+  }
+
+  void _safeDelete(Directory? dir) {
+    if (dir != null && dir.existsSync()) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        // Best-effort temp cleanup; never mask the real result.
+      }
+    }
+  }
+
+  Future<FlutterCommandResult> _portResolvedSource(
+    FileSystem fs,
+    Logger log,
+    Directory sourceDir, {
+    required bool fetched,
+  }) async {
+    // Inspect the source. Fatal misconfigurations throw; the analyzer prints
+    // any warnings via the supplied sink so the user sees them before any
+    // file write happens.
+    final analyzer = SourceAnalyzer(
+      fileSystem: fs,
+      warningSink: (String msg) => log.printWarning('  • $msg'),
     );
+
+    final PluginSource source;
+    try {
+      source = analyzer.analyze(sourceDir, preferPlatform: stringArg('base-platform')!);
+    } on PluginSourceError catch (e) {
+      if (e.advisory) {
+        // Not a failure — the plugin simply needs no `*_watchos` package.
+        log.printStatus(e.message);
+        return FlutterCommandResult.success();
+      }
+      throwToolExit(e.message);
+    }
+
+    // Resolve the output directory. Default = sibling of source named
+    // after the output package, EXCEPT for fetched sources whose sibling
+    // is a temp dir we delete — those default to the current directory.
+    // Honours `--output` (path can be relative).
+    final String? outputArg = stringArg('output');
+    final Directory outputDir = outputArg != null
+        ? fs.directory(fs.path.absolute(outputArg))
+        : fetched
+            ? fs.currentDirectory.childDirectory(source.outputPackageName)
+            : sourceDir.parent.childDirectory(source.outputPackageName);
+
+    final bool dryRun = boolArg('dry-run');
+    final bool force = boolArg('force');
+    final bool emitReport = boolArg('report');
+    final bool includeExample = boolArg('include-example');
+
+    log.printStatus('Source plugin:    ${source.packageName}');
+    log.printStatus('Source platform:  ${source.sourcePlatform} (${source.sourceLanguage.name})');
+    log.printStatus('Plugin class:     ${source.pluginClass}');
+    if (source.dartPluginClass != null) {
+      log.printStatus('Dart class:       ${source.dartPluginClass}');
+    }
+    if (source.platformInterfacePackage != null) {
+      log.printStatus('Platform iface:   ${source.platformInterfacePackage}');
+    }
+    log.printStatus('Output package:   ${source.outputPackageName}');
+    log.printStatus('Output directory: ${outputDir.path}');
+    if (dryRun) {
+      log.printStatus('  (dry run — no files will be written)');
+    }
+    log.printStatus('');
+
+    final scaffolder = Scaffolder(
+      fileSystem: fs,
+      logger: log,
+      licenseHolder: stringArg('license-holder')!,
+    );
+    // Graceful partial port: the porter never refuses. Type-level
+    // watchOS-incompatible code is compiled out behind `#if !os(watchOS)` /
+    // `#if !TARGET_OS_WATCH` (recorded as `disabledOnWatchos` findings) so
+    // the package still builds with that feature disabled;
+    // PORTING_REPORT.md lists every disabled region for the developer to
+    // hand-port.
+    final ScaffoldResult result;
+    try {
+      result = scaffolder.scaffold(
+        source: source,
+        outputDirectory: outputDir,
+        overwrite: force,
+        dryRun: dryRun,
+        emitReport: emitReport,
+      );
+    } on ScaffoldError catch (e) {
+      throwToolExit(e.message);
+    }
+
+    bool isDisabled(PortingFinding f) =>
+        f.action == FindingAction.disabledOnWatchos ||
+        f.action == FindingAction.taggedWithTodo;
+    final List<String> disabledApis = <String>{
+      for (final PortingFinding f in result.findings)
+        if (isDisabled(f)) f.pattern.name,
+    }.toList()
+      ..sort();
+    final int disabledCount = result.findings.where(isDisabled).length;
+    final bool hasDisabled = disabledApis.isNotEmpty;
+
+    final int stubbed = result.findings
+        .where((f) => f.action == FindingAction.stubbedMethod)
+        .length;
+    final int strippedImports = result.findings
+        .where((f) => f.action == FindingAction.importStripped)
+        .length;
+    final int needsReview = result.findings
+        .where((f) => f.action == FindingAction.flagged || isDisabled(f))
+        .length;
+    final bool anyFindings = result.findings.isNotEmpty;
+
+    final int prunedDartCount = result.prunedDartFiles.length;
+    if (dryRun) {
+      log.printStatus('Would write ${result.writtenPaths.length} files:');
+      for (final String path in result.writtenPaths) {
+        log.printStatus('  $path');
+      }
+      log.printStatus('');
+      log.printStatus(
+        'Porter would strip $strippedImports import(s), stub $stubbed '
+        'method(s), and flag $needsReview item(s) for manual review.',
+      );
+      if (prunedDartCount > 0) {
+        log.printStatus(
+          '(dry run) Would prune $prunedDartCount cross-platform Dart '
+          'file(s) from lib/ (non-Apple platforms — listed in '
+          'PORTING_REPORT.md “Cross-platform Dart pruned”).',
+        );
+      }
+      if (hasDisabled) {
+        log.printWarning(
+          '(dry run) Partial port: $disabledCount native region(s) using '
+          '${disabledApis.join(', ')} would be disabled on watchOS '
+          '(`#if !os(watchOS)`). See PORTING_REPORT.md “Disabled on '
+          'watchOS”.',
+        );
+      }
+    } else {
+      log.printStatus('Wrote ${result.writtenPaths.length} files into ${outputDir.path}.');
+      log.printStatus('');
+      log.printStatus(
+        'Porter stripped $strippedImports iOS-only import(s), stubbed '
+        '$stubbed method handler(s), and flagged $needsReview item(s) for '
+        'manual review.',
+      );
+      if (prunedDartCount > 0) {
+        log.printStatus(
+          'Pruned $prunedDartCount cross-platform Dart file(s) from '
+          'lib/ (non-Apple platforms; listed under “Cross-platform Dart '
+          'pruned” in PORTING_REPORT.md).',
+        );
+      }
+      log.printStatus('');
+      log.printStatus('Next steps:');
+      log.printStatus(
+        '  1. Review watchos/Classes/ — the source plugin was copied and '
+        'ported automatically. Stubbed handlers are marked with '
+        '`// TODO(porter)`.',
+      );
+      log.printStatus(
+        "  2. Add `${source.outputPackageName}` to the plugin's example app "
+        'pubspec, then run `flutter-watchos build watchos --simulator '
+        '--debug` to verify the registrant compiles.',
+      );
+      log.printStatus(
+        '  3. Once you are happy, publish to pub.dev or push to your fork. '
+        'Read `${outputDir.basename}/README.md` for the user-facing pitch.',
+      );
+      log.printStatus('');
+      if (hasDisabled) {
+        log.printWarning('');
+        log.printWarning(
+          '⚠️  Partial watchOS port. $disabledCount native region(s) using '
+          '${disabledApis.join(', ')} were disabled on watchOS (wrapped in '
+          '`#if !os(watchOS)` / `#if !TARGET_OS_WATCH`) so the package '
+          'still builds. Those features are unavailable on watchOS until '
+          'you hand-port them. Every disabled region is listed under '
+          '“Disabled on watchOS” in ${outputDir.basename}/PORTING_REPORT.md. '
+          'Verify the build — a symbol used widely may need extra cleanup.',
+        );
+      } else if (result.reportPath != null) {
+        if (anyFindings) {
+          log.printStatus(
+            'Manual review required. Read '
+            '${outputDir.basename}/PORTING_REPORT.md before publishing.',
+          );
+        } else {
+          log.printStatus(
+            'No watchOS-incompatible APIs detected. See '
+            '${outputDir.basename}/PORTING_REPORT.md for the full report.',
+          );
+        }
+      }
+    }
+
+    if (!source.ffiNativeAssets && !dryRun) {
+      // The generated package follows the method-channel shape (matching
+      // the pubspec's `pluginClass:` registrant plumbing), which the watch
+      // runtime cannot register yet — see doc/plugins.md. Say so here, at
+      // port time, instead of letting the user discover it as a runtime
+      // MissingPluginException.
+      log.printWarning(
+        'Note: the flutter-watchos runtime does not register method-channel '
+        'plugins yet — this package is staged until that lands. For a '
+        'plugin that must work today, convert it to the FFI model '
+        '(`ffiPlugin: true` + `ffiSymbols` + exported C symbols); see '
+        'AUTHORING.md in the flutterwatch/plugins repo.',
+      );
+    }
+
+    if (source.ffiNativeAssets) {
+      // The native skeleton already wrote example/lib + example/pubspec
+      // (depending on `<base>` + `<base>_watchos: path: ../`). Render its
+      // watchOS-only runner so it is immediately runnable — no fragile
+      // upstream-monorepo example copy for the FFI case.
+      final Directory exampleDir = outputDir.childDirectory('example');
+      if (!dryRun && exampleDir.existsSync()) {
+        await renderWatchosRunner(
+          fileSystem: fs,
+          logger: log,
+          templateRenderer: globals.templateRenderer,
+          projectDirPath: exampleDir.path,
+          name: '${source.basePackageName}_example',
+          organization: 'com.example',
+        );
+        log.printStatus('');
+        log.printStatus(
+          'Runnable watchOS example at ${exampleDir.path}\n'
+          '  cd ${exampleDir.path} && flutter-watchos run',
+        );
+      }
+    } else if (includeExample && !dryRun) {
+      await _generateExample(fs, log, source, outputDir);
+    } else if (includeExample && dryRun) {
+      log.printStatus('');
+      log.printStatus(
+        '(dry run) Would generate example/ from the `${source.basePackageName}` '
+        'plugin (watchOS-only), depending on `${source.basePackageName}` + '
+        '`${source.outputPackageName}: path: ../`.',
+      );
+    }
+
+    return FlutterCommandResult.success();
+  }
+
+  /// Builds the federated example: fetch the app-facing plugin
+  /// (`<base>`), reuse its real example app, make it watchOS-only, and
+  /// point it at the generated `<base>_watchos` (mirrors
+  /// flutter-tizen/plugins).
+  Future<void> _generateExample(
+    FileSystem fs,
+    Logger log,
+    PluginSource source,
+    Directory outputDir,
+  ) async {
+    final Directory work =
+        fs.systemTempDirectory.createTempSync('flutter_watchos_example_');
+    try {
+      final Directory baseDir = await SourceFetcher(
+        fileSystem: fs,
+        processManager: globals.processManager,
+        logger: log,
+      ).resolve(
+        SourceSpec.parse(fromPub: source.basePackageName),
+        workDir: work,
+      );
+      final String baseVersion = _pubspecVersion(baseDir) ?? '0.0.0';
+      final ExamplePortResult ex = ExamplePorter(fileSystem: fs).port(
+        basePluginDir: baseDir,
+        outputPackageDir: outputDir,
+        baseName: source.basePackageName,
+        watchosPackageName: source.outputPackageName,
+        baseVersion: baseVersion,
+      );
+      log.printStatus('');
+      if (ex.skipped) {
+        log.printWarning('--include-example skipped: ${ex.reason}');
+        return;
+      }
+      await renderWatchosRunner(
+        fileSystem: fs,
+        logger: log,
+        templateRenderer: globals.templateRenderer,
+        projectDirPath: ex.exampleDirectory!.path,
+        name: '${source.basePackageName}_example',
+        organization: 'com.example',
+      );
+      log.printStatus(
+        'Generated watchOS-only example (${ex.copiedRelativePaths.length} files) '
+        'in ${ex.exampleDirectory!.path} — depends on '
+        '`${source.basePackageName}` + `${source.outputPackageName}: '
+        'path: ../`.',
+      );
+    } on SourceFetchError catch (e) {
+      log.printWarning('--include-example skipped: ${e.message}');
+    } finally {
+      _safeDelete(work);
+    }
+  }
+
+  /// Reads `version:` from a pubspec directory, or `null`.
+  String? _pubspecVersion(Directory dir) {
+    final File p = dir.childFile('pubspec.yaml');
+    if (!p.existsSync()) {
+      return null;
+    }
+    for (final String line in p.readAsLinesSync()) {
+      final RegExpMatch? m =
+          RegExp(r'^version:\s*([^\s#]+)').firstMatch(line);
+      if (m != null) {
+        return m.group(1);
+      }
+    }
+    return null;
   }
 }

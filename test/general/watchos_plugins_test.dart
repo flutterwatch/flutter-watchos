@@ -12,7 +12,8 @@ import 'package:flutter_watchos/watchos_plugins.dart'
         WatchosPlugin,
         auditPluginsWithoutWatchosSupport,
         ensureReadyForWatchosTooling,
-        recommendWatchosPluginsToInstall;
+        recommendWatchosPluginsToInstall,
+        warnMethodChannelOnlyWatchosPlugins;
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -168,6 +169,40 @@ void main() {
       expect(
         recommendWatchosPluginsToInstall(
           allPluginNames: const <String>['some_plugin', 'url_launcher'],
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('warnMethodChannelOnlyWatchosPlugins', () {
+    testWithoutContext('warns for a pluginClass-only watchos plugin', () {
+      final List<String> lines = warnMethodChannelOnlyWatchosPlugins(
+        plugins: <WatchosPlugin>[
+          WatchosPlugin(name: 'gadget_watchos', pluginClass: 'GadgetPlugin'),
+        ],
+      );
+      expect(lines, isNotEmpty);
+      expect(lines.first, contains('does not support'));
+      expect(lines.join('\n'), contains('- gadget_watchos'));
+      expect(lines.join('\n'), contains('MissingPluginException'));
+      expect(lines.join('\n'), contains('ffiPlugin: true'));
+    });
+
+    testWithoutContext('stays silent for FFI and Dart-only plugins', () {
+      expect(
+        warnMethodChannelOnlyWatchosPlugins(
+          plugins: <WatchosPlugin>[
+            WatchosPlugin(name: 'ffi_plugin', ffiPlugin: true),
+            WatchosPlugin(name: 'dart_only', dartPluginClass: 'DartOnly'),
+            // Hybrid: the FFI half carries the native code, so the
+            // pluginClass is not a dead end.
+            WatchosPlugin(
+              name: 'hybrid',
+              pluginClass: 'HybridPlugin',
+              ffiPlugin: true,
+            ),
+          ],
         ),
         isEmpty,
       );

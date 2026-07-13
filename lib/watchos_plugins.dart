@@ -394,6 +394,40 @@ List<String> auditPluginsWithoutWatchosSupport({
   ];
 }
 
+/// Builds the developer-facing warning lines for watchOS plugins that declare
+/// only a method-channel implementation (`pluginClass:` without
+/// `ffiPlugin: true`).
+///
+/// The flutter-watchos embedder has no method-channel plugin registrar — the
+/// watch Flutter.framework exposes only the C engine ABI — so such a plugin's
+/// native code is never compiled into the watch app: the build succeeds but
+/// every channel call fails at runtime (`MissingPluginException`). FFI plugins
+/// (`ffiPlugin: true` + `ffiSymbols`) are the supported model; see
+/// doc/plugins.md. Public so tests can drive it without faking a project
+/// tree.
+List<String> warnMethodChannelOnlyWatchosPlugins({
+  required Iterable<WatchosPlugin> plugins,
+}) {
+  final methodChannelOnly = <String>[
+    for (final WatchosPlugin p in plugins)
+      if (p.hasMethodChannel() && !p.hasFfi()) '  - ${p.name}',
+  ]..sort();
+  if (methodChannelOnly.isEmpty) {
+    return const <String>[];
+  }
+  const header =
+      'The following watchOS plugin(s) declare a method-channel '
+      'implementation (`pluginClass:`), which the flutter-watchos runtime '
+      'does not support yet — their native code is not compiled into the '
+      'watch app, and calling them fails at runtime '
+      '(MissingPluginException):';
+  const footer =
+      'watchOS plugins ship native code via dart:ffi today: declare '
+      '`ffiPlugin: true` with `ffiSymbols:` and export C symbols. See '
+      'doc/plugins.md in the flutter-watchos repo.';
+  return <String>[header, ...methodChannelOnly, footer];
+}
+
 /// Collects the C symbols that must be force-referenced from the Runner so the
 /// static linker keeps them in the binary, in stable declaration order with
 /// duplicates removed.
@@ -511,6 +545,16 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   );
   if (unsupported.isNotEmpty) {
     globals.logger.printWarning(unsupported.join('\n'));
+  }
+
+  // A `watchos:` plugin that is method-channel-only can't run either — the
+  // embedder has no plugin registrar. Without this warning the build stays
+  // green and the first hint is a runtime MissingPluginException.
+  final List<String> methodChannelOnly = warnMethodChannelOnlyWatchosPlugins(
+    plugins: plugins,
+  );
+  if (methodChannelOnly.isNotEmpty) {
+    globals.logger.printWarning(methodChannelOnly.join('\n'));
   }
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
