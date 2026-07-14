@@ -9,6 +9,7 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 import '../plugin_porting/compatibility_database.dart' show Severity;
+import '../plugin_porting/example_porter.dart';
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
 import '../plugin_porting/source_fetcher.dart';
@@ -93,6 +94,16 @@ class WatchosPluginPortCommand extends FlutterCommand {
         help:
             'Write PORTING_REPORT.md alongside the package. Pass --no-report '
             'to skip it; the FFI scaffold is written either way.',
+      )
+      ..addFlag(
+        'include-example',
+        negatable: false,
+        help:
+            "Also port the app-facing plugin's example/ app to watchOS "
+            '(its demo UI + official integration_test), so the package ships '
+            'a runnable example you can verify with `flutter-watchos drive`. '
+            'The example is fetched from pub when the ported source is a '
+            'platform implementation (e.g. geolocator_apple).',
       );
   }
 
@@ -159,7 +170,8 @@ class WatchosPluginPortCommand extends FlutterCommand {
     }
 
     try {
-      return _portResolvedSource(fs, log, sourceDir, fetched: tempWork != null);
+      return await _portResolvedSource(fs, log, sourceDir,
+          fetched: tempWork != null);
     } finally {
       _safeDelete(tempWork);
     }
@@ -175,12 +187,12 @@ class WatchosPluginPortCommand extends FlutterCommand {
     }
   }
 
-  FlutterCommandResult _portResolvedSource(
+  Future<FlutterCommandResult> _portResolvedSource(
     FileSystem fs,
     Logger log,
     Directory sourceDir, {
     required bool fetched,
-  }) {
+  }) async {
     // Inspect the source. Fatal misconfigurations throw; the analyzer prints
     // any warnings via the supplied sink so the user sees them before any
     // file write happens.
@@ -298,6 +310,80 @@ class WatchosPluginPortCommand extends FlutterCommand {
       log.printStatus('Read ${outputDir.basename}/PORTING_REPORT.md first.');
     }
 
+    if (boolArg('include-example') && !dryRun) {
+      await _portExample(fs, log, source, outputDir, sourceDir);
+    }
+
     return FlutterCommandResult.success();
+  }
+
+  /// Ports the app-facing plugin's `example/` app (demo + official
+  /// integration_test) to watchOS. Uses the ported source's own example when
+  /// the source IS the app-facing package; otherwise fetches the app-facing
+  /// package from pub for it.
+  Future<void> _portExample(
+    FileSystem fs,
+    Logger log,
+    PluginSource source,
+    Directory outputDir,
+    Directory sourceDir,
+  ) async {
+    Directory? exampleSource;
+    Directory? tempExample;
+
+    final Directory ownExample = sourceDir.childDirectory('example');
+    if (source.packageName == source.basePackageName &&
+        ownExample.childDirectory('lib').existsSync()) {
+      exampleSource = ownExample;
+    } else {
+      tempExample =
+          fs.systemTempDirectory.createTempSync('flutter_watchos_example_');
+      try {
+        final Directory baseDir = await SourceFetcher(
+          fileSystem: fs,
+          processManager: globals.processManager,
+          logger: log,
+        ).resolve(SourceSpec.parse(fromPub: source.basePackageName),
+            workDir: tempExample);
+        final Directory ex = baseDir.childDirectory('example');
+        if (ex.childDirectory('lib').existsSync()) {
+          exampleSource = ex;
+        }
+      } on SourceFetchError catch (e) {
+        log.printWarning('  • Could not fetch ${source.basePackageName} for '
+            'its example: ${e.message}');
+      }
+    }
+
+    if (exampleSource == null) {
+      log.printWarning('No example/ found for ${source.basePackageName}; '
+          'skipping --include-example.');
+      _safeDelete(tempExample);
+      return;
+    }
+
+    try {
+      final List<String> written = await ExamplePorter(
+        fileSystem: fs,
+        logger: log,
+        templateRenderer: globals.templateRenderer,
+      ).port(
+        source: source,
+        outputDirectory: outputDir,
+        exampleSource: exampleSource,
+        overwrite: boolArg('force'),
+      );
+      log.printStatus('');
+      log.printStatus('Ported example (${written.length} files) into '
+          '${outputDir.basename}/example. Verify it on a watch simulator:');
+      log.printStatus('  cd ${outputDir.basename}/example');
+      log.printStatus('  flutter-watchos drive '
+          '--driver=test_driver/integration_test.dart '
+          '--target=integration_test/<name>_test.dart -d <watch-sim>');
+    } on ExamplePortError catch (e) {
+      throwToolExit(e.message);
+    } finally {
+      _safeDelete(tempExample);
+    }
   }
 }
