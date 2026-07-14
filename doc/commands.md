@@ -74,9 +74,6 @@ where possible; watchOS-specific behaviour is called out per command.
 
   # Add watchOS to an existing Flutter project (run in the project dir)
   flutter-watchos create . --platforms=watchos
-
-  # New plugin project
-  flutter-watchos create --template=plugin --platforms=watchos my_plugin
   ```
 
   `--platforms=watchos` is accepted even though stock Flutter would reject
@@ -165,10 +162,13 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `plugin`
 
-  Inspect the plugins a project uses and their watchOS support.
+  Inspect the plugins a project uses and their watchOS support, or
+  scaffold a `*_watchos` FFI package from an existing iOS/macOS plugin
+  (see [plugin-porting.md](plugin-porting.md)).
 
   ```sh
   flutter-watchos plugin list
+  flutter-watchos plugin port --from-pub url_launcher_ios
   ```
 
 - ### `run`

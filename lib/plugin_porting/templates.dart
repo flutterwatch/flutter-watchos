@@ -10,11 +10,18 @@
 
 /// Inline templates for the `flutter-watchos plugin port` scaffolder.
 ///
-/// These are intentionally Dart strings rather than separate `.tmpl` files so
-/// the porter has zero runtime dependencies on the package's own asset layout.
-/// Each function returns a complete file body. Mustache-style `{{...}}` is not
-/// used — interpolation is plain Dart `${...}` so the templates are lintable
-/// and refactorable.
+/// The porter emits an **FFI** scaffold, not a method-channel plugin —
+/// method-channel plugins are not supported on watchOS, so native plugin
+/// code is only reachable through `dart:ffi`.
+/// A ported package therefore exports C symbols from `watchos/Classes/`, the
+/// CLI force-loads the compiled archive into the watch binary, and the Dart
+/// side resolves the symbols via `DynamicLibrary.process()`. This mirrors
+/// the first-party `flutter_watchos` package and the finished plugins in the
+/// `flutterwatch/plugins` repo.
+///
+/// These are Dart strings rather than `.tmpl` files so the porter has zero
+/// runtime dependency on the package's own asset layout. Interpolation is
+/// plain Dart `${...}` so the templates are lintable and refactorable.
 library;
 
 import 'source_analyzer.dart';
@@ -23,13 +30,27 @@ import 'source_analyzer.dart';
 /// caller doesn't override it via `--license-holder`.
 const String kDefaultLicenseHolder = 'The FlutterWatch Authors';
 
-/// Minimum watchOS version the generated podspec / Package.swift declare.
-/// Matches the SwiftPM floor the flutter-watchos build system uses for the
-/// FlutterFramework package (see `watchos_swift_package_manager.dart`).
+/// Minimum watchOS version the generated `Package.swift` declares. Matches
+/// the SwiftPM floor the flutter-watchos build system uses for the
+/// FlutterFramework package.
 const String kMinimumWatchosVersion = '7.0';
 
+/// The example C symbol the scaffold ships, e.g.
+/// `battery_plus_watchos_example`. Both the C stub and the pubspec's
+/// `ffiSymbols` list reference it, so a freshly ported package builds and
+/// links before the developer has written any real functions.
+String exampleSymbolName(PluginSource source) =>
+    '${source.outputPackageName}_example';
+
+/// PascalCase Dart implementation class, e.g. `BatteryPlusWatchos`.
+String dartClassName(PluginSource source) =>
+    _pascalCase(source.outputPackageName);
+
+/// The Bindings class name, e.g. `BatteryPlusWatchosBindings`.
+String bindingsClassName(PluginSource source) => '${dartClassName(source)}Bindings';
+
 /// Renders the BSD-3-style header that goes at the top of every generated
-/// source file (Dart, Swift, Objective-C, podspec, README).
+/// source file (Dart, C, Package.swift, README).
 String renderLicenseHeader({
   required String holder,
   required String commentPrefix,
@@ -47,14 +68,14 @@ String renderLicenseHeader({
   return lines.map((String l) => l.isEmpty ? commentPrefix.trim() : '$commentPrefix$l').join('\n');
 }
 
-/// Renders the output package's `pubspec.yaml`.
+/// Renders the output package's `pubspec.yaml` — an FFI plugin declaration.
 String renderPubspec({required PluginSource source, required String licenseHolder}) {
   final String description = _quoteForYaml(
-    'watchOS implementation of ${source.basePackageName}.',
+    'watchOS implementation of ${source.basePackageName} (dart:ffi).',
   );
   const homepage = 'https://github.com/flutterwatch/plugins';
   final String? platformInterface = source.platformInterfacePackage;
-  final String? dartPluginClass = source.dartPluginClass;
+  final String dartClass = dartClassName(source);
   final buf = StringBuffer()
     ..writeln('name: ${source.outputPackageName}')
     ..writeln('description: $description')
@@ -68,13 +89,10 @@ String renderPubspec({required PluginSource source, required String licenseHolde
     ..writeln('  flutter: ">=3.13.0"')
     ..writeln()
     ..writeln('dependencies:')
+    ..writeln('  ffi: ^2.1.0')
     ..writeln('  flutter:')
     ..writeln('    sdk: flutter');
   if (platformInterface != null) {
-    // Carry the source's own constraint so `pub get` resolves; only fall
-    // back to `any` when the source didn't pin one. Range constraints
-    // (`>=1.0.0 <2.0.0`) and anything with YAML-significant characters
-    // must be quoted — `key: >=1.0.0` is otherwise a YAML block scalar.
     final String raw = source.platformInterfaceConstraint ?? 'any';
     final bool needsQuote = RegExp(r'[>< ]').hasMatch(raw);
     final constraint =
@@ -89,278 +107,244 @@ String renderPubspec({required PluginSource source, required String licenseHolde
     ..writeln('    sdk: flutter')
     ..writeln()
     ..writeln('flutter:')
-    ..writeln('  plugin:')
+    ..writeln('  plugin:');
+  if (platformInterface != null) {
+    buf.writeln('    implements: ${source.basePackageName}');
+  }
+  buf
     ..writeln('    platforms:')
     ..writeln('      watchos:')
-    ..writeln('        pluginClass: ${source.pluginClass}');
-  if (dartPluginClass != null) {
-    buf.writeln('        dartPluginClass: $dartPluginClass');
-  }
+    ..writeln('        # FFI plugin: the CLI compiles watchos/Classes/*.m into a')
+    ..writeln('        # static archive force-loaded into the watch binary; Dart')
+    ..writeln('        # resolves the exported symbols via DynamicLibrary.process().')
+    ..writeln('        # Method-channel plugins are not supported on watchOS,')
+    ..writeln('        # so this is the supported plugin model.')
+    ..writeln('        ffiPlugin: true')
+    ..writeln('        dartPluginClass: $dartClass')
+    ..writeln('        # C symbols exported for dart:ffi lookup. The CLI emits a')
+    ..writeln('        # forced reference for each so they survive the static link.')
+    ..writeln('        # TODO(porter): list every C function you export here.')
+    ..writeln('        ffiSymbols:')
+    ..writeln('          - ${exampleSymbolName(source)}');
   return buf.toString();
 }
 
-/// Renders the output package's CocoaPods podspec.
-///
-/// The podspec must NOT use `s.dependency 'Flutter'` (the Flutter pod doesn't
-/// declare watchOS support). Flutter.framework is picked up via
-/// FRAMEWORK_SEARCH_PATHS instead.
-String renderPodspec({required PluginSource source, required String licenseHolder}) {
-  // A modular SwiftPM package keeps its public headers under an
-  // `include/<module>/` directory and `#import`s them via that prefix.
-  // Collapse it into a single CocoaPods module the way the upstream
-  // package's own podspec does: compile every source, and expose ONLY
-  // the `include/` headers (the SwiftPM public surface) so the module
-  // umbrella stays internally consistent and the `include/…` import
-  // paths keep resolving after CocoaPods flattens the framework
-  // headers. Applies to multi-target packages AND single-target ones
-  // that use the `include/` convention (e.g. sqflite_darwin). The plain
-  // legacy `Classes/` layout keeps the flat globs.
-  final bool modular = source.isMultiTargetSpm || source.spmModularHeaders;
-  final sourceFilesGlob =
-      modular ? "'Classes/**/*.{h,m,mm,swift}'" : "'Classes/**/*'";
-  final publicHeadersGlob =
-      modular ? "'Classes/**/include/**/*.h'" : "'Classes/**/*.h'";
-  return '''
-#
-# To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
-# Run `pod lib lint ${source.outputPackageName}.podspec` to validate before publishing.
-#
-# Generated by `flutter-watchos plugin port`. License holder: $licenseHolder.
-#
-Pod::Spec.new do |s|
-  s.name             = '${source.outputPackageName}'
-  s.version          = '0.0.1'
-  s.summary          = 'watchOS implementation of ${source.basePackageName}.'
-  s.description      = <<-DESC
-watchOS implementation of ${source.basePackageName}, the federated platform
-package that ships native code targeting Apple watchOS.
-                       DESC
-  s.homepage         = 'https://github.com/flutterwatch/plugins'
-  s.license          = { :file => '../LICENSE' }
-  s.author           = { '$licenseHolder' => 'noreply@flutterwatch.dev' }
-  s.source           = { :path => '.' }
-  s.source_files     = $sourceFilesGlob
-  s.public_header_files = $publicHeadersGlob
-  s.platform         = :watchos, '$kMinimumWatchosVersion'
-  s.swift_version    = '5.0'
+/// Renders the C header stub at `watchos/Classes/<pkg>_ffi.h`.
+String renderFfiHeader({required PluginSource source, required String licenseHolder}) {
+  final String header = renderLicenseHeader(
+    holder: licenseHolder,
+    commentPrefix: '// ',
+    sourcePlugin: source.packageName,
+  );
+  final guard = '${source.outputPackageName.toUpperCase()}_FFI_H';
+  final exportMacro = '${source.outputPackageName.toUpperCase()}_EXPORT';
+  return '''$header
 
-  # IMPORTANT: this podspec must not depend on the Flutter CocoaPod. That
-  # pod does not declare watchOS support, so adding a dependency on it breaks
-  # `pod install` for watchOS consumers. Flutter.framework is resolved via
-  # FRAMEWORK_SEARCH_PATHS, populated by the host app's Podfile.
-  s.xcconfig         = {
-    'FRAMEWORK_SEARCH_PATHS' => '"\${PODS_ROOT}/../Flutter"',
-    'OTHER_SWIFT_FLAGS'      => '\$(inherited) -DTARGET_OS_WATCH',
-  }
-  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
-end
+#ifndef $guard
+#define $guard
+
+// Each exported symbol is marked `used` + default-visibility so it survives
+// the linker's `-dead_strip` and lands in the executable's dynamic symbol
+// table, where `DynamicLibrary.process()` / dlsym can resolve it. The watch
+// app links this archive statically, so without the attributes the linker
+// would drop these (FFI has no compile-time caller). The CLI additionally
+// emits a forced reference for each symbol listed under
+// `flutter.plugin.platforms.watchos.ffiSymbols`.
+#define $exportMacro \\
+  __attribute__((visibility("default"))) __attribute__((used))
+
+// TODO(porter): declare one C function per platform-interface method your
+// plugin needs. Return C scalars (int32_t/int64_t/double/bool) or UTF-8 C
+// strings (const char*, owned by the plugin — never freed by Dart). See the
+// finished plugins in flutterwatch/plugins for worked examples.
+$exportMacro const char* ${exampleSymbolName(source)}(void);
+
+#endif  // $guard
 ''';
 }
 
-/// Renders `watchos/Package.swift` so the ported plugin is consumable via
-/// Swift Package Manager (the flutter-watchos default) *in addition to*
-/// CocoaPods.
+/// Renders the C source stub at `watchos/Classes/<pkg>_ffi.m`.
+String renderFfiSource({required PluginSource source, required String licenseHolder}) {
+  final String header = renderLicenseHeader(
+    holder: licenseHolder,
+    commentPrefix: '// ',
+    sourcePlugin: source.packageName,
+  );
+  return '''$header
+
+#import "${source.outputPackageName}_ffi.h"
+
+#import <Foundation/Foundation.h>
+#import <WatchKit/WatchKit.h>
+
+// TODO(porter): implement your exported functions using WatchKit / Foundation
+// (and the frameworks you declared in Package.swift). Map each
+// platform-interface method to a watchOS API — see PORTING_REPORT.md for the
+// APIs the source plugin used on iOS and their watchOS equivalents.
+const char* ${exampleSymbolName(source)}(void) {
+  return "";
+}
+''';
+}
+
+/// Renders `watchos/Package.swift` — an FFI plugin manifest.
 ///
-/// Design notes:
-/// - **One source tree.** The SwiftPM target points at the same `Classes/`
-///   directory the podspec globs, so a plugin never duplicates its native
-///   code. A consumer on either dependency manager builds the identical files.
-/// - **Flutter resolved via the `FlutterFramework` package.** The target
-///   declares a `.package(name: "FlutterFramework", path: "../FlutterFramework")`
-///   dependency so it can `import Flutter`. flutter-watchos generates that
-///   package (a binary target wrapping `Flutter.xcframework`) as a sibling of
-///   this one under the app's ephemeral SwiftPM packages, so the relative path
-///   resolves at build time — matching stock Flutter's plugin `Package.swift`.
-///   (A standalone `swift build` of the ported plugin outside an app has no
-///   sibling `FlutterFramework` and will not resolve; consume it through a
-///   flutter-watchos app build, exactly as with the CocoaPods podspec.)
-/// - **`TARGET_OS_WATCH`.** Mirrors the podspec's `OTHER_SWIFT_FLAGS` so Swift
-///   `#if TARGET_OS_WATCH` branches stay active under SwiftPM.
-///
-/// Only emitted for Swift plugins: a single SwiftPM target cannot mix Swift
-/// and Objective-C, so Objective-C / mixed plugins remain CocoaPods-only (the
-/// caller gates on [PluginSource.sourceLanguage]).
+/// The flutter-watchos CLI discovers the plugin through this file, compiles
+/// `Classes/*.m` into a static archive force-loaded into the watch binary,
+/// and links every `.linkedFramework(...)` declared here.
 String renderPackageSwift({required PluginSource source}) {
   final String name = source.outputPackageName;
-  // The library *product* name is hyphenated: when a plugin links dynamically,
-  // Swift Package Manager derives the CFBundleIdentifier from the product name,
-  // and that identifier cannot contain underscores. The *target* (Swift module)
-  // keeps the underscored package name so the generated registrant can
-  // `import $name`. This matches stock Flutter (`swiftLibraryName =
-  // projectName.replaceAll('_', '-')`) and the generated umbrella package, which
-  // references `.product(name: "$libraryName", package: "$name")`.
   final String libraryName = name.replaceAll('_', '-');
-  return '''// swift-tools-version: 5.9
+  return '''// swift-tools-version:5.9
 // Generated by `flutter-watchos plugin port`. Do not edit by hand.
 //
-// This manifest lets the package be consumed via Swift Package Manager. The
-// target reuses the same `Classes/` sources the CocoaPods podspec compiles, so
-// both dependency managers stay in sync from a single source tree.
+// FFI plugin manifest. The flutter-watchos CLI discovers the plugin through
+// this file, compiles `Classes/*.m` into a static archive force-loaded into
+// the watch binary, and links the frameworks declared below.
 import PackageDescription
 
 let package = Package(
-  name: "$name",
-  platforms: [
-    .watchOS("$kMinimumWatchosVersion"),
-  ],
-  products: [
-    .library(name: "$libraryName", targets: ["$name"]),
-  ],
-  dependencies: [
-    // Lets the target `import Flutter`. flutter-watchos generates a
-    // FlutterFramework package (binary target wrapping Flutter.xcframework) as
-    // a sibling of this package under the app's ephemeral SwiftPM packages, so
-    // `../FlutterFramework` resolves at build time. Matches stock Flutter's
-    // plugin Package.swift.
-    .package(name: "FlutterFramework", path: "../FlutterFramework"),
-  ],
-  targets: [
-    .target(
-      name: "$name",
-      dependencies: [
-        .product(name: "FlutterFramework", package: "FlutterFramework"),
-      ],
-      path: "Classes",
-      swiftSettings: [
-        // Keep Swift `#if TARGET_OS_WATCH` branches active, matching the
-        // podspec.
-        .define("TARGET_OS_WATCH"),
-      ]
-    ),
-  ]
+    name: "$name",
+    platforms: [
+        .watchOS("$kMinimumWatchosVersion"),
+    ],
+    products: [
+        .library(name: "$libraryName", targets: ["$name"]),
+    ],
+    targets: [
+        .target(
+            name: "$name",
+            path: "Classes",
+            publicHeadersPath: ".",
+            cSettings: [
+                .headerSearchPath("."),
+            ],
+            linkerSettings: [
+                .linkedFramework("Foundation"),
+                // TODO(porter): add the frameworks your C code links, e.g.
+                // WatchKit, CoreLocation, CoreMotion, Network.
+                .linkedFramework("WatchKit"),
+            ]
+        ),
+    ]
 )
 ''';
 }
 
-/// Renders a Swift stub at `watchos/Classes/<PluginClass>.swift`.
-///
-/// Written when the source has no copyable native files: the user is expected
-/// to paste their iOS implementation in. The header explains that, and the
-/// `register(with:)` body is a placeholder that wires the channel name from
-/// the source plugin (so the build and the registrant compile).
-String renderSwiftStub({required PluginSource source, required String licenseHolder}) {
-  final String header = renderLicenseHeader(
-    holder: licenseHolder,
-    commentPrefix: '// ',
-    sourcePlugin: source.packageName,
-  );
-  final channelHint = '${source.basePackageName}_watchos';
-  return '''$header
-//
-// TODO(porter): paste the iOS implementation of `${source.pluginClass}` here.
-// The class signature, register(with:), and method handlers should mostly
-// transfer verbatim from your iOS Swift source. Strip imports and call sites
-// for watchOS-incompatible APIs (WebKit, UIApplication, UIPasteboard, etc.)
-// and stub the corresponding handler cases with `result(FlutterMethodNotImplemented)`.
-
-import Flutter
-import WatchKit
-
-public class ${source.pluginClass}: NSObject, FlutterPlugin {
-  public static func register(with registrar: FlutterPluginRegistrar) {
-    let channel = FlutterMethodChannel(
-      name: "$channelHint",
-      binaryMessenger: registrar.messenger())
-    let instance = ${source.pluginClass}()
-    registrar.addMethodCallDelegate(instance, channel: channel)
-  }
-
-  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    // TODO(porter): replace with the iOS handler body.
-    result(FlutterMethodNotImplemented)
-  }
-}
-''';
-}
-
-/// Renders a 1-line Objective-C bridging header that lets the Swift class be
-/// imported from the GeneratedPluginRegistrant.m without an `@import` cycle.
-String renderBridgingHeader({required PluginSource source, required String licenseHolder}) {
-  final String header = renderLicenseHeader(
-    holder: licenseHolder,
-    commentPrefix: '// ',
-    sourcePlugin: source.packageName,
-  );
-  return '''$header
-//
-// Used by Xcode to bridge Swift sources to the Objective-C registrant.
-// Add Objective-C imports here when you call out to WatchKit / HealthKit etc.
-
-#import <WatchKit/WatchKit.h>
-''';
-}
-
-/// Renders the Dart entry point at `lib/<plugin>_watchos.dart`.
-///
-/// Emits a `registerWith()` that's a no-op — when the user pastes their iOS
-/// Dart implementation in (or wires it via the platform interface), they
-/// replace the body. The class modifier is `base` so it works as a subclass
-/// of a `base class` platform interface (the Dart 3 requirement).
+/// Renders the Dart entry point at `lib/<pkg>.dart`: an FFI bindings class
+/// plus a platform-interface implementation that resolves the native symbols
+/// via `DynamicLibrary.process()`.
 String renderDartEntry({required PluginSource source, required String licenseHolder}) {
   final String header = renderLicenseHeader(
     holder: licenseHolder,
     commentPrefix: '// ',
     sourcePlugin: source.packageName,
   );
+  final String dartClass = dartClassName(source);
+  final String bindings = bindingsClassName(source);
+  final String exampleSymbol = exampleSymbolName(source);
   final String? interface = source.platformInterfacePackage;
-  final String classBody;
-  if (interface != null && source.dartPluginClass != null) {
-    final String dartClass = source.dartPluginClass!;
-    classBody =
-        '''
-import 'package:$interface/$interface.dart';
 
-/// watchOS implementation of `${source.basePackageName}`.
-///
-/// Registered by Flutter's federated plugin runner via `registerWith()`. The
-/// `base` modifier is required because the platform interface declares
-/// itself as `base class`.
-base class $dartClass extends ${_platformInterfaceClassName(interface)} {
-  /// Registers this implementation as the default `${source.basePackageName}`
-  /// platform implementation on watchOS.
-  static void registerWith() {
-    ${_platformInterfaceClassName(interface)}.instance = $dartClass();
+  // The generated class deliberately does NOT `extends` the platform
+  // interface: the interface class name can't be guessed reliably (e.g.
+  // `sensors_plus` federates through `SensorsPlatform`, not
+  // `SensorsPlusPlatform`), and a wrong name would stop the scaffold from
+  // compiling. Instead the class is standalone so a freshly ported package
+  // builds and links immediately — proving the whole FFI pipeline — and the
+  // federated wiring is shown as a ready-to-apply TODO block below.
+  final wiringTodo = StringBuffer();
+  if (interface != null) {
+    final String platformClass = _platformInterfaceClassName(interface);
+    wiringTodo
+      ..writeln('// TODO(porter): make this the federated `${source.basePackageName}`')
+      ..writeln('// implementation. Add the import, `extends` the platform interface,')
+      ..writeln('// and set the instance in registerWith(). The interface class is')
+      ..writeln('// guessed as `$platformClass` — verify it against')
+      ..writeln('// package:$interface.')
+      ..writeln('//')
+      ..writeln("//   import 'package:$interface/$interface.dart';")
+      ..writeln('//')
+      ..writeln('//   class $dartClass extends $platformClass {')
+      ..writeln('//     static void registerWith() {')
+      ..writeln('//       $platformClass.instance = $dartClass();')
+      ..writeln('//     }')
+      ..writeln('//     // ...override the interface methods, forwarding to `b`.')
+      ..writeln('//   }');
+  } else {
+    wiringTodo
+      ..writeln('// This plugin declares no federated platform interface; wire')
+      ..writeln('// registerWith() to whatever entry point your app expects.');
   }
 
-  // TODO(porter): override the platform interface methods that the iOS
-  // implementation overrides. Methods you do not override fall through to
-  // the platform interface's default implementations, which usually throw
-  // `UnimplementedError` — that is the right behaviour for watchOS-incompatible
-  // calls.
-}
-''';
-  } else {
-    classBody =
-        '''
+  return '''$header
+//
+// watchOS implementation of `${source.basePackageName}`, over dart:ffi.
+//
+// `watchos/Classes/${source.outputPackageName}_ffi.m` exports C symbols; the
+// CLI force-loads the compiled archive into the watch binary and this class
+// resolves them via `DynamicLibrary.process()`.
+
+import 'dart:ffi';
+
+import 'package:ffi/ffi.dart';
+
 /// watchOS implementation of `${source.basePackageName}`.
-///
-/// This plugin does not declare a federated platform interface. The
-/// `registerWith()` hook is intentionally empty — native registration
-/// happens via `watchos/Classes/${source.pluginClass}.swift`.
-class ${source.basePackageName.replaceAllMapped(RegExp(r'(_)(.)'), (m) => m[2]!.toUpperCase()).replaceFirstMapped(RegExp(r'^.'), (m) => m[0]!.toUpperCase())}Watchos {
-  /// Registers this implementation as the default `${source.basePackageName}`
-  /// platform implementation on watchOS. No-op for non-federated plugins.
+$wiringTodo
+class $dartClass {
+  /// Test hook: set before first use to replace the FFI bindings.
+  static $bindings? bindingsOverride;
+
+  static $bindings? _bindings;
+
+  /// The FFI bindings (or the test override).
+  static $bindings get b =>
+      bindingsOverride ?? (_bindings ??= $bindings());
+
+  /// Registers this implementation. TODO(porter): set the platform-interface
+  /// instance here (see the wiring note above).
   static void registerWith() {}
 }
-''';
+
+/// FFI bindings to the native ${source.outputPackageName} C functions.
+///
+/// Overridable for tests via [$dartClass.bindingsOverride]; the
+/// [$bindings.forTesting] constructor skips FFI initialization so fakes work
+/// off-device.
+class $bindings {
+  /// Creates bindings that look up native symbols in the current process.
+  $bindings() : _lib = DynamicLibrary.process();
+
+  /// Constructor for fakes/mocks — skips FFI initialization.
+  $bindings.forTesting() : _lib = null;
+
+  final DynamicLibrary? _lib;
+
+  // TODO(porter): add one late-bound function per exported C symbol, e.g.
+  //   late final int Function() foo =
+  //       _lib!.lookupFunction<Int32 Function(), int Function()>('..._foo');
+  late final Pointer<Utf8> Function() _example = _lib!
+      .lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+          '$exampleSymbol');
+
+  /// Example binding — replace with your plugin's real getters.
+  String get example {
+    final Pointer<Utf8> p = _example();
+    return p == nullptr ? '' : p.toDartString();
   }
-  return '$header\n//\n// Dart entry point for the watchOS implementation.\n\n$classBody';
+}
+''';
 }
 
-/// Renders a placeholder test that loads the Dart entry point, exercising
-/// `registerWith()`. Keeps `dart test` green out of the box.
+/// Renders a placeholder test that references the generated class so the
+/// package compiles and `dart test` is green out of the box.
 String renderTestStub({required PluginSource source, required String licenseHolder}) {
   final String header = renderLicenseHeader(
     holder: licenseHolder,
     commentPrefix: '// ',
     sourcePlugin: source.packageName,
   );
-  final String? dartClass = source.dartPluginClass;
-  if (dartClass != null) {
-    // Reference the registrant class so the package import is actually
-    // used (no `unused_import`) and the smoke test verifies the package
-    // compiles and the class is reachable.
-    return '''$header
+  final String dartClass = dartClassName(source);
+  return '''$header
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:${source.outputPackageName}/${source.outputPackageName}.dart';
@@ -371,35 +355,27 @@ void main() {
   });
 }
 ''';
-  }
-  // No federated Dart class to reference — keep a dependency-free smoke
-  // test rather than an unused package import.
-  return '''$header
-
-import 'package:flutter_test/flutter_test.dart';
-
-void main() {
-  test('test harness runs', () {
-    expect(1 + 1, 2);
-  });
-}
-''';
 }
 
 /// Renders the README that ships with the generated package.
 String renderReadme({required PluginSource source, required String licenseHolder}) {
+  final interfaceNote = source.platformInterfacePackage != null
+      ? 'This is a federated plugin implementation. Apps that already depend '
+          'on `${source.basePackageName}` and target watchOS only need to add '
+          'this package alongside it:'
+      : 'Add this package to your app to use it on watchOS:';
   return '''# ${source.outputPackageName}
 
 The watchOS implementation of [`${source.basePackageName}`](https://pub.dev/packages/${source.basePackageName}).
 
-> Generated by [`flutter-watchos plugin port`](https://github.com/flutterwatch/flutter-watchos)
-> from `${source.packageName}`. Read `PORTING_REPORT.md` before publishing.
+> Scaffolded by [`flutter-watchos plugin port`](https://github.com/flutterwatch/flutter-watchos)
+> from `${source.packageName}` as an **FFI** plugin. Read `PORTING_REPORT.md`,
+> then implement the C functions in `watchos/Classes/` and the Dart methods
+> in `lib/`.
 
 ## Usage
 
-This is a federated plugin implementation. Apps that already depend on
-`${source.basePackageName}` and target watchOS only need to add this package
-as a dependency:
+$interfaceNote
 
 ```yaml
 dependencies:
@@ -407,15 +383,10 @@ dependencies:
   ${source.outputPackageName}: ^0.0.1
 ```
 
-The plugin registers automatically via Flutter's federated registry — no
-explicit imports required from app code.
-
 ## Status
 
-| Platform | Implemented |
-|----------|-------------|
-| Apple Watch (`watchos`) | yes |
-| Watch simulator (`watchsimulator`) | yes |
+🚧 Scaffold — the FFI bindings compile and link, but the exported functions
+are stubs. See `PORTING_REPORT.md` for the APIs to implement.
 
 ## License
 
@@ -427,8 +398,8 @@ $licenseHolder under a BSD-3-Clause license. See `LICENSE` for the full text.
 String renderChangelog({required PluginSource source}) {
   return '''## 0.0.1
 
-* Initial watchOS scaffolding generated by `flutter-watchos plugin port` from
-  `${source.packageName}`.
+* Initial watchOS FFI scaffold generated by `flutter-watchos plugin port`
+  from `${source.packageName}`.
 ''';
 }
 
@@ -446,7 +417,7 @@ analyzer:
 }
 
 /// Renders a `.gitignore` covering the standard Dart/Flutter outputs plus the
-/// CocoaPods-derived files that show up under `watchos/`.
+/// SwiftPM build state that shows up under `watchos/`.
 String renderGitignore() {
   return '''
 # Dart / Flutter
@@ -457,15 +428,9 @@ build/
 .packages
 .pub/
 
-# CocoaPods
-watchos/Pods/
-watchos/Podfile.lock
-watchos/.symlinks/
-watchos/Flutter/Flutter.framework
-watchos/Flutter/Flutter.podspec
-
 # Xcode / SwiftPM (per-user, generated when watchos/Package.swift is opened)
 **/.swiftpm/
+**/.build/
 **/xcuserdata/
 
 # IDE
@@ -491,26 +456,26 @@ String _today() {
 }
 
 String _quoteForYaml(String s) {
-  // Use double quotes; escape backslashes and double-quotes.
   final String escaped = s.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
   return '"$escaped"';
 }
 
+/// `battery_plus_watchos` → `BatteryPlusWatchos`.
+String _pascalCase(String name) => name
+    .split('_')
+    .where((String p) => p.isNotEmpty)
+    .map((String p) => p[0].toUpperCase() + p.substring(1))
+    .join();
+
 /// `url_launcher_platform_interface` → `UrlLauncherPlatform`.
 ///
 /// Best-effort heuristic: drops the `_platform_interface` suffix, then
-/// upper-CamelCases the rest, then appends `Platform`. Matches what most
-/// Flutter teams pick. The user can adjust the rendered import if their
-/// interface uses a different name.
+/// upper-CamelCases the rest, then appends `Platform`. The generated Dart
+/// tells the developer to adjust it if the real class differs.
 String _platformInterfaceClassName(String interfacePackage) {
   var base = interfacePackage;
   if (base.endsWith('_platform_interface')) {
     base = base.substring(0, base.length - '_platform_interface'.length);
   }
-  final String camel = base
-      .split('_')
-      .where((String p) => p.isNotEmpty)
-      .map((String p) => p[0].toUpperCase() + p.substring(1))
-      .join();
-  return '${camel}Platform';
+  return '${_pascalCase(base)}Platform';
 }

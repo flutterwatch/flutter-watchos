@@ -180,11 +180,11 @@ void main() {
     });
   });
 
-  group('plugin port end-to-end (Objective-C, Phase 4)', () {
+  group('plugin port end-to-end (Objective-C source → FFI scaffold)', () {
     late MemoryFileSystem fs;
     setUp(() => fs = MemoryFileSystem.test());
 
-    testWithoutContext('ports an ObjC plugin and reports the stub', () {
+    testWithoutContext('emits an FFI scaffold and reports the source WebKit use', () {
       final Directory src = _createObjcPlugin(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       expect(source.sourceLanguage, SourceLanguage.objc);
@@ -196,33 +196,22 @@ void main() {
         licenseHolder: 'Test',
       ).scaffold(source: source, outputDirectory: out);
 
+      // The ObjC source is NOT copied — an FFI C stub is emitted instead.
       final Directory watchosClasses =
           out.childDirectory('watchos').childDirectory('Classes');
-      final String m = watchosClasses.childFile('GadgetPlugin.m').readAsStringSync();
-      final String h = watchosClasses.childFile('GadgetPlugin.h').readAsStringSync();
+      expect(watchosClasses.childFile('GadgetPlugin.m').existsSync(), isFalse);
+      expect(watchosClasses.childFile('gadget_watchos_ffi.h').existsSync(), isTrue);
+      expect(watchosClasses.childFile('gadget_watchos_ffi.m').existsSync(), isTrue);
+      expect(out.childFile('pubspec.yaml').readAsStringSync(), contains('ffiPlugin: true'));
 
-      // .m was ported.
-      expect(m, contains('// #import <WebKit/WebKit.h>'));
-      expect(m, contains('result(FlutterMethodNotImplemented);  // TODO(porter)'));
-      expect(m, contains('[self launchURL:call.arguments result:result];'));
-      // .h is clean → unchanged (plus the porter's trailing newline).
-      expect(h, _kObjcHeader);
-      // No Swift stub generated for an ObjC plugin.
-      expect(watchosClasses.childFile('GadgetPlugin.swift').existsSync(), isFalse);
-
+      // The report flags the WebKit the source used (Objective-C is analysed
+      // for findings even though the code isn't copied).
       final String report = out.childFile('PORTING_REPORT.md').readAsStringSync();
       expect(report, contains('Base platform: ios (Objective-C)'));
-      expect(report, contains('### `launchInWebView` ✗ stubbed'));
-      expect(report, contains('### `canLaunch` ✓ ported'));
-      expect(report, contains('### `launch` ✓ ported'));
-      expect(report, contains('| Methods stubbed (iOS-only) | 1 |'));
-      expect(report, contains('| Methods ported as-is | 2 |'));
-      expect(report, contains('#import <WebKit/WebKit.h>'));
+      expect(report, contains('### Not available on watchOS'));
+      expect(report, contains('WebKit'));
 
-      expect(
-        result.findings.where((f) => f.action == FindingAction.stubbedMethod),
-        isNotEmpty,
-      );
+      expect(result.findings.map((f) => f.pattern.name), contains('WebKit'));
     });
   });
 }

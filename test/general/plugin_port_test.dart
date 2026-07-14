@@ -124,8 +124,8 @@ flutter:
     });
   });
 
-  group('Scaffolder', () {
-    testWithoutContext('writes a complete federated package skeleton', () {
+  group('Scaffolder (FFI)', () {
+    testWithoutContext('writes a complete FFI package scaffold', () {
       final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
       final Directory outputDir = fs.directory('/out/gadget_watchos');
@@ -135,57 +135,66 @@ flutter:
         logger: BufferLogger.test(),
         licenseHolder: 'Test Holder',
       );
-      final ScaffoldResult result = scaffolder.scaffold(source: source, outputDirectory: outputDir);
-
+      final ScaffoldResult result =
+          scaffolder.scaffold(source: source, outputDirectory: outputDir);
       expect(result.dryRun, isFalse);
 
-      // Pubspec
+      // Pubspec declares an FFI plugin — no pluginClass, no method channel.
       final String pubspec = outputDir.childFile('pubspec.yaml').readAsStringSync();
       expect(pubspec, contains('name: gadget_watchos'));
-      expect(pubspec, contains('pluginClass: GadgetPlugin'));
-      expect(pubspec, contains('dartPluginClass: GadgetIOS'));
-      // The source's own constraint is carried over verbatim (not a
-      // hardcoded ^1.0.0, which would break `pub get` for real plugins).
+      expect(pubspec, contains('ffiPlugin: true'));
+      expect(pubspec, contains('dartPluginClass: GadgetWatchos'));
+      expect(pubspec, contains('implements: gadget'));
+      expect(pubspec, contains('ffiSymbols:'));
+      expect(pubspec, contains('- gadget_watchos_example'));
+      expect(pubspec, contains('ffi: ^2.1.0'));
+      // The source's own interface constraint is carried over verbatim.
       expect(pubspec, contains('gadget_platform_interface: ^2.4.0'));
+      expect(pubspec, isNot(contains('pluginClass:')));
 
-      // Podspec
-      final String podspec = outputDir.childDirectory('watchos').childFile('gadget_watchos.podspec').readAsStringSync();
-      expect(podspec, contains("s.name             = 'gadget_watchos'"));
-      expect(podspec, contains(':watchos, '));
-      expect(podspec, isNot(contains("s.dependency 'Flutter'")),
-          reason: 'podspec must not depend on the Flutter pod, which lacks watchOS support');
-      expect(podspec, contains('FRAMEWORK_SEARCH_PATHS'));
-
-      // Phase 2: the real iOS source from the fixture is copied verbatim.
-      // The Phase-1 stub is only emitted as a fallback when the source has
-      // no native files at all (covered by a separate test below).
-      final String swift = outputDir
-          .childDirectory('watchos')
-          .childDirectory('Classes')
-          .childFile('GadgetPlugin.swift')
-          .readAsStringSync();
+      // A C stub (.h + .m), not copied Swift/ObjC source.
+      final Directory classes =
+          outputDir.childDirectory('watchos').childDirectory('Classes');
+      final String h = classes.childFile('gadget_watchos_ffi.h').readAsStringSync();
+      final String m = classes.childFile('gadget_watchos_ffi.m').readAsStringSync();
+      expect(h, contains('const char* gadget_watchos_example(void);'));
+      expect(h, contains('__attribute__((visibility("default")))'));
+      expect(m, contains('#import <WatchKit/WatchKit.h>'));
+      expect(m, contains('gadget_watchos_example(void)'));
+      // The source plugin's own Swift is NOT copied.
+      expect(classes.childFile('GadgetPlugin.swift').existsSync(), isFalse);
+      // No CocoaPods podspec — FFI uses Package.swift only.
       expect(
-        swift,
-        equals(_kRealisticSwiftSource),
-        reason: 'Swift source should be copied verbatim from <ios>/Classes/',
+        outputDir.childDirectory('watchos').childFile('gadget_watchos.podspec').existsSync(),
+        isFalse,
       );
 
-      // Dart entry uses the dartPluginClass and the platform interface package.
-      final String dartEntry = outputDir
-          .childDirectory('lib')
-          .childFile('gadget_watchos.dart')
-          .readAsStringSync();
-      expect(dartEntry, contains("import 'package:gadget_platform_interface/gadget_platform_interface.dart'"));
-      expect(dartEntry, contains('base class GadgetIOS extends GadgetPlatform'));
+      // Package.swift is an FFI manifest (watchOS target, no FlutterFramework).
+      final String pkg =
+          outputDir.childDirectory('watchos').childFile('Package.swift').readAsStringSync();
+      expect(pkg, contains('.watchOS("7.0")'));
+      expect(pkg, contains('path: "Classes"'));
+      expect(pkg, contains('.linkedFramework("WatchKit")'));
+      expect(pkg, isNot(contains('FlutterFramework')));
+
+      // Dart entry: a compiling scaffold with FFI bindings + registerWith,
+      // and the federated wiring shown as a TODO (the interface class name
+      // can't be guessed reliably, so it must not be a hard compile error).
+      final String dartEntry =
+          outputDir.childDirectory('lib').childFile('gadget_watchos.dart').readAsStringSync();
+      expect(dartEntry, contains('class GadgetWatchos {'));
+      expect(dartEntry, contains('class GadgetWatchosBindings {'));
+      expect(dartEntry, contains('DynamicLibrary.process()'));
       expect(dartEntry, contains('static void registerWith()'));
-
-      // Test stub.
-      expect(
-        outputDir.childDirectory('test').childFile('gadget_watchos_test.dart').existsSync(),
-        isTrue,
-      );
+      expect(dartEntry, contains('gadget_watchos_example'));
+      // The scaffold compiles: the guessed platform-interface class appears
+      // only inside the TODO comment, never as a real `extends`.
+      expect(dartEntry, contains('// TODO(porter)'));
+      expect(dartEntry, contains('class GadgetWatchos {'));
+      expect(dartEntry, isNot(contains('\nclass GadgetWatchos extends')));
 
       // Standard package files.
+      expect(outputDir.childDirectory('test').childFile('gadget_watchos_test.dart').existsSync(), isTrue);
       expect(outputDir.childFile('README.md').existsSync(), isTrue);
       expect(outputDir.childFile('CHANGELOG.md').existsSync(), isTrue);
       expect(outputDir.childFile('analysis_options.yaml').existsSync(), isTrue);
@@ -197,16 +206,11 @@ flutter:
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
       final Directory outputDir = fs.directory('/out/gadget_watchos');
 
-      final scaffolder = Scaffolder(
+      final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
         logger: BufferLogger.test(),
         licenseHolder: 'Test',
-      );
-      final ScaffoldResult result = scaffolder.scaffold(
-        source: source,
-        outputDirectory: outputDir,
-        dryRun: true,
-      );
+      ).scaffold(source: source, outputDirectory: outputDir, dryRun: true);
 
       expect(result.dryRun, isTrue);
       expect(result.writtenPaths, isNotEmpty);
@@ -219,22 +223,18 @@ flutter:
       final Directory outputDir = fs.directory('/out/gadget_watchos')..createSync(recursive: true);
       outputDir.childFile('preexisting.txt').writeAsStringSync('do not touch');
 
-      final scaffolder = Scaffolder(
-        fileSystem: fs,
-        logger: BufferLogger.test(),
-        licenseHolder: 'Test',
-      );
       expect(
-        () => scaffolder.scaffold(source: source, outputDirectory: outputDir),
-        throwsA(
-          isA<ScaffoldError>().having(
-            (ScaffoldError e) => e.message,
-            'message',
-            contains('Output directory already exists'),
-          ),
-        ),
+        () => Scaffolder(
+          fileSystem: fs,
+          logger: BufferLogger.test(),
+          licenseHolder: 'Test',
+        ).scaffold(source: source, outputDirectory: outputDir),
+        throwsA(isA<ScaffoldError>().having(
+          (ScaffoldError e) => e.message,
+          'message',
+          contains('Output directory already exists'),
+        )),
       );
-      // The pre-existing file is still there.
       expect(outputDir.childFile('preexisting.txt').existsSync(), isTrue);
     });
 
@@ -244,325 +244,87 @@ flutter:
       final Directory outputDir = fs.directory('/out/gadget_watchos')..createSync(recursive: true);
       outputDir.childFile('preexisting.txt').writeAsStringSync('overwrite me');
 
-      final scaffolder = Scaffolder(
+      Scaffolder(
         fileSystem: fs,
         logger: BufferLogger.test(),
         licenseHolder: 'Test',
-      );
-      scaffolder.scaffold(
-        source: source,
-        outputDirectory: outputDir,
-        overwrite: true,
-      );
+      ).scaffold(source: source, outputDirectory: outputDir, overwrite: true);
 
       expect(outputDir.childFile('preexisting.txt').existsSync(), isFalse);
       expect(outputDir.childFile('pubspec.yaml').existsSync(), isTrue);
     });
 
-    testWithoutContext('copies Objective-C sources verbatim', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'audio_session', objc: true);
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/audio_session_watchos');
-
-      Scaffolder(
-        fileSystem: fs,
-        logger: BufferLogger.test(),
-        licenseHolder: 'Test',
-      ).scaffold(source: source, outputDirectory: outputDir);
-
-      // Both .h and .m land in watchos/Classes/ unchanged.
-      final Directory watchosClasses = outputDir.childDirectory('watchos').childDirectory('Classes');
-      expect(watchosClasses.childFile('GadgetPlugin.h').readAsStringSync(), _kRealisticObjcHeader);
-      expect(watchosClasses.childFile('GadgetPlugin.m').readAsStringSync(), _kRealisticObjcImpl);
-
-      // No Swift stub written when ObjC sources are present.
-      expect(watchosClasses.childFile('GadgetPlugin.swift').existsSync(), isFalse);
-    });
-
-    testWithoutContext('preserves subdirectory structure under Classes/', () {
+    testWithoutContext('--no-report suppresses PORTING_REPORT.md', () {
       final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-      // Add a nested helper file.
-      sourceDir
-          .childDirectory('ios')
-          .childDirectory('Classes')
-          .childDirectory('Helpers')
-          .childFile('UrlValidator.swift')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync('// helper');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
       final Directory outputDir = fs.directory('/out/gadget_watchos');
 
-      Scaffolder(
+      final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
         logger: BufferLogger.test(),
         licenseHolder: 'Test',
-      ).scaffold(source: source, outputDirectory: outputDir);
+      ).scaffold(source: source, outputDirectory: outputDir, emitReport: false);
 
-      // Helper landed at watchos/Classes/Helpers/UrlValidator.swift, not
-      // flattened. Phase 3: Swift files flow through SwiftPorter, which
-      // normalises the file to end with exactly one trailing newline — so
-      // the content is the source plus a `\n`, not a byte-for-byte copy.
-      expect(
-        outputDir
-            .childDirectory('watchos')
-            .childDirectory('Classes')
-            .childDirectory('Helpers')
-            .childFile('UrlValidator.swift')
-            .readAsStringSync(),
-        '// helper\n',
-      );
+      expect(result.reportPath, isNull);
+      expect(outputDir.childFile('PORTING_REPORT.md').existsSync(), isFalse);
     });
 
-    testWithoutContext('copies <platform>/Resources/ when present', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-      sourceDir
-          .childDirectory('ios')
-          .childDirectory('Resources')
-          .childFile('Localizable.strings')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync('"key" = "value";');
-      sourceDir
-          .childDirectory('ios')
-          .childDirectory('Resources')
-          .childDirectory('Assets.xcassets')
-          .childFile('Contents.json')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync('{"info": {"version": 1}}');
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/gadget_watchos');
-
-      Scaffolder(
-        fileSystem: fs,
-        logger: BufferLogger.test(),
-        licenseHolder: 'Test',
-      ).scaffold(source: source, outputDirectory: outputDir);
-
-      final Directory watchosResources = outputDir.childDirectory('watchos').childDirectory('Resources');
-      expect(watchosResources.childFile('Localizable.strings').readAsStringSync(), '"key" = "value";');
-      expect(
-        watchosResources.childDirectory('Assets.xcassets').childFile('Contents.json').readAsStringSync(),
-        '{"info": {"version": 1}}',
-      );
-    });
-
-    testWithoutContext('falls back to Swift stub when source has no native files', () {
+    testWithoutContext('report lists the source APIs and their watchOS status', () {
+      // A source that uses one unsupported API (WebKit) and one that is
+      // available-but-different (CoreLocation).
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: empty_native_plugin
+name: gizmo_ios
+description: iOS implementation of gizmo.
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  gizmo_platform_interface: ^1.0.0
+
 flutter:
   plugin:
+    implements: gizmo
     platforms:
       ios:
-        pluginClass: EmptyNativePlugin
-        dartPluginClass: EmptyNativePluginIOS
+        pluginClass: GizmoPlugin
 ''');
-      // Note: no ios/Classes/ files at all.
-      dir.childDirectory('ios').childDirectory('Classes').createSync(recursive: true);
+      dir.childDirectory('ios').childDirectory('Classes').childFile('GizmoPlugin.swift')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
+import Flutter
+import WebKit
+import CoreLocation
+
+public class GizmoPlugin: NSObject {
+  let web = WKWebView(frame: .zero)
+  let loc = CLLocationManager()
+}
+''');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      final Directory outputDir = fs.directory('/out/empty_native_plugin_watchos');
-
-      Scaffolder(
+      final Directory out = fs.directory('/out/gizmo_watchos');
+      final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
         logger: BufferLogger.test(),
         licenseHolder: 'Test',
-      ).scaffold(source: source, outputDirectory: outputDir);
+      ).scaffold(source: source, outputDirectory: out);
 
-      final Directory watchosClasses = outputDir.childDirectory('watchos').childDirectory('Classes');
-      // Stub Swift class is emitted with the plugin class name from pubspec.
-      expect(
-        watchosClasses.childFile('EmptyNativePlugin.swift').readAsStringSync(),
-        contains('public class EmptyNativePlugin'),
-      );
-      // Bridging header companion is also written in stub mode.
-      expect(watchosClasses.childFile('EmptyNativePlugin-Bridging-Header.h').existsSync(), isTrue);
+      // Findings were collected from the source's native code.
+      final Set<String> apis =
+          result.findings.map((f) => f.pattern.name).toSet();
+      expect(apis, containsAll(<String>['WebKit', 'CoreLocation']));
+
+      final String report = out.childFile('PORTING_REPORT.md').readAsStringSync();
+      expect(report, contains('This is an FFI scaffold'));
+      expect(report, contains('Not available on watchOS'));
+      expect(report, contains('WebKit'));
+      expect(report, contains('Available, but review'));
+      expect(report, contains('CoreLocation'));
     });
-
-    testWithoutContext('copies LICENSE from source when present', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-      sourceDir.childFile('LICENSE').writeAsStringSync('BSD-3 license body');
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/gadget_watchos');
-
-      Scaffolder(
-        fileSystem: fs,
-        logger: BufferLogger.test(),
-        licenseHolder: 'Test',
-      ).scaffold(source: source, outputDirectory: outputDir);
-
-      expect(outputDir.childFile('LICENSE').readAsStringSync(), 'BSD-3 license body');
-    });
-
-    testWithoutContext('copies the source Dart lib/, renaming entry + rewriting self-imports', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-      sourceDir.childDirectory('lib').childFile('gadget_ios.dart')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync(
-          "import 'package:gadget_platform_interface/gadget_platform_interface.dart';\n"
-          "import 'package:gadget_ios/src/messages.g.dart';\n"
-          'class GadgetIOS extends GadgetPlatform {}\n',
-        );
-      sourceDir
-          .childDirectory('lib')
-          .childDirectory('src')
-          .childFile('messages.g.dart')
-        ..parent.createSync(recursive: true)
-        ..writeAsStringSync('// pigeon generated\n');
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory out = fs.directory('/out/gadget_watchos');
-
-      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-          .scaffold(source: source, outputDirectory: out);
-
-      // Entry renamed to <out>.dart; real upstream class preserved.
-      final String entry =
-          out.childDirectory('lib').childFile('gadget_watchos.dart').readAsStringSync();
-      expect(entry, contains('class GadgetIOS extends GadgetPlatform'));
-      // Self-import rewritten to the output package; interface import kept.
-      expect(entry, contains('package:gadget_watchos/src/messages.g.dart'));
-      expect(entry, isNot(contains('package:gadget_ios/')));
-      expect(entry,
-          contains('package:gadget_platform_interface/gadget_platform_interface.dart'));
-      // Sub-tree copied verbatim, structure preserved.
-      expect(
-        out.childDirectory('lib').childDirectory('src').childFile('messages.g.dart').readAsStringSync(),
-        '// pigeon generated\n',
-      );
-      // No hand-written guessed stub left behind.
-      expect(entry, isNot(contains('TODO(porter): override the platform interface')));
-    });
-
-    testWithoutContext('falls back to the Dart stub when the source has no lib/', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory out = fs.directory('/out/gadget_watchos');
-
-      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-          .scaffold(source: source, outputDirectory: out);
-
-      final String entry =
-          out.childDirectory('lib').childFile('gadget_watchos.dart').readAsStringSync();
-      expect(entry, contains('base class GadgetIOS extends GadgetPlatform'));
-      expect(entry, contains('static void registerWith()'));
-    });
-
-    testWithoutContext(
-      'prunes non-Apple platform Dart from lib/ and scrubs references in '
-      'remaining files (the cross-platform-_plus pattern)',
-      () {
-        // Mirrors a real `connectivity_plus`-style upstream layout: a
-        // single entry file with a conditional export over a Linux
-        // implementation (default) and a web fallback, plus the
-        // implementations themselves and a web-only subdirectory. The
-        // porter should keep only the entry file (with the conditional
-        // export scrubbed), and drop everything that targets
-        // Linux/Web/etc.
-        final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-        final Directory lib = sourceDir.childDirectory('lib')..createSync();
-        lib.childFile('gadget_ios.dart').writeAsStringSync(
-          "import 'package:gadget_platform_interface/gadget_platform_interface.dart';\n"
-          '\n'
-          "export 'src/gadget_linux.dart'\n"
-          "    if (dart.library.js_interop) 'src/gadget_web.dart';\n"
-          '\n'
-          'class Gadget {}\n',
-        );
-        lib.childDirectory('src').childFile('gadget_linux.dart')
-          ..parent.createSync(recursive: true)
-          ..writeAsStringSync("import 'package:nm/nm.dart';\n// linux body\n");
-        lib.childDirectory('src').childFile('gadget_web.dart')
-            .writeAsStringSync("import 'package:web/web.dart';\n");
-        lib
-            .childDirectory('src')
-            .childDirectory('web')
-            .childFile('html_impl.dart')
-          ..parent.createSync(recursive: true)
-          ..writeAsStringSync('// web-only helper\n');
-        // An Apple-shared file that must survive the prune untouched.
-        lib.childDirectory('src').childFile('messages.g.dart')
-            .writeAsStringSync('// pigeon generated\n');
-
-        final PluginSource source =
-            SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-        final Directory out = fs.directory('/out/gadget_watchos');
-        final ScaffoldResult result =
-            Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-                .scaffold(source: source, outputDirectory: out);
-
-        // Reports what got pruned, source-relative to lib/.
-        expect(
-          result.prunedDartFiles,
-          containsAll(<String>[
-            'src/gadget_linux.dart',
-            'src/gadget_web.dart',
-            'src/web/html_impl.dart',
-          ]),
-        );
-        // Pruned files are not written to the output package.
-        final Directory outLib = out.childDirectory('lib');
-        expect(outLib.childDirectory('src').childFile('gadget_linux.dart').existsSync(), isFalse);
-        expect(outLib.childDirectory('src').childFile('gadget_web.dart').existsSync(), isFalse);
-        expect(outLib.childDirectory('src').childDirectory('web').existsSync(), isFalse);
-        // Apple-shared files survive verbatim.
-        expect(outLib.childDirectory('src').childFile('messages.g.dart').existsSync(), isTrue);
-        // The entry file is kept, renamed, and its conditional export
-        // (which pointed at two now-dropped files) is replaced with the
-        // pruner placeholder so it does not reference missing paths.
-        final String entry =
-            outLib.childFile('gadget_watchos.dart').readAsStringSync();
-        expect(entry, contains('class Gadget'));
-        expect(entry, isNot(contains('gadget_linux.dart')));
-        expect(entry, isNot(contains('gadget_web.dart')));
-        expect(entry, contains('// (pruned by flutter-watchos plugin port'));
-      },
-    );
-
-    testWithoutContext(
-      'pruner matches by platform suffix, not prefix: `_macos.dart` is '
-      'dropped (an impl) but `macos_*.dart` is kept (a data model)',
-      () {
-        // The implementation-file convention upstream `_plus` packages
-        // use is `<base>_<platform>.dart` (e.g. `device_info_plus_macos.dart`).
-        // The pruner matches that *suffix* and drops it. Data classes
-        // named with a *prefix* (e.g. `macos_device_info.dart`) are
-        // plain data — no platform-specific imports — and stay.
-        // Apple-shared `_ios.dart` and `ios_*` both stay.
-        final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
-        final Directory libSrc =
-            sourceDir.childDirectory('lib').childDirectory('src')
-              ..createSync(recursive: true);
-        libSrc.childFile('gadget_macos.dart').writeAsStringSync('// macos impl\n');
-        libSrc.childFile('gadget_ios.dart').writeAsStringSync('// ios impl\n');
-        final Directory modelDir = libSrc.childDirectory('model')
-          ..createSync();
-        modelDir.childFile('macos_device_info.dart').writeAsStringSync('// macos data\n');
-        modelDir.childFile('ios_device_info.dart').writeAsStringSync('// ios data\n');
-
-        final PluginSource source =
-            SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-        final Directory out = fs.directory('/out/gadget_watchos');
-        final ScaffoldResult result =
-            Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-                .scaffold(source: source, outputDirectory: out);
-
-        expect(result.prunedDartFiles, contains('src/gadget_macos.dart'));
-        expect(result.prunedDartFiles, isNot(contains('src/gadget_ios.dart')));
-        expect(
-          result.prunedDartFiles,
-          isNot(contains('src/model/macos_device_info.dart')),
-          reason:
-              'Prefix form is a data class, not a platform impl — keep it.',
-        );
-        expect(
-          result.prunedDartFiles,
-          isNot(contains('src/model/ios_device_info.dart')),
-        );
-
-        final Directory outSrc = out.childDirectory('lib').childDirectory('src');
-        expect(outSrc.childFile('gadget_macos.dart').existsSync(), isFalse);
-        expect(outSrc.childFile('gadget_ios.dart').existsSync(), isTrue);
-        expect(outSrc.childDirectory('model').childFile('macos_device_info.dart').existsSync(), isTrue);
-      },
-    );
   });
 
   group('SourceAnalyzer modern layouts', () {
@@ -674,38 +436,6 @@ flutter:
       );
     });
 
-    testWithoutContext('SPM Package.swift is excluded from the generated package', () {
-      final Directory dir = fs.directory('/p')..createSync();
-      dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: gadget_ios
-flutter:
-  plugin:
-    platforms:
-      ios:
-        pluginClass: GadgetPlugin
-''');
-      final Directory spm = dir
-          .childDirectory('ios')
-          .childDirectory('gadget_ios')
-          .childDirectory('Sources')
-          .childDirectory('gadget_ios')
-        ..createSync(recursive: true);
-      spm.childFile('GadgetPlugin.swift').writeAsStringSync('import Flutter\n');
-      // A stray Package.swift inside the resolved sources dir must be
-      // filtered out by the scaffolder, not copied into Classes/.
-      spm.childFile('Package.swift').writeAsStringSync('// swift-tools-version:5.9\n');
-      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      final Directory out = fs.directory('/out/gadget_watchos');
-
-      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-          .scaffold(source: source, outputDirectory: out);
-
-      final Directory watchosClasses = out.childDirectory('watchos').childDirectory('Classes');
-      expect(watchosClasses.childFile('GadgetPlugin.swift').existsSync(), isTrue);
-      expect(watchosClasses.childFile('Package.swift').existsSync(), isFalse,
-          reason: 'SPM manifest must not be copied into Classes/');
-    });
-
     testWithoutContext('strips federated Apple impl suffixes for the output name', () {
       for (final (String src, String want) in <(String, String)>[
         ('vidbox_avfoundation', 'vidbox_watchos'),
@@ -787,8 +517,10 @@ flutter:
           reason: 'range constraint must be quoted or YAML parsing fails');
     });
 
-    testWithoutContext('FFI source → generic buildable native federated skeleton', () {
-      // Synthetic fixture — the CLI is plugin-agnostic, so tests are too.
+    testWithoutContext('FFI / native-assets source → same FFI scaffold', () {
+      // A dart:ffi / native-assets source has no copyable method-channel
+      // code; the porter emits the standard FFI scaffold for it like any
+      // other source (no findings, since there is no native code to scan).
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
 name: acme_foundation
@@ -804,10 +536,7 @@ flutter:
         dartPluginClass: AcmeFoundation
 ''');
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      expect(s.ffiNativeAssets, isTrue);
       expect(s.outputPackageName, 'acme_watchos');
-      expect(s.pluginClass, 'AcmePlugin');
-      expect(s.dartPluginClass, 'AcmeWatchos');
 
       final Directory out = fs.directory('/out/acme_watchos');
       final ScaffoldResult r = Scaffolder(
@@ -817,54 +546,20 @@ flutter:
       ).scaffold(source: s, outputDirectory: out);
       expect(r.findings, isEmpty);
 
-      // Dart: federated subclass that compiles (inherits the interface's
-      // throwing defaults). No hand-written implementation in the CLI.
-      final String dart = out
-          .childDirectory('lib')
-          .childFile('acme_watchos.dart')
-          .readAsStringSync();
-      expect(dart, contains('AcmeWatchos extends AcmePlatform'));
-      expect(dart, contains('AcmePlatform.instance = AcmeWatchos()'));
-      expect(dart, isNot(contains('invokeMethod')));
-
-      // Swift: stub only — returns FlutterMethodNotImplemented.
-      final String swift = out
-          .childDirectory('watchos')
-          .childDirectory('Classes')
-          .childFile('AcmePlugin.swift')
-          .readAsStringSync();
-      expect(swift, contains('result(FlutterMethodNotImplemented)'));
-      expect(swift, contains('TODO(porter)'));
-      expect(swift, isNot(contains('NSSearchPathForDirectoriesInDomains')));
-
       final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
       expect(pubspec, contains('name: acme_watchos'));
-      expect(pubspec, contains('acme_platform_interface: ^2.1.0'));
-      expect(pubspec, contains('pluginClass: AcmePlugin'));
+      expect(pubspec, contains('ffiPlugin: true'));
       expect(pubspec, contains('dartPluginClass: AcmeWatchos'));
+      expect(pubspec, contains('acme_platform_interface: ^2.1.0'));
 
-      final String report =
-          out.childFile('PORTING_REPORT.md').readAsStringSync();
-      expect(report, contains('native federated'));
-      expect(report, contains('BUILDABLE SKELETON'));
-      expect(report, contains('plugins/packages/acme_watchos'));
-
-      // A runnable watchOS-only example ships with the skeleton.
-      final String exPubspec = out
-          .childDirectory('example')
-          .childFile('pubspec.yaml')
-          .readAsStringSync();
-      expect(exPubspec, contains('name: acme_example'));
-      expect(exPubspec, contains('acme: any'));
-      expect(exPubspec, contains('acme_watchos:\n    path: ../'));
-      expect(
-        out.childDirectory('example').childDirectory('lib').childFile('main.dart').existsSync(),
-        isTrue,
-      );
+      final Directory classes =
+          out.childDirectory('watchos').childDirectory('Classes');
+      expect(classes.childFile('acme_watchos_ffi.h').existsSync(), isTrue);
+      expect(classes.childFile('acme_watchos_ffi.m').existsSync(), isTrue);
     });
 
     testWithoutContext(
-        'modular multi-target SwiftPM: copies every sibling target, drops macOS, '
+        'modular multi-target SwiftPM: analyzer resolves it; scaffold stays FFI, '
         'preserves structure, collapses into one module', () {
       // Synthetic fixture mirroring the modern flutter/packages modular
       // SwiftPM layout (a Swift API target + Objective-C `_objc` core +
@@ -967,73 +662,33 @@ final class GizmoPlugin: NSObject {
         ..writeAsStringSync('@import Cocoa;\n');
 
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      // The analyzer still resolves the modular multi-target layout (used to
+      // find every native file to scan for the report).
       expect(s.isMultiTargetSpm, isTrue);
       expect(s.outputPackageName, 'gizmo_watchos');
-      expect(s.pluginClass, 'GizmoPlugin');
-
-      final Directory out = fs.directory('/out/gizmo_watchos');
-      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-          .scaffold(source: s, outputDirectory: out);
-
-      final Directory classes =
-          out.childDirectory('watchos').childDirectory('Classes');
-
-      // Every kept target copied, internal structure preserved.
-      final String swift = classes
-          .childDirectory('gizmo_avfoundation')
-          .childFile('GizmoPlugin.swift')
-          .readAsStringSync();
-      final String core = classes
-          .childDirectory('gizmo_avfoundation_objc')
-          .childFile('GizmoCore.m')
-          .readAsStringSync();
-      expect(
-        classes
-            .childDirectory('gizmo_avfoundation_objc')
-            .childDirectory('include')
-            .childDirectory('gizmo_avfoundation_objc')
-            .childFile('GizmoCore.h')
-            .existsSync(),
-        isTrue,
-        reason: 'modular include/ headers must keep their path',
-      );
-      final String view = classes
-          .childDirectory('gizmo_avfoundation_ios')
-          .childFile('GizmoView.m')
-          .readAsStringSync();
-
-      // macOS-only target dropped — watchOS uses the iOS sibling.
-      expect(classes.childDirectory('gizmo_avfoundation_macos').existsSync(),
-          isFalse);
       expect(s.spmSourcesRoot, isNotNull);
 
-      // Swift: os(iOS) widened to watchOS; the canImport guard is kept (it
-      // self-disables under one CocoaPods module, exposing the ObjC
-      // symbols via the shared umbrella instead).
-      expect(swift, contains('#if (os(iOS) || os(watchOS))'));
-      expect(swift, contains('#if canImport(gizmo_avfoundation_objc)'));
+      final Directory out = fs.directory('/out/gizmo_watchos');
+      final ScaffoldResult r = Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'T',
+      ).scaffold(source: s, outputDirectory: out);
 
-      // ObjC: TARGET_OS_IOS widened so watchOS takes the iOS branch; the
-      // cross-target relative import is untouched (resolves because the
-      // structure is preserved).
-      expect(core, contains('#if (TARGET_OS_IOS || TARGET_OS_WATCH)'));
-      expect(core, contains('#import "./include/gizmo_avfoundation_objc/GizmoCore.h"'));
+      // The output is an FFI scaffold — none of the source targets are copied.
+      final Directory classes =
+          out.childDirectory('watchos').childDirectory('Classes');
+      expect(classes.childFile('gizmo_watchos_ffi.h').existsSync(), isTrue);
+      expect(classes.childDirectory('gizmo_avfoundation').existsSync(), isFalse);
       expect(
-        view,
-        contains(
-            '#import "../gizmo_avfoundation_objc/include/gizmo_avfoundation_objc/GizmoCore.h"'),
+        out.childDirectory('watchos').childFile('gizmo_watchos.podspec').existsSync(),
+        isFalse,
       );
+      expect(out.childFile('pubspec.yaml').readAsStringSync(), contains('ffiPlugin: true'));
 
-      // Podspec collapses the targets into one module the way the
-      // upstream CocoaPods podspec does.
-      final String podspec = out
-          .childDirectory('watchos')
-          .childFile('gizmo_watchos.podspec')
-          .readAsStringSync();
-      expect(podspec, contains("s.source_files     = 'Classes/**/*.{h,m,mm,swift}'"));
-      expect(
-          podspec, contains("s.public_header_files = 'Classes/**/include/**/*.h'"));
-      expect(podspec, contains("'DEFINES_MODULE' => 'YES'"));
+      // This fixture uses no compatibility-database APIs, so the report has
+      // no findings — the scan ran cleanly across every target.
+      expect(r.findings, isEmpty);
     });
   });
 }

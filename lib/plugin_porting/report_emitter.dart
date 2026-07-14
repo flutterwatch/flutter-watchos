@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/// Builds `PORTING_REPORT.md` from the aggregated [PortingResult]s the
-/// scaffolder collected while transforming a plugin's native sources.
-///
-/// The report is the human-facing half of the porter's "honest about
-/// limits" promise: every method that was stubbed because it touches a
-/// watchOS-incompatible API is listed with the reason and a suggested
-/// action, every flagged-for-review API is called out, and every stripped
-/// iOS-only import is recorded with its source location so a reviewer can
-/// audit the port without re-reading the diff.
+/// Builds `PORTING_REPORT.md` for an FFI scaffold: it explains the watchOS
+/// FFI plugin model and lists the iOS/macOS APIs the source plugin used
+/// (detected against the compatibility database) with their watchOS status,
+/// so the developer knows which functions to implement in the C stub and
+/// which capabilities have no watchOS equivalent.
 library;
 
 import 'compatibility_database.dart';
@@ -22,305 +18,132 @@ import 'source_analyzer.dart';
 class ReportEmitter {
   const ReportEmitter();
 
-  /// Renders the full `PORTING_REPORT.md` body for [source] given the
-  /// per-file [results] produced by the porters. Pass [today] (a
-  /// `YYYY-MM-DD` string) to override the generation date in tests.
-  ///
-  /// [prunedDartFiles] is the source-relative list (under the upstream
-  /// `lib/`) of Dart files the scaffolder dropped because they target a
-  /// non-Apple platform (see `Scaffolder._isCrossPlatformDart`). It is
-  /// surfaced verbatim in the “Cross-platform Dart pruned” section so
-  /// the developer can see what was removed.
+  /// Renders the `PORTING_REPORT.md` body for [source] given the
+  /// compatibility [findings] collected from the source's native code.
   String render({
     required PluginSource source,
-    required List<PortingResult> results,
-    List<String> prunedDartFiles = const <String>[],
+    required List<PortingFinding> findings,
     String? today,
   }) {
-    final all = <PortingFinding>[
-      for (final PortingResult r in results) ...r.findings,
-    ];
-
-    final List<PortingFinding> importStrips = all
-        .where((PortingFinding f) => f.action == FindingAction.importStripped)
-        .toList();
-    final List<PortingFinding> stubFindings = all
-        .where((PortingFinding f) => f.action == FindingAction.stubbedMethod)
-        .toList();
-    final List<PortingFinding> partialFindings = all
-        .where((PortingFinding f) => f.action == FindingAction.flagged)
-        .toList();
-    final List<PortingFinding> disabledFindings = all
-        .where((PortingFinding f) =>
-            f.action == FindingAction.disabledOnWatchos ||
-            f.action == FindingAction.taggedWithTodo)
-        .toList();
-
-    final detectedMethods = <String>{
-      for (final PortingResult r in results) ...r.detectedMethods,
-    };
-    final stubbedMethods = <String>{
-      for (final PortingResult r in results) ...r.stubbedCases,
-    };
-    final partialMethods = <String>{
-      for (final PortingFinding f in partialFindings)
-        if (f.enclosingMethod != null) f.enclosingMethod!,
-    };
-    final List<String> portedMethods = (detectedMethods
-            .difference(stubbedMethods)
-            .difference(partialMethods)
-            .toList())
-      ..sort();
-
-    final int manualReviewCount =
-        partialFindings.length + disabledFindings.length;
-
-    // Type / top-level uses of watchOS-unavailable APIs the porter could
-    // not stub behind a method channel. Pass 5 wrapped each one's
-    // enclosing declaration in `#if !os(watchOS)` / `#if
-    // !TARGET_OS_WATCH`, so the package still compiles on watchOS with
-    // that feature DISABLED. This is a graceful partial port: the
-    // developer can hand-implement these regions later. (A symbol
-    // referenced from many places may still need manual cleanup — flagged
-    // below, not silently broken.)
-    final disabledApis = <String>{
-      for (final PortingFinding f in disabledFindings) f.pattern.name,
-    };
-    final bool hasDisabled = disabledApis.isNotEmpty;
+    // Group findings by API name; each API keeps its note and one example
+    // source location.
+    final byApi = <String, _ApiUse>{};
+    for (final f in findings) {
+      byApi.putIfAbsent(f.pattern.name, () => _ApiUse(f.pattern))
+          .locations
+          .add('${f.fileRelativePath}:${f.line}');
+    }
+    final unsupported = <_ApiUse>[
+      for (final _ApiUse u in byApi.values)
+        if (u.pattern.severity == Severity.unsupported) u,
+    ]..sort((a, b) => a.pattern.name.compareTo(b.pattern.name));
+    final partial = <_ApiUse>[
+      for (final _ApiUse u in byApi.values)
+        if (u.pattern.severity != Severity.unsupported) u,
+    ]..sort((a, b) => a.pattern.name.compareTo(b.pattern.name));
 
     final b = StringBuffer()
       ..writeln('# ${source.outputPackageName} — porting report')
       ..writeln()
-      ..writeln(
-          'Generated by `flutter-watchos plugin port` on ${today ?? _today()}.')
+      ..writeln('Generated by `flutter-watchos plugin port` on ${today ?? _today()}.')
       ..writeln()
-      ..writeln(
-          'Source: `${source.packageName}` ${source.sourceVersion ?? '(no version)'} '
+      ..writeln('Source: `${source.packageName}` ${source.sourceVersion ?? '(no version)'} '
           '(path: `${source.directory.path}`)')
-      ..writeln('Base platform: ${source.sourcePlatform} '
-          '(${_languageLabel(source)})')
+      ..writeln('Base platform: ${source.sourcePlatform} (${_languageLabel(source)})')
       ..writeln('Output: `./${source.outputPackageName}`')
       ..writeln();
 
-    if (hasDisabled) {
-      b
-        ..writeln('> ## ⚠️ Partial watchOS port')
-        ..writeln('>')
-        ..writeln('> This plugin uses ${_oxford(disabledApis.toList()..sort())} '
-            'at type / top-level scope — APIs that **do not exist on '
-            'watchOS**. The porter could not stub these behind a method '
-            'channel, so it wrapped each one’s enclosing declaration in '
-            '`#if !os(watchOS)` / `#if !TARGET_OS_WATCH`. The package still '
-            'compiles on watchOS with **those features disabled**; '
-            'everything else is ported normally. Each disabled region is '
-            'listed under “Disabled on watchOS” below so you can hand-port '
-            'it if watchOS needs that capability. A symbol used from many '
-            'places may still need manual cleanup — verify the build.')
-        ..writeln();
-    } else {
-      b
-        ..writeln('> ✅ No watchOS-incompatible APIs detected at type level — '
-            'the generated package is expected to compile on watchOS '
-            '(still review stubbed/partial items below).')
-        ..writeln();
-    }
-
     b
-      ..writeln('## Summary')
+      ..writeln('## This is an FFI scaffold')
       ..writeln()
-      ..writeln('| Status | Count |')
-      ..writeln('|---|---|')
-      ..writeln('| Methods ported as-is | ${portedMethods.length} |')
-      ..writeln('| Methods stubbed (iOS-only) | ${stubbedMethods.length} |')
-      ..writeln('| Native regions disabled on watchOS | ${disabledFindings.length} |')
-      ..writeln('| watchOS build outlook | '
-          '${hasDisabled ? '⚠️ partial — ${disabledFindings.length} region(s) disabled; verify the build' : '✅ expected to compile'} |')
-      ..writeln('| Manual review items | $manualReviewCount |')
+      ..writeln('Method-channel plugins are not supported on watchOS — a '
+          '`pluginClass:`-only implementation builds, but its channel calls '
+          'throw `MissingPluginException`. The supported plugin model is '
+          '**dart:ffi**, so this package is an FFI scaffold, not a copy '
+          "of the source plugin's native code:")
+      ..writeln()
+      ..writeln('- `watchos/Classes/${source.outputPackageName}_ffi.{h,m}` — the C '
+          'functions to implement (one example symbol is provided so the '
+          'package builds and links immediately).')
+      ..writeln('- `watchos/Package.swift` — the FFI manifest; add the frameworks '
+          'your C code links.')
+      ..writeln('- `lib/${source.outputPackageName}.dart` — the Dart class over the '
+          'platform interface; resolve each C symbol via '
+          '`DynamicLibrary.process()` and override the interface methods.')
+      ..writeln('- `pubspec.yaml` — declares `ffiPlugin: true` and lists your '
+          'exported symbols under `ffiSymbols` (the CLI force-references each '
+          'so it survives the static link).')
       ..writeln();
 
     b
-      ..writeln('## Methods')
+      ..writeln('## APIs the source plugin used')
       ..writeln();
-    if (detectedMethods.isEmpty) {
+    if (findings.isEmpty) {
       b
-        ..writeln('No `case "<method>":` handlers were detected in the source. '
-            'Either the plugin dispatches method calls in a non-standard way '
-            '(review `watchos/Classes/` by hand) or it has no method channel.')
+        ..writeln('No compatibility-database APIs were detected in the source '
+            '(it may be pure-Dart, Pigeon-generated, or FFI already). '
+            "Implement the plugin's capability directly against WatchKit / "
+            'Foundation.')
         ..writeln();
     } else {
-      for (final m in portedMethods) {
+      if (unsupported.isNotEmpty) {
         b
-          ..writeln('### `$m` ✓ ported')
+          ..writeln('### Not available on watchOS')
           ..writeln()
-          ..writeln('No watchOS-incompatible APIs detected in this handler. '
-              'Copied across unchanged.')
-          ..writeln();
-      }
-      for (final String m in (partialMethods.toList()..sort())) {
-        b.writeln('### `$m` ⚠️ partial');
-        b.writeln();
-        for (final PortingFinding f in partialFindings
-            .where((PortingFinding f) => f.enclosingMethod == m)) {
-          b
-            ..writeln(
-                'Source: `${f.fileRelativePath}:${f.line}` (`${f.matchedText}`)')
-            ..writeln('Note: ${_collapse(f.pattern.note)}')
-            ..writeln();
+          ..writeln('These iOS/macOS APIs have **no watchOS equivalent** — the '
+              'capability must be omitted or redesigned (often via the paired '
+              'iPhone):')
+          ..writeln()
+          ..writeln('| API | Used at | Why / watchOS note |')
+          ..writeln('|---|---|---|');
+        for (final u in unsupported) {
+          b.writeln('| ${u.pattern.name} | ${u.locationSummary} | ${_collapse(u.pattern.note)} |');
         }
-      }
-      for (final String m in (stubbedMethods.toList()..sort())) {
-        b.writeln('### `$m` ✗ stubbed');
         b.writeln();
-        for (final PortingFinding f in stubFindings
-            .where((PortingFinding f) => f.enclosingMethod == m)) {
-          b
-            ..writeln(
-                'Source: `${f.fileRelativePath}:${f.line}` (`${f.matchedText}`)')
-            ..writeln('Reason: ${f.pattern.name} — ${_collapse(f.pattern.note)}')
-            ..writeln('Suggested action: leave the stub (callers receive '
-                '`MissingPluginException` on watchOS, which cleanly surfaces '
-                'the limitation) or implement a watchOS-native equivalent if '
-                'one exists.')
-            ..writeln();
+      }
+      if (partial.isNotEmpty) {
+        b
+          ..writeln('### Available, but review')
+          ..writeln()
+          ..writeln('These work on watchOS (often differently than iOS) — '
+              'implement them, checking the note:')
+          ..writeln()
+          ..writeln('| API | Used at | watchOS note |')
+          ..writeln('|---|---|---|');
+        for (final u in partial) {
+          b.writeln('| ${u.pattern.name} | ${u.locationSummary} | ${_collapse(u.pattern.note)} |');
         }
+        b.writeln();
       }
-    }
-
-    b
-      ..writeln('## Imports removed')
-      ..writeln();
-    if (importStrips.isEmpty) {
-      b
-        ..writeln('None. Every `import` in the source compiles on watchOS.')
-        ..writeln();
-    } else {
-      for (final f in importStrips) {
-        b.writeln('- `${f.matchedText}` (`${f.fileRelativePath}:${f.line}`)');
-      }
-      b.writeln();
-    }
-
-    b
-      ..writeln('## Cross-platform Dart pruned')
-      ..writeln();
-    if (prunedDartFiles.isEmpty) {
-      b
-        ..writeln('None. The source ships no Dart files for non-Apple '
-            'platforms — nothing had to be removed.')
-        ..writeln();
-    } else {
-      b
-        ..writeln('The upstream package bundles Dart implementations for '
-            'platforms a `_watchos` federated package does not target '
-            '(Linux / Windows / Web / macOS / Android). These files are '
-            'unreachable at runtime on watchOS (the registrar loads only '
-            'this package’s watchOS plugin class) and their transitive '
-            'imports (`package:web`, `flutter_web_plugins`, `win32`, '
-            'etc.) are not in the generated `pubspec.yaml` — shipping '
-            'them would inflate the package and break `pana` / '
-            '`dart pub publish` analysis. The following paths (relative '
-            'to the source `lib/`) were dropped; `import`/`export` '
-            'directives that referenced them in the remaining files '
-            'were replaced with `// (pruned …)` placeholders so line '
-            'numbers stay stable:')
-        ..writeln();
-      for (final relPath in prunedDartFiles) {
-        b.writeln('- `lib/$relPath`');
-      }
-      b.writeln();
-    }
-
-    b
-      ..writeln('## Disabled on watchOS')
-      ..writeln();
-    if (disabledFindings.isEmpty) {
-      b
-        ..writeln('None. No type-level watchOS-incompatible API was found; '
-            'nothing had to be compiled out.')
-        ..writeln();
-    } else {
-      b
-        ..writeln('Each enclosing declaration below was wrapped in '
-            '`#if !os(watchOS)` / `#if !TARGET_OS_WATCH` so the package '
-            'builds on watchOS **without that feature**. To support it on '
-            'watchOS, replace the disabled code with a watchOS-capable '
-            'implementation (or accept the feature is unavailable on '
-            'watchOS).')
-        ..writeln()
-        ..writeln('| API | Where | Matched | Why it cannot run on watchOS |')
-        ..writeln('|---|---|---|---|');
-      for (final f in disabledFindings) {
-        b.writeln('| ${f.pattern.name} | `${f.fileRelativePath}:${f.line}` '
-            '| `${f.matchedText}` | ${_collapse(f.pattern.note)} |');
-      }
-      b.writeln();
-    }
-
-    b
-      ..writeln('## Manual review items')
-      ..writeln();
-    if (manualReviewCount == 0) {
-      b
-        ..writeln('None flagged automatically. You should still skim '
-            '`watchos/Classes/` — regex-based porting is best-effort and '
-            'cannot catch every obfuscated API use.')
-        ..writeln();
-    } else {
-      var n = 1;
-      for (final f in partialFindings) {
-        b.writeln('${n++}. `${f.fileRelativePath}:${f.line}` — '
-            '${f.pattern.name} (${_severityWord(f.pattern.severity)}). '
-            '${_collapse(f.pattern.note)}');
-      }
-      for (final f in disabledFindings) {
-        b.writeln('${n++}. `${f.fileRelativePath}:${f.line}` — '
-            '${f.pattern.name} disabled on watchOS (enclosing declaration '
-            'compiled out behind `#if !os(watchOS)`/`#if !TARGET_OS_WATCH`). '
-            'Hand-port if watchOS needs this capability.');
-      }
-      b.writeln();
     }
 
     b
       ..writeln('## Checklist')
       ..writeln()
-      ..writeln('- [ ] Read every `✗ stubbed` method above and confirm '
-          'returning `FlutterMethodNotImplemented` is acceptable on watchOS.')
-      ..writeln('- [ ] Review every `⚠️ partial` method against a real Apple '
-          'Watch (behaviour differs from iOS).')
-      ..writeln('- [ ] Confirm the removed imports were not load-bearing for '
-          'still-supported code paths.')
-      ..writeln('- [ ] `flutter-watchos build watchos --simulator --debug` '
-          "from the plugin's example app compiles the generated registrant.")
+      ..writeln('- [ ] Declare your C functions in '
+          '`watchos/Classes/${source.outputPackageName}_ffi.h` and implement '
+          'them in the `.m`, one per platform-interface method you support.')
+      ..writeln('- [ ] List every exported symbol under `ffiSymbols` in '
+          '`pubspec.yaml`, and the frameworks you link in `Package.swift`.')
+      ..writeln('- [ ] Add a `lookupFunction` binding per symbol in the Dart '
+          '`Bindings` class and override the platform-interface methods.')
+      ..writeln('- [ ] Add the package to a watchOS app (`flutter-watchos '
+          'create` one if needed), build for `watchsimulator`, then `nm` the '
+          'binary to confirm your `ffiSymbols` are present (type `T`).')
       ..writeln('- [ ] Bump the version and update `CHANGELOG.md` before '
           'publishing.')
       ..writeln()
       ..writeln('---')
       ..writeln()
-      ..writeln('Manual review required. Read this report top-to-bottom '
-          'before publishing `${source.outputPackageName}`.');
+      ..writeln('See the finished plugins in the `flutterwatch/plugins` repo '
+          '(e.g. `path_provider_watchos`, `battery_plus_watchos`) for worked '
+          'examples of this exact shape.');
 
     return b.toString();
   }
 
-  /// Compatibility-DB notes are wrapped multi-line strings. The report is
-  /// Markdown where soft-wrapped prose reads better as one line.
   String _collapse(String note) =>
       note.replaceAll('\n', ' ').replaceAll(RegExp(r' {2,}'), ' ').trim();
-
-  /// `[A]`→`A`, `[A,B]`→`A and B`, `[A,B,C]`→`A, B and C`.
-  String _oxford(List<String> items) {
-    if (items.length == 1) {
-      return items.first;
-    }
-    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
-  }
-
-  String _severityWord(Severity s) => switch (s) {
-        Severity.unsupported => 'unsupported',
-        Severity.partial => 'partial',
-        Severity.info => 'info',
-      };
 
   String _languageLabel(PluginSource source) => switch (source.sourceLanguage) {
         SourceLanguage.swift => 'Swift',
@@ -335,5 +158,22 @@ class ReportEmitter {
     final String mm = now.month.toString().padLeft(2, '0');
     final String dd = now.day.toString().padLeft(2, '0');
     return '$yyyy-$mm-$dd';
+  }
+}
+
+/// One compatibility-database API the source plugin used, with every source
+/// location it appeared at.
+class _ApiUse {
+  _ApiUse(this.pattern);
+  final ApiPattern pattern;
+  final List<String> locations = <String>[];
+
+  /// The first location, plus a `(+N more)` suffix when there are others.
+  String get locationSummary {
+    if (locations.isEmpty) {
+      return '—';
+    }
+    final first = '`${locations.first}`';
+    return locations.length == 1 ? first : '$first (+${locations.length - 1} more)';
   }
 }

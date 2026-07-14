@@ -398,8 +398,7 @@ List<String> auditPluginsWithoutWatchosSupport({
 /// only a method-channel implementation (`pluginClass:` without
 /// `ffiPlugin: true`).
 ///
-/// The flutter-watchos embedder has no method-channel plugin registrar — the
-/// watch Flutter.framework exposes only the C engine ABI — so such a plugin's
+/// Method-channel plugins are not supported on watchOS, so such a plugin's
 /// native code is never compiled into the watch app: the build succeeds but
 /// every channel call fails at runtime (`MissingPluginException`). FFI plugins
 /// (`ffiPlugin: true` + `ffiSymbols`) are the supported model; see
@@ -547,9 +546,9 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
     globals.logger.printWarning(unsupported.join('\n'));
   }
 
-  // A `watchos:` plugin that is method-channel-only can't run either — the
-  // embedder has no plugin registrar. Without this warning the build stays
-  // green and the first hint is a runtime MissingPluginException.
+  // A `watchos:` plugin that is method-channel-only can't run either —
+  // method channels are not supported on watchOS. Without this warning the
+  // build stays green and the first hint is a runtime MissingPluginException.
   final List<String> methodChannelOnly = warnMethodChannelOnlyWatchosPlugins(
     plugins: plugins,
   );

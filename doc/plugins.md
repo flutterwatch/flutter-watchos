@@ -54,33 +54,51 @@ dependencies:
 ## Writing a watchOS plugin
 
 Follow the [federated plugin](https://docs.flutter.dev/packages-and-plugins/developing-packages#federated-plugins)
-convention — a `<name>_watchos` package that endorses itself as the watchOS
-implementation of `<name>`:
+convention — a `<name>_watchos` package that implements `<name>` for the
+watch.
 
-```sh
-flutter-watchos create --template=plugin --platforms=watchos my_plugin_watchos
-```
+watchOS plugins ship native code via **dart:ffi**. Method-channel plugins
+are not supported: a `watchos:` block that declares only `pluginClass:`
+builds, but every channel call throws `MissingPluginException` at runtime
+(`build`/`run` warn when they see one). The FFI model:
 
-Native code is Swift compiled into the watch target; talk to it from Dart
-via **FFI** (the `flutter_watchos` package is the reference for this
-pattern — synchronous calls, no method-channel plumbing). Method channels
-also work through the engine's platform messenger if you prefer them for
-async APIs.
+1. **Native** — `watchos/Classes/<name>_ffi.{h,m}` exports C functions
+   marked `__attribute__((visibility("default"))) __attribute__((used))`.
+   The CLI compiles `.m`/`.mm`/`.c` sources and statically links them into
+   the watch binary.
+2. **Manifest** — `watchos/Package.swift` declares the frameworks to link.
+3. **Dart** — a class over the plugin's platform interface resolves the
+   symbols via `DynamicLibrary.process()` and registers in `registerWith()`.
 
-Declare the platform in the plugin's `pubspec.yaml`:
+Declare the model in the plugin's `pubspec.yaml`:
 
 ```yaml
 flutter:
   plugin:
+    implements: my_plugin
     platforms:
       watchos:
-        pluginClass: MyPluginWatchos
+        ffiPlugin: true
+        dartPluginClass: MyPluginWatchos
+        ffiSymbols:
+          - my_plugin_watchos_do_thing
 ```
+
+`ffiSymbols` lists every exported C function; the CLI force-references
+each so it survives the static link. Finished examples live in the
+[flutterwatch/plugins](https://github.com/flutterwatch/plugins) repo —
+`path_provider_watchos` is the reference, and its `AUTHORING.md` walks
+through the full recipe.
 
 ## Porting an existing iOS plugin
 
-`flutter-watchos plugin port` will scaffold a federated `*_watchos` package
-from an existing iOS/macOS plugin. It is **not yet available** in the
-current build — for now, start from `create --template=plugin` and copy the
-relevant native code, replacing UIKit APIs with WatchKit/SwiftUI
-equivalents.
+`flutter-watchos plugin port` scaffolds a federated `*_watchos` FFI
+package from an existing iOS/macOS plugin, and generates a
+`PORTING_REPORT.md` mapping the source's API usage to watchOS
+availability:
+
+```sh
+flutter-watchos plugin port --from-pub url_launcher_ios
+```
+
+See [plugin-porting.md](plugin-porting.md) for the full workflow.
