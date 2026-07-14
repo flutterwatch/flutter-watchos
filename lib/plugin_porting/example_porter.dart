@@ -163,31 +163,41 @@ Future<void> main() => integrationDriver();
     required File upstreamExamplePubspec,
     required bool includeIntegrationTest,
   }) {
-    final Map<String, String> extras = extraHostedDeps(
-      upstreamExamplePubspec.existsSync()
-          ? upstreamExamplePubspec.readAsStringSync()
-          : '',
-      base: source.basePackageName,
-      output: source.outputPackageName,
-    );
+    final String yaml = upstreamExamplePubspec.existsSync()
+        ? upstreamExamplePubspec.readAsStringSync()
+        : '';
     return buildPubspec(
       exampleName: exampleName,
       base: source.basePackageName,
       output: source.outputPackageName,
-      extraHostedDeps: extras,
+      extraHostedDeps: extraHostedDeps(yaml,
+          base: source.basePackageName,
+          output: source.outputPackageName),
+      extraHostedDevDeps: extraHostedDeps(yaml,
+          section: 'dev_dependencies',
+          base: source.basePackageName,
+          output: source.outputPackageName),
       includeIntegrationTest: includeIntegrationTest,
     );
   }
 
-  /// Extracts the simple hosted dependencies (name → version string) from an
-  /// upstream example's [pubspecYaml], excluding the app-facing plugin, the
-  /// generated `*_watchos` package, and `flutter` (all wired separately), and
-  /// dropping every non-hosted (path/git/sdk) dependency.
+  /// Extracts the simple hosted dependencies (name → version string) from
+  /// [section] of an upstream example's [pubspecYaml], excluding the app-facing
+  /// plugin, the generated `*_watchos` package, the SDK packages we wire
+  /// ourselves, and dropping every non-hosted (path/git/sdk) dependency.
   static Map<String, String> extraHostedDeps(
     String pubspecYaml, {
+    String section = 'dependencies',
     required String base,
     required String output,
   }) {
+    const wiredSdkPackages = <String>{
+      'flutter',
+      'flutter_test',
+      'integration_test',
+      'flutter_lints',
+      'flutter_driver',
+    };
     final extras = <String, String>{};
     if (pubspecYaml.trim().isEmpty) {
       return extras;
@@ -198,14 +208,14 @@ Future<void> main() => integrationDriver();
     } on YamlException {
       return extras;
     }
-    final Object? deps = doc?['dependencies'];
+    final Object? deps = doc?[section];
     if (deps is YamlMap) {
       for (final MapEntry<dynamic, dynamic> entry in deps.entries) {
         final name = '${entry.key}';
         if (entry.value is String &&
             name != base &&
             name != output &&
-            name != 'flutter') {
+            !wiredSdkPackages.contains(name)) {
           extras[name] = '${entry.value}';
         }
       }
@@ -220,6 +230,7 @@ Future<void> main() => integrationDriver();
     required String output,
     required Map<String, String> extraHostedDeps,
     required bool includeIntegrationTest,
+    Map<String, String> extraHostedDevDeps = const <String, String>{},
   }) {
     final buffer = StringBuffer()
       ..writeln('name: $exampleName')
@@ -237,7 +248,9 @@ Future<void> main() => integrationDriver();
       ..writeln('  $output:')
       ..writeln('    path: ../');
     for (final MapEntry<String, String> entry in extraHostedDeps.entries) {
-      buffer.writeln('  ${entry.key}: ${entry.value}');
+      // Quote the constraint: range constraints contain spaces and `<`/`>`,
+      // which are invalid as a bare YAML scalar (e.g. `>=0.13.5 <2.0.0`).
+      buffer.writeln('  ${entry.key}: "${entry.value}"');
     }
     buffer
       ..writeln()
@@ -249,8 +262,13 @@ Future<void> main() => integrationDriver();
         ..writeln('  integration_test:')
         ..writeln('    sdk: flutter');
     }
+    buffer.writeln('  flutter_lints: ^4.0.0');
+    // Hosted dev-dependencies the upstream example declared (its integration
+    // tests may import them, e.g. package_info_plus's test uses device_info_plus).
+    for (final MapEntry<String, String> entry in extraHostedDevDeps.entries) {
+      buffer.writeln('  ${entry.key}: "${entry.value}"');
+    }
     buffer
-      ..writeln('  flutter_lints: ^4.0.0')
       ..writeln()
       ..writeln('flutter:')
       ..writeln('  uses-material-design: true');
