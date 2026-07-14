@@ -50,6 +50,28 @@ dev_dependencies:
         isEmpty,
       );
     });
+
+    test('reads dev_dependencies when asked (integration-test-only deps)', () {
+      const pubspec = '''
+name: package_info_plus_example
+dependencies:
+  package_info_plus:
+    path: ../
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  device_info_plus: ^10.0.0
+''';
+      expect(
+        ExamplePorter.extraHostedDeps(pubspec,
+            section: 'dev_dependencies',
+            base: 'package_info_plus',
+            output: 'package_info_plus_watchos'),
+        <String, String>{'device_info_plus': '^10.0.0'},
+      );
+    });
   });
 
   group('ExamplePorter.buildPubspec', () {
@@ -58,14 +80,20 @@ dev_dependencies:
         exampleName: 'geolocator_example',
         base: 'geolocator',
         output: 'geolocator_watchos',
-        extraHostedDeps: const <String, String>{'baseflow_plugin_template': '^2.0.0'},
+        extraHostedDeps: const <String, String>{
+          'baseflow_plugin_template': '^2.0.0',
+          // A range constraint with spaces/`<`/`>` must be quoted or the
+          // generated pubspec is invalid YAML.
+          'http': '>=0.13.5 <2.0.0',
+        },
         includeIntegrationTest: true,
       );
 
       expect(yaml, contains('name: geolocator_example'));
       expect(yaml, contains('  geolocator: any'));
       expect(yaml, contains('  geolocator_watchos:\n    path: ../'));
-      expect(yaml, contains('  baseflow_plugin_template: ^2.0.0'));
+      expect(yaml, contains('  baseflow_plugin_template: "^2.0.0"'));
+      expect(yaml, contains('  http: ">=0.13.5 <2.0.0"'));
       expect(yaml, contains('  integration_test:\n    sdk: flutter'));
     });
 
