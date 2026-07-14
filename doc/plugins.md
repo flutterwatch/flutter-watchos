@@ -55,7 +55,10 @@ dependencies:
 
 Follow the [federated plugin](https://docs.flutter.dev/packages-and-plugins/developing-packages#federated-plugins)
 convention — a `<name>_watchos` package that implements `<name>` for the
-watch.
+watch. There is no `create --template=plugin` for watchOS (the command
+rejects it): stock Flutter's plugin templates generate method-channel code
+that cannot run on the watch. Start from `flutter-watchos plugin port`
+(below) or author the package by hand as described here.
 
 watchOS plugins ship native code via **dart:ffi**. Method-channel plugins
 are not supported: a `watchos:` block that declares only `pluginClass:`

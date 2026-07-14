@@ -2,17 +2,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter_tools/src/base/file_system.dart';
-import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
-import 'package:flutter_tools/src/template.dart';
 
 import '../watchos_host_mode.dart';
 import 'watchos_app_scaffold.dart';
 import 'watchos_runner.dart';
+
+/// Why `flutter-watchos create` rejects [templateType], or null when the
+/// template is supported.
+///
+/// The plugin templates are rejected outright: stock Flutter's `plugin`
+/// template generates method-channel code and `plugin_ffi` generates a
+/// native-assets build, and neither model can run on watchOS — watchOS
+/// plugins are dart:ffi packages whose C sources the CLI compiles and links
+/// into the watch binary. There is no "new watchOS plugin" template; the
+/// supported paths are `flutter-watchos plugin port` and hand-authoring per
+/// the plugins repo's AUTHORING.md.
+String? watchosCreateTemplateError(String templateType) {
+  if (templateType != 'plugin' && templateType != 'plugin_ffi') {
+    return null;
+  }
+  return 'flutter-watchos create does not support --template=$templateType.\n'
+      'watchOS plugins are dart:ffi packages (method-channel plugins are not '
+      'supported on watchOS), so the stock plugin templates would generate '
+      'code that cannot run on the watch. Instead:\n'
+      '  * Port an existing iOS/macOS plugin:\n'
+      '      flutter-watchos plugin port --from-pub <package>\n'
+      '  * Author one from scratch following AUTHORING.md in\n'
+      '    https://github.com/flutterwatch/plugins\n'
+      'For plugins that target other platforms, use stock `flutter create`.';
+}
 
 class WatchosCreateCommand extends CreateCommand {
   WatchosCreateCommand({required super.verboseHelp}) {
@@ -33,11 +56,18 @@ class WatchosCreateCommand extends CreateCommand {
     final String name = stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
     final String templateType = stringArg('template') ?? 'app';
 
+    // Reject plugin templates before upstream `flutter create` runs, so a
+    // refused create leaves nothing half-scaffolded on disk.
+    final String? templateError = watchosCreateTemplateError(templateType);
+    if (templateError != null) {
+      throwToolExit(templateError);
+    }
+
     // watchOS-only app: build the shared scaffold + watchos/ ourselves. We do
     // NOT delegate to upstream `flutter create` (it can't target watchos and
     // would force an unwanted iOS/Android app), so nothing is generated then
     // stripped — the project is watchOS-only by construction.
-    if (boolArg('watchos-only') && templateType != 'plugin') {
+    if (boolArg('watchos-only')) {
       globals.logger.printStatus('Generating watchOS-only project...');
       WatchosAppScaffold(globals.fs).write(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);
@@ -54,13 +84,6 @@ class WatchosCreateCommand extends CreateCommand {
     if (exitCode != FlutterCommandResult.success()) {
       return exitCode;
     }
-    if (templateType == 'plugin') {
-      return _createPlugin(projectDirPath, name);
-    }
-    return _createApp(projectDirPath, name);
-  }
-
-  Future<FlutterCommandResult> _createApp(String projectDirPath, String name) async {
     await _renderWatchosRunner(projectDirPath, name);
     await _adoptHostMode(projectDirPath);
     return FlutterCommandResult.success();
@@ -122,85 +145,5 @@ class WatchosCreateCommand extends CreateCommand {
       organization: organization,
       developmentTeam: developmentTeam,
     );
-  }
-
-  Future<FlutterCommandResult> _createPlugin(String projectDirPath, String name) async {
-    final String pluginTemplatePath = globals.fs.path.join(
-      Cache.flutterRoot!,
-      '..',
-      'templates',
-      'plugin',
-      'swift',
-      'watchos.tmpl',
-    );
-    final Directory templateDir = globals.fs.directory(pluginTemplatePath);
-    final Directory targetDir = globals.fs.directory(projectDirPath).childDirectory('watchos');
-
-    if (!templateDir.existsSync()) {
-      globals.logger.printError('watchOS plugin template not found at ${templateDir.path}');
-      return FlutterCommandResult.fail();
-    }
-
-    if (!targetDir.existsSync()) {
-      globals.logger.printStatus('Generating watchOS plugin...');
-
-      // Convert name to plugin class: my_plugin → MyPlugin
-      final String pluginClass = name
-          .split('_')
-          .map((String part) => part.isEmpty ? '' : part[0].toUpperCase() + part.substring(1))
-          .join();
-
-      final template = Template(
-        templateDir,
-        templateDir,
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        templateRenderer: globals.templateRenderer,
-      );
-
-      template.render(targetDir, <String, Object>{
-        'projectName': name,
-        'pluginClass': pluginClass,
-        'description': 'A new Flutter watchOS plugin project.',
-      });
-    }
-
-    // Patch pubspec.yaml to add watchOS platform declaration.
-    _patchPluginPubspec(projectDirPath, name);
-
-    return FlutterCommandResult.success();
-  }
-
-  /// Adds watchOS platform entry to the plugin's pubspec.yaml.
-  void _patchPluginPubspec(String projectDirPath, String name) {
-    final File pubspecFile = globals.fs.file(globals.fs.path.join(projectDirPath, 'pubspec.yaml'));
-
-    if (!pubspecFile.existsSync()) {
-      return;
-    }
-
-    String content = pubspecFile.readAsStringSync();
-
-    // Convert name to plugin class.
-    final String pluginClass = name
-        .split('_')
-        .map((String part) => part.isEmpty ? '' : part[0].toUpperCase() + part.substring(1))
-        .join();
-
-    // Add watchOS platform under flutter.plugin.platforms if not already
-    // present.
-    if (!content.contains('watchos:')) {
-      final platformsRegex = RegExp(r'(platforms:\s*\n)', multiLine: true);
-      final Match? match = platformsRegex.firstMatch(content);
-      if (match != null) {
-        final insertion =
-            '${match.group(0)}'
-            '        watchos:\n'
-            '          pluginClass: $pluginClass\n';
-        content = content.replaceFirst(match.group(0)!, insertion);
-        pubspecFile.writeAsStringSync(content);
-        globals.logger.printStatus('Added watchOS platform to pubspec.yaml');
-      }
-    }
   }
 }

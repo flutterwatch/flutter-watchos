@@ -79,6 +79,12 @@ where possible; watchOS-specific behaviour is called out per command.
   `--platforms=watchos` is accepted even though stock Flutter would reject
   it; combined lists like `--platforms=ios,watchos` work too.
 
+  `--template=plugin` / `--template=plugin_ffi` are **not** supported:
+  stock Flutter's plugin templates generate method-channel (or
+  native-assets) code, and neither model runs on watchOS. To create a
+  watchOS plugin, port an existing one (`flutter-watchos plugin port`) or
+  author an FFI package by hand — see [plugins.md](plugins.md).
+
   `create` also wires up the app's **host mode** from the project shape: a
   watchOS-only project is *standalone* (watch-only app inside a thin iOS
   container), while a project with an `ios/` app gets the watch app embedded
