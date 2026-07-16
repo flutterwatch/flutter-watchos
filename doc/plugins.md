@@ -77,6 +77,20 @@ flutter:
         pluginClass: MyPluginWatchos
 ```
 
+### Plugins with native SwiftUI views
+
+A plugin that needs a native rendering surface (video, maps, …) can ship
+SwiftUI **platform-view sources** under `watchos/Views/*.swift` — the CLI
+discovers and compiles them into the app automatically, no configuration
+keys. The Swift side registers a factory per view type through the
+CLI-provided `FlutterWatchOSPluginViews.register(_:factory:)` API from a
+C-callable entry point (an `@_cdecl` listed under `ffiSymbols`), the
+plugin's Dart `registerWith()` invokes that entry point over FFI, and the
+Dart side embeds the view with `WatchPlatformView` from
+`package:flutter_watchos`. See
+[`video_player_watchos`](https://github.com/flutterwatch/plugins) for a
+complete worked example.
+
 ## Porting an existing iOS plugin
 
 `flutter-watchos plugin port` will scaffold a federated `*_watchos` package

@@ -23,6 +23,7 @@ import '../watchos_artifacts.dart';
 import '../watchos_build_info.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
+import 'watchos_plugin_views.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
 /// aware plugin registrations, as a proper build target.
@@ -992,6 +993,10 @@ class NativeWatchosBundle extends Target {
     final sources = <String>[];
     final headerDirs = <String>{};
     final frameworks = <String>{};
+    // Plugins may also ship SwiftUI platform-view sources (any `.swift` under
+    // `watchos/` except the SwiftPM manifest) — compiled per plugin, as the
+    // plugin's own module, further down.
+    final swiftSourcesByPlugin = <String, List<String>>{};
     for (final plugin in plugins) {
       final Directory pluginDir = globals.fs.directory(plugin.packagePath);
       if (!pluginDir.existsSync()) {
@@ -1008,9 +1013,15 @@ class NativeWatchosBundle extends Target {
           headerDirs.add(entity.parent.path);
         }
       }
+      final List<String> swiftSources = collectPluginSwiftViewSources(pluginDir);
+      if (swiftSources.isNotEmpty) {
+        swiftSourcesByPlugin[plugin.name] = swiftSources;
+        // Plugin view code builds SwiftUI views by definition.
+        frameworks.add('SwiftUI');
+      }
       frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
     }
-    if (sources.isEmpty) {
+    if (sources.isEmpty && swiftSourcesByPlugin.isEmpty) {
       return;
     }
     // watchOS plugins virtually always need these; harmless if already linked.
@@ -1046,6 +1057,43 @@ class NativeWatchosBundle extends Target {
         throw Exception('Compiling watchOS plugin source failed');
       }
       objects.add(obj);
+    }
+
+    // Compile each plugin's SwiftUI view sources as that plugin's own module
+    // (so private declarations never collide across plugins), together with
+    // the registration shim that bridges to the runner's
+    // FlutterWatchOSPlatformViewRegisterNativeFactory entry point.
+    if (swiftSourcesByPlugin.isNotEmpty) {
+      final File shim = objDir.childFile('flutter_watchos_plugin_views_shim.swift')
+        ..writeAsStringSync(kPluginViewSupportSwift);
+      for (final MapEntry<String, List<String>> entry in swiftSourcesByPlugin.entries) {
+        final String obj =
+            globals.fs.path.join(objDir.path, '${entry.key}_views.o');
+        final ProcessResult r = await globals.processManager.run(<String>[
+          'xcrun',
+          '-sdk',
+          buildInfo.sdkName,
+          'swiftc',
+          '-target',
+          clangTarget,
+          '-parse-as-library',
+          '-whole-module-optimization',
+          '-module-name',
+          '${entry.key}_views',
+          '-emit-object',
+          '-o',
+          obj,
+          shim.path,
+          ...entry.value,
+        ]);
+        if (r.exitCode != 0) {
+          globals.logger.printError(
+            'Compiling watchOS plugin view sources for ${entry.key} failed:\n${r.stderr}',
+          );
+          throw Exception('Compiling watchOS plugin view sources failed');
+        }
+        objects.add(obj);
+      }
     }
 
     final String archive = globals.fs.path.join(flutterDir.path, 'libflutter_watchos_plugins.a');

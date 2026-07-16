@@ -114,6 +114,42 @@ enum WatchPlatformViewRegistry {
     }
 }
 
+/// C entry point through which PLUGINS register platform-view factories.
+///
+/// A federated watchOS plugin can ship SwiftUI view sources (`watchos/**.swift`
+/// next to its FFI classes); the CLI compiles them into the app and the
+/// plugin's Dart `registerWith()` triggers registration, which lands here.
+/// Plugin code resolves this symbol via `dlsym` — never a compile-time import —
+/// so a plugin built for a newer CLI still links against an app created by an
+/// older one (its views just don't appear, matching
+/// `WatchPlatformView.isSupported` semantics).
+///
+/// `factory` receives (viewType, creationParams) as C strings and returns a
+/// RETAINED object conforming to SwiftUI's `View` (nil to render nothing).
+/// The registration itself hops to the main thread, where the registry lives.
+@_cdecl("FlutterWatchOSPlatformViewRegisterNativeFactory")
+public func FlutterWatchOSPlatformViewRegisterNativeFactory(
+    _ viewType: UnsafePointer<CChar>?,
+    _ factory: (@convention(c) (
+        UnsafePointer<CChar>?, UnsafePointer<CChar>?
+    ) -> UnsafeMutableRawPointer?)?
+) {
+    guard let viewType, let factory else { return }
+    let type = String(cString: viewType)
+    DispatchQueue.main.async {
+        WatchPlatformViewRegistry.register(type) { params in
+            let raw = type.withCString { t in
+                params.withCString { p in factory(t, p) }
+            }
+            guard let raw else { return AnyView(EmptyView()) }
+            let object = Unmanaged<AnyObject>.fromOpaque(raw).takeRetainedValue()
+            guard let view = object as? any View else { return AnyView(EmptyView()) }
+            func erase(_ v: some View) -> AnyView { AnyView(v) }
+            return erase(view)
+        }
+    }
+}
+
 /// Thin, app-independent adapter for watchOS platform views — a pure mirror
 /// of the engine-published slot list, exactly like WatchTextInput above. All
 /// geometry (scroll tracking, culling, hot-restart cleanup) is engine-side.
@@ -196,6 +232,11 @@ final class FlutterRunner: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+
+        // Keep the plugin-view registration entry point alive under
+        // -dead_strip: plugin code reaches it only via dlsym at runtime, which
+        // the linker cannot see, so it needs one visible reference.
+        _ = FlutterWatchOSPlatformViewRegisterNativeFactory
 
         // Play the crown detent click when requested (on the main thread,
         // where crown deltas arrive).
