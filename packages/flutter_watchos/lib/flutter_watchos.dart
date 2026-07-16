@@ -30,3 +30,4 @@ export 'src/scroll_physics.dart' show WatchScrollPhysics, WatchScrollBehavior;
 export 'src/crown_scroll.dart'
     show WatchCrownScroll, WatchCrownScrolling, WatchCrownSensitivity;
 export 'src/crown.dart' show WatchCrown, CrownRotationEvent;
+export 'src/platform_view.dart' show WatchPlatformView, WatchPlatformViewLayer;
