@@ -56,7 +56,10 @@ final class WatchTextInput: ObservableObject {
         let next = buffer.prefix(written).map { f in
             WatchProxyField(
                 id: f.node_id,
-                rect: CGRect(x: f.x, y: f.y, width: f.width, height: f.height),
+                // Engine rects are logical points; overlays place in SwiftUI
+                // points (they differ under FlutterWatchOSContentScale).
+                rect: WatchContentScale.toDisplay(
+                    CGRect(x: f.x, y: f.y, width: f.width, height: f.height)),
                 isObscured: f.obscured)
         }
         if next != fields { fields = next }
@@ -193,11 +196,48 @@ final class WatchPlatformViews: ObservableObject {
                 id: s.view_id,
                 viewType: String(cString: FlutterWatchOSPlatformViewGetType(s.view_id)),
                 params: String(cString: FlutterWatchOSPlatformViewGetParams(s.view_id)),
-                rect: CGRect(x: s.x, y: s.y, width: s.width, height: s.height),
+                // Engine rects are logical points; overlays place in SwiftUI
+                // points (they differ under FlutterWatchOSContentScale).
+                rect: WatchContentScale.toDisplay(
+                    CGRect(x: s.x, y: s.y, width: s.width, height: s.height)),
                 visible: s.visible,
                 belowFrame: FlutterWatchOSPlatformViewGetBelowFrame(s.view_id))
         }
         if next != slots { slots = next }
+    }
+}
+
+/// Content scale: how large the app's LOGICAL coordinate space is relative
+/// to the watch screen. `1.0` (the default) maps one Flutter logical pixel
+/// to one SwiftUI point. Smaller values lay the app out in a proportionally
+/// LARGER logical space rendered smaller — same layout ratio, smaller
+/// components — which lets phone-designed UIs (e.g. a plugin's upstream
+/// example app) fit the watch screen without touching their Dart code.
+///
+/// Set it in the app's Info.plist:
+///
+///     <key>FlutterWatchOSContentScale</key>
+///     <real>0.6</real>
+///
+/// Physical sharpness is unchanged (the rendered pixel count is identical);
+/// only the logical density changes. Touches, the Digital Crown, and the
+/// native overlays (text input, platform views) are converted automatically.
+enum WatchContentScale {
+    /// Parsed once; clamped to a sane range (below ~0.3 text is unreadable).
+    static let value: Double = {
+        guard let number = Bundle.main.object(
+            forInfoDictionaryKey: "FlutterWatchOSContentScale") as? NSNumber
+        else { return 1.0 }
+        return min(max(number.doubleValue, 0.3), 1.0)
+    }()
+
+    /// Engine-published logical rect → SwiftUI points, for overlay placement.
+    static func toDisplay(_ rect: CGRect) -> CGRect {
+        guard value != 1.0 else { return rect }
+        return CGRect(x: rect.origin.x * value,
+                      y: rect.origin.y * value,
+                      width: rect.size.width * value,
+                      height: rect.size.height * value)
     }
 }
 
@@ -225,8 +265,19 @@ final class FlutterRunner: ObservableObject {
         return unsafeBitCast(sym, to: (@convention(c) () -> Bool).self)
     }()
 
-    private(set) var pixelRatio: Double = WKInterfaceDevice.current().screenScale
+    /// Display geometry (SwiftUI points) — what the frame image is framed to.
     private(set) var sizePoints: CGSize = WKInterfaceDevice.current().screenBounds.size
+
+    /// What the ENGINE runs at: the logical space grows by 1/contentScale and
+    /// the pixel ratio shrinks by contentScale, so the physical pixel count
+    /// (logical × ratio) is exactly the screen's either way.
+    private(set) var pixelRatio: Double =
+        WKInterfaceDevice.current().screenScale * WatchContentScale.value
+    private var flutterSize: CGSize {
+        CGSize(width: sizePoints.width / WatchContentScale.value,
+               height: sizePoints.height / WatchContentScale.value)
+    }
+
     private var started = false
 
     func start() {
@@ -247,8 +298,8 @@ final class FlutterRunner: ObservableObject {
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         let running = FlutterWatchOSHostRun(
             Bundle.main.bundlePath,
-            sizePoints.width,
-            sizePoints.height,
+            flutterSize.width,
+            flutterSize.height,
             pixelRatio,
             { context, image in
                 // Hop to the main thread to publish the frame.
@@ -266,15 +317,18 @@ final class FlutterRunner: ObservableObject {
         WatchPlatformViews.shared.start()
     }
 
-    /// Forward one touch sample (logical points, straight from SwiftUI).
+    /// Forward one touch sample (SwiftUI points → engine logical points).
     func touch(at location: CGPoint, ended: Bool) {
-        FlutterWatchOSHostTouch(location.x, location.y, ended)
+        FlutterWatchOSHostTouch(location.x / WatchContentScale.value,
+                                location.y / WatchContentScale.value,
+                                ended)
     }
 
     /// Forward one Digital Crown sample: the change in the SwiftUI
-    /// crown-rotation binding since the previous sample.
+    /// crown-rotation binding since the previous sample. Scaled into logical
+    /// points so the physical scroll feel is identical at any content scale.
     func sendCrownDelta(_ delta: Double) {
-        FlutterWatchOSCrownDelta(delta)
+        FlutterWatchOSCrownDelta(delta / WatchContentScale.value)
     }
 
     /// Main thread: publish the frame and mirror the plugin's status-bar

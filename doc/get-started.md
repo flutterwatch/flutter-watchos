@@ -122,6 +122,26 @@ Press **`R`** for a full restart, or **`q`** to quit. (A physical watch runs
 AOT, so hot reload is a Simulator-only workflow; iterate there, then run
 `--profile`/`--release` on the watch.)
 
+## Fitting phone-designed UIs: content scale
+
+UI designed for a phone often doesn't fit a ~200-logical-pixel watch screen.
+Instead of restyling every widget, you can shrink the whole app
+proportionally — same layout ratio, smaller components — with one setting in
+`watchos/Runner/Info.plist`:
+
+```xml
+<key>FlutterWatchOSContentScale</key>
+<real>0.6</real>
+```
+
+`0.6` means the app lays out in a logical space `1/0.6 ≈ 1.7×` the screen in
+each dimension, rendered at 60% size. Physical sharpness is unchanged (the
+rendered pixel count is identical); touches, the Digital Crown, and native
+overlays are converted automatically. Values are clamped to `0.3 – 1.0`
+(default `1.0`); below ~0.5, expect text to be hard to read at watch
+distance — purpose-built watch UI at the default scale is always the better
+end state, so treat this as a porting aid, not a design strategy.
+
 ## Where to go next
 
 - [commands.md](commands.md) — every supported command with examples
