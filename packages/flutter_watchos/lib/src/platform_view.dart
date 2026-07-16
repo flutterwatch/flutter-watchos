@@ -8,6 +8,27 @@ import 'package:flutter/widgets.dart';
 import 'watchos_ffi_bindings.dart';
 import 'watchos_info_platform.dart' as platform;
 
+/// The composition layer of a [WatchPlatformView], relative to the rendered
+/// Flutter frame. Whichever side is on top also owns the touches — that is a
+/// watchOS platform constraint (SwiftUI has no event forwarding), so pick the
+/// layer by what the view needs:
+///
+///  * [aboveFlutter] — interactive native views (pickers, buttons). The
+///    native view receives touches directly, but no Flutter content can
+///    appear over it.
+///  * [belowFlutter] — display views (gauges, charts, animations) that
+///    Flutter content may overlap: dialogs, snackbars, badges all draw on
+///    top. The native view gets no direct touches; wrap the widget in a
+///    [GestureDetector] to handle interaction in Dart.
+enum WatchPlatformViewLayer {
+  /// The native view is composited on top of the Flutter frame (default).
+  aboveFlutter,
+
+  /// The native view is composited under the Flutter frame; the widget
+  /// punches a transparent hole in the scene so it shows through.
+  belowFlutter,
+}
+
 /// Embeds a native SwiftUI view in the Flutter widget tree on watchOS.
 ///
 /// watchOS platform views are **overlay-composited**: the widget reserves
@@ -39,27 +60,6 @@ import 'watchos_info_platform.dart' as platform;
 /// native view follows its slot and hides when scrolled out of the viewport
 /// or covered by an opaque route.
 ///
-/// The composition layer of a [WatchPlatformView], relative to the rendered
-/// Flutter frame. Whichever side is on top also owns the touches — that is a
-/// watchOS platform constraint (SwiftUI has no event forwarding), so pick the
-/// layer by what the view needs:
-///
-///  * [aboveFlutter] — interactive native views (pickers, buttons). The
-///    native view receives touches directly, but no Flutter content can
-///    appear over it.
-///  * [belowFlutter] — display views (gauges, charts, animations) that
-///    Flutter content may overlap: dialogs, snackbars, badges all draw on
-///    top. The native view gets no direct touches; wrap the widget in a
-///    [GestureDetector] to handle interaction in Dart.
-enum WatchPlatformViewLayer {
-  /// The native view is composited on top of the Flutter frame (default).
-  aboveFlutter,
-
-  /// The native view is composited under the Flutter frame; the widget
-  /// punches a transparent hole in the scene so it shows through.
-  belowFlutter,
-}
-
 /// Because the native view is an overlay above the frame (the default
 /// [WatchPlatformViewLayer.aboveFlutter]):
 ///
@@ -100,10 +100,11 @@ class WatchPlatformView extends LeafRenderObjectWidget {
   /// JSON string). Changing it re-delivers the params to the native side.
   final String creationParams;
 
-  /// Where the native view is composited relative to the Flutter frame. On
-  /// engines that predate the underlay layer, [WatchPlatformViewLayer
-  /// .belowFlutter] silently degrades to the overlay layer (check
-  /// [isUnderlaySupported]).
+  /// Where the native view is composited relative to the Flutter frame.
+  ///
+  /// On engines that predate the underlay layer,
+  /// [WatchPlatformViewLayer.belowFlutter] silently degrades to the overlay
+  /// layer (check [isUnderlaySupported]).
   final WatchPlatformViewLayer layer;
 
   /// Whether the running engine supports platform views (always false off
@@ -124,14 +125,25 @@ class WatchPlatformView extends LeafRenderObjectWidget {
   }
 
   @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderWatchPlatformView(
+  RenderWatchPlatformView createRenderObject(BuildContext context) =>
+      RenderWatchPlatformView(
           viewType: viewType, params: creationParams, layer: layer);
 
   @override
-  void updateRenderObject(BuildContext context, RenderObject renderObject) {
-    (renderObject as _RenderWatchPlatformView)
-        .update(viewType: viewType, params: creationParams, layer: layer);
+  void updateRenderObject(
+      BuildContext context, covariant RenderWatchPlatformView renderObject) {
+    renderObject.update(
+        viewType: viewType, params: creationParams, layer: layer);
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties
+      ..add(StringProperty('viewType', viewType))
+      ..add(StringProperty('creationParams', creationParams, defaultValue: ''))
+      ..add(EnumProperty<WatchPlatformViewLayer>('layer', layer,
+          defaultValue: WatchPlatformViewLayer.aboveFlutter));
   }
 }
 
@@ -164,8 +176,14 @@ class _PlatformViewHost {
   int allocateViewId() => _nextViewId++;
 }
 
-class _RenderWatchPlatformView extends RenderBox {
-  _RenderWatchPlatformView(
+/// The render object behind [WatchPlatformView]: registers the view with the
+/// engine over FFI, reserves the slot in layout, tags its semantics node with
+/// the view id (the engine positions the native overlay from it), and — in
+/// the underlay layer — punches the transparent hole the native view shows
+/// through. Not exported: apps interact with it only via [WatchPlatformView].
+class RenderWatchPlatformView extends RenderBox {
+  /// Creates the render object and registers the view with the engine.
+  RenderWatchPlatformView(
       {required String viewType,
       required String params,
       required WatchPlatformViewLayer layer})
@@ -182,6 +200,9 @@ class _RenderWatchPlatformView extends RenderBox {
   String _viewType;
   String _params;
   WatchPlatformViewLayer _layer;
+
+  /// Last size reported to the engine, to skip redundant FFI on relayouts.
+  Size _reportedSize = Size.zero;
 
   /// Whether this render object punches the transparent hole: only in the
   /// underlay layer, and only when the engine actually honors it — under an
@@ -202,8 +223,9 @@ class _RenderWatchPlatformView extends RenderBox {
     _viewType = viewType;
     _params = params;
     _layer = layer;
-    // Re-create in place: the engine updates type/params/layer and preserves
-    // the published geometry, so no semantics flush is needed afterwards.
+    // Re-create in place: the engine updates type/params/layer for this id
+    // and preserves the published geometry. The semantics update re-publishes
+    // this node so the next engine walk re-associates the slot promptly.
     _PlatformViewHost.instance.bindings.platformViewCreate(
         _viewId, _viewType, _params,
         belowFrame: layer == WatchPlatformViewLayer.belowFlutter);
@@ -224,9 +246,6 @@ class _RenderWatchPlatformView extends RenderBox {
 
   @override
   Size computeDryLayout(BoxConstraints constraints) => constraints.biggest;
-
-  /// Last size reported to the engine, to skip redundant FFI on relayouts.
-  Size _reportedSize = Size.zero;
 
   @override
   void performLayout() {
@@ -282,5 +301,14 @@ class _RenderWatchPlatformView extends RenderBox {
     config
       ..isSemanticBoundary = true
       ..platformViewId = _viewId;
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties
+      ..add(IntProperty('viewId', _viewId))
+      ..add(StringProperty('viewType', _viewType))
+      ..add(EnumProperty<WatchPlatformViewLayer>('layer', _layer));
   }
 }
