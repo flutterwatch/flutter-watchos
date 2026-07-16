@@ -3,6 +3,7 @@
 #if !arch(arm64_32)
 import Foundation
 import CoreGraphics
+import SwiftUI
 import WatchKit
 
 /// One native text-field overlay, positioned in SwiftUI points. App.swift
@@ -75,6 +76,95 @@ final class WatchTextInput: ObservableObject {
     func endEditing() { FlutterWatchOSTextInputEndEditing() }
 }
 
+/// One platform view, positioned in SwiftUI points. App.swift renders the
+/// native view registered for `viewType` at `rect` — above the frame image
+/// (classic overlay) or, when `belowFrame`, under it (the Flutter scene has a
+/// transparent hole there, so Flutter content can draw on top of the view).
+struct WatchPlatformViewSlot: Identifiable, Equatable {
+    let id: Int64
+    let viewType: String
+    let params: String
+    let rect: CGRect
+    let visible: Bool
+    let belowFrame: Bool
+}
+
+/// The app's native platform-view factories, keyed by the `viewType` used by
+/// the Dart `WatchPlatformView` widget (package:flutter_watchos). Register in
+/// the App initializer, BEFORE the Flutter host appears:
+///
+///     WatchPlatformViewRegistry.register("my-gauge") { params in
+///         AnyView(MyGaugeView(params: params))
+///     }
+///
+/// `params` is the widget's `creationParams` string (by convention JSON). A
+/// `viewType` with no registered factory renders nothing.
+enum WatchPlatformViewRegistry {
+    private static var factories: [String: (String) -> AnyView] = [:]
+
+    /// Registers (or replaces) the factory for a view type. Main thread.
+    static func register(_ viewType: String,
+                         factory: @escaping (String) -> AnyView) {
+        factories[viewType] = factory
+    }
+
+    /// Builds the native view for a slot; nil when the type is unregistered.
+    static func view(for viewType: String, params: String) -> AnyView? {
+        factories[viewType].map { $0(params) }
+    }
+}
+
+/// Thin, app-independent adapter for watchOS platform views — a pure mirror
+/// of the engine-published slot list, exactly like WatchTextInput above. All
+/// geometry (scroll tracking, culling, hot-restart cleanup) is engine-side.
+final class WatchPlatformViews: ObservableObject {
+    static let shared = WatchPlatformViews()
+
+    /// The platform views to overlay, kept in sync with the engine via the
+    /// change callback registered in `start()`.
+    @Published var slots: [WatchPlatformViewSlot] = []
+
+    /// Generation last copied from the engine; unchanged means skip the copy.
+    private var lastGeneration: UInt64 = 0
+
+    fileprivate func start() {
+        // The engine invokes this (on the thread that mutated the registry)
+        // whenever a view is created/disposed or a rect changes; hop to main
+        // and refresh.
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        FlutterWatchOSPlatformViewsSetChangeCallback({ context in
+            guard let context else { return }
+            let me = Unmanaged<WatchPlatformViews>.fromOpaque(context)
+                .takeUnretainedValue()
+            DispatchQueue.main.async { me.reload() }
+        }, ctx)
+        reload()
+    }
+
+    /// Pull the current slot list from the engine. Main thread.
+    private func reload() {
+        let generation = FlutterWatchOSPlatformViewsGeneration()
+        if generation != 0 && generation == lastGeneration { return }
+        lastGeneration = generation
+        let count = Int(FlutterWatchOSPlatformViewsCopy(nil, 0))
+        var buffer = [FlutterWatchOSPlatformViewSlot](
+            repeating: FlutterWatchOSPlatformViewSlot(), count: max(count, 0))
+        let written = buffer.withUnsafeMutableBufferPointer { ptr in
+            Int(FlutterWatchOSPlatformViewsCopy(ptr.baseAddress, Int32(ptr.count)))
+        }
+        let next = buffer.prefix(written).map { s in
+            WatchPlatformViewSlot(
+                id: s.view_id,
+                viewType: String(cString: FlutterWatchOSPlatformViewGetType(s.view_id)),
+                params: String(cString: FlutterWatchOSPlatformViewGetParams(s.view_id)),
+                rect: CGRect(x: s.x, y: s.y, width: s.width, height: s.height),
+                visible: s.visible,
+                belowFrame: FlutterWatchOSPlatformViewGetBelowFrame(s.view_id))
+        }
+        if next != slots { slots = next }
+    }
+}
+
 /// Generic glue around the Flutter engine — identical for every app. It starts
 /// the engine, forwards touch and Digital Crown input, displays the frames the
 /// engine produces, and plays the crown detent haptic on request.
@@ -132,6 +222,7 @@ final class FlutterRunner: ObservableObject {
             return
         }
         WatchTextInput.shared.start()
+        WatchPlatformViews.shared.start()
     }
 
     /// Forward one touch sample (logical points, straight from SwiftUI).

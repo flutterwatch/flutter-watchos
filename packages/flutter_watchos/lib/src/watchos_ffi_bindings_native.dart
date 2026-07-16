@@ -101,6 +101,68 @@ class WatchOSNativeBindings {
       .lookupFunction<Void Function(Int32), void Function(int)>(
           'flutter_watchos_crown_set_detent_haptics');
 
+  // --- Platform views (ENGINE symbols, not plugin symbols) ---
+  // These live in libflutter_engine.dylib (FlutterWatchOSPlatformView*), so
+  // they resolve through the same DynamicLibrary.process() lookup but can be
+  // missing under an engine older than the platform-view feature. Resolved as
+  // a bundle behind one try/catch: on an old engine the bundle is null and
+  // every call becomes a no-op instead of throwing mid-frame.
+
+  late final _PlatformViewFns? _platformViewFns = _resolvePlatformViewFns();
+
+  _PlatformViewFns? _resolvePlatformViewFns() {
+    final DynamicLibrary? lib = _lib;
+    if (lib == null) return null;
+    try {
+      return _PlatformViewFns(
+        create: lib.lookupFunction<
+            Void Function(Int64, Pointer<Utf8>, Pointer<Utf8>),
+            void Function(int, Pointer<Utf8>, Pointer<Utf8>)>(
+          'FlutterWatchOSPlatformViewCreate',
+        ),
+        dispose: lib.lookupFunction<Void Function(Int64), void Function(int)>(
+          'FlutterWatchOSPlatformViewDispose',
+        ),
+        create2: _resolveCreate2(lib),
+        setSize: _resolveSetSize(lib),
+      );
+    } on ArgumentError {
+      // Engine predates platform views.
+      return null;
+    }
+  }
+
+  /// Create2 (the underlay layer) shipped after Create: probe it separately
+  /// so an engine with platform views but no underlay support still works
+  /// (belowFrame requests silently fall back to the overlay layer).
+  static void Function(int, Pointer<Utf8>, Pointer<Utf8>, bool)?
+      _resolveCreate2(DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<
+          Void Function(Int64, Pointer<Utf8>, Pointer<Utf8>, Bool),
+          void Function(int, Pointer<Utf8>, Pointer<Utf8>, bool)>(
+        'FlutterWatchOSPlatformViewCreate2',
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  /// SetSize (unclipped-rect support) also shipped after Create; without it
+  /// the engine publishes viewport-clipped rects (views shrink toward the
+  /// screen edge instead of sliding past it) — degraded but functional.
+  static void Function(int, double, double)? _resolveSetSize(
+      DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<Void Function(Int64, Double, Double),
+          void Function(int, double, double)>(
+        'FlutterWatchOSPlatformViewSetSize',
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
   // Public API — override these in fakes for testing.
 
   bool get isWatchOS => _isWatchOS();
@@ -166,4 +228,65 @@ class WatchOSNativeBindings {
   set crownDetentHaptics(bool enabled) {
     if (_lib != null) _crownSetDetentHaptics(enabled ? 1 : 0);
   }
+
+  // --- Platform views ---
+  // Null-safe against [WatchOSNativeBindings.forTesting] AND against an
+  // engine that predates the feature: all three become no-ops.
+
+  /// Whether the running engine exposes the platform-view registry.
+  bool get supportsPlatformViews => _lib != null && _platformViewFns != null;
+
+  /// Whether the running engine supports the underlay layer (Create2).
+  bool get supportsPlatformViewUnderlay =>
+      _lib != null && _platformViewFns?.create2 != null;
+
+  /// Registers platform view [viewId] with the engine registry. With
+  /// [belowFrame] the view is composited under the frame image (underlay);
+  /// on engines that predate Create2 the flag silently degrades to overlay.
+  void platformViewCreate(int viewId, String viewType, String params,
+      {bool belowFrame = false}) {
+    final _PlatformViewFns? fns = _platformViewFns;
+    if (fns == null) return;
+    final Pointer<Utf8> type = viewType.toNativeUtf8();
+    final Pointer<Utf8> paramsPtr = params.toNativeUtf8();
+    try {
+      final void Function(int, Pointer<Utf8>, Pointer<Utf8>, bool)? create2 =
+          fns.create2;
+      if (create2 != null) {
+        create2(viewId, type, paramsPtr, belowFrame);
+      } else {
+        fns.create(viewId, type, paramsPtr);
+      }
+    } finally {
+      malloc.free(type);
+      malloc.free(paramsPtr);
+    }
+  }
+
+  /// Removes platform view [viewId] from the engine registry.
+  void platformViewDispose(int viewId) {
+    _platformViewFns?.dispose(viewId);
+  }
+
+  /// Reports the widget's full layout size (logical units) so the engine can
+  /// publish unclipped rects. No-op on engines without SetSize.
+  void platformViewSetSize(int viewId, double width, double height) {
+    _platformViewFns?.setSize?.call(viewId, width, height);
+  }
+}
+
+/// The resolved engine platform-view entry points, bundled so a single failed
+/// lookup (old engine) disables the whole feature coherently. [create2] is
+/// probed separately — null on engines that predate the underlay layer.
+class _PlatformViewFns {
+  _PlatformViewFns(
+      {required this.create,
+      required this.dispose,
+      this.create2,
+      this.setSize});
+
+  final void Function(int, Pointer<Utf8>, Pointer<Utf8>) create;
+  final void Function(int) dispose;
+  final void Function(int, Pointer<Utf8>, Pointer<Utf8>, bool)? create2;
+  final void Function(int, double, double)? setSize;
 }
