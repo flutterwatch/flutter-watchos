@@ -296,8 +296,8 @@ class RenderWatchPlatformView extends RenderBox {
   @override
   void describeSemanticsConfiguration(SemanticsConfiguration config) {
     super.describeSemanticsConfiguration(config);
-    // The engine's semantics walk harvests nodes tagged with a platformViewId
-    // and positions the native overlay from them.
+    // Tagging the node with the view id is how the engine associates this
+    // box with the native view it positions.
     config
       ..isSemanticBoundary = true
       ..platformViewId = _viewId;
