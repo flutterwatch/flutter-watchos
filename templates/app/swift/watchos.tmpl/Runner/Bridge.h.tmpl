@@ -71,4 +71,34 @@ void FlutterWatchOSTextInputSetText(int32_t node_id, const char* utf8);
 void FlutterWatchOSTextInputSubmitEditing(void);
 void FlutterWatchOSTextInputEndEditing(void);
 
+// -----------------------------------------------------------------------------
+// watchOS platform views. The engine publishes a rect (in logical points) for
+// every WatchPlatformView widget; the host overlays the native SwiftUI view
+// registered for its viewType (see WatchPlatformViewRegistry in
+// FlutterRunner.swift). Same mirror contract as the text input above.
+// -----------------------------------------------------------------------------
+typedef struct {
+  int64_t view_id;
+  double x;       // origin x in logical points
+  double y;       // origin y in logical points
+  double width;   // points
+  double height;  // points
+  bool visible;   // false: keep the native view alive but hidden
+} FlutterWatchOSPlatformViewSlot;
+
+typedef void (*FlutterWatchOSPlatformViewsChangeCallback)(void* context);
+
+int32_t FlutterWatchOSPlatformViewsCopy(FlutterWatchOSPlatformViewSlot* out,
+                                        int32_t max);
+uint64_t FlutterWatchOSPlatformViewsGeneration(void);
+void FlutterWatchOSPlatformViewsSetChangeCallback(
+    FlutterWatchOSPlatformViewsChangeCallback callback,
+    void* context);
+// Owned by the engine, valid until the next Get* call from the same thread.
+const char* FlutterWatchOSPlatformViewGetType(int64_t view_id);
+const char* FlutterWatchOSPlatformViewGetParams(int64_t view_id);
+// True: composite the view UNDER the frame image (the widget punches a
+// transparent hole for it); false: classic overlay above the frame.
+bool FlutterWatchOSPlatformViewGetBelowFrame(int64_t view_id);
+
 #endif  // RUNNER_BRIDGE_H_

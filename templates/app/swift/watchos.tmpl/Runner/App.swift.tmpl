@@ -2,6 +2,18 @@ import SwiftUI
 
 @main
 struct {{pascalCaseProjectName}}App: App {
+    #if !arch(arm64_32)
+    init() {
+        // Native platform views: register a SwiftUI factory for every
+        // `viewType` your Dart code embeds with WatchPlatformView
+        // (package:flutter_watchos). Example:
+        //
+        // WatchPlatformViewRegistry.register("my-gauge") { params in
+        //     AnyView(MyGaugeView(params: params))
+        // }
+    }
+    #endif
+
     var body: some Scene {
         WindowGroup {
             #if arch(arm64_32)
@@ -34,10 +46,15 @@ struct FlutterHostView: View {
     @ObservedObject var runner = FlutterRunner.shared
     // The engine publishes the text-field rects; this is a pure mirror of them.
     @ObservedObject var textInput = WatchTextInput.shared
+    // Likewise for platform-view slots (rects + view types).
+    @ObservedObject var platformViews = WatchPlatformViews.shared
     @State private var crownValue: Double = 0.0
     @FocusState private var isFocused: Bool
     // Which text-field proxy (by semantics node id) currently holds focus.
     @FocusState private var focusedField: Int32?
+    // Per-gesture cache of the frame drag's ownership decision (nil = no
+    // active drag). See the simultaneousGesture below.
+    @State private var dragOwnedByNative: Bool?
 
     var body: some View {
         GeometryReader { _ in
@@ -51,17 +68,42 @@ struct FlutterHostView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .gesture(
+            // MUST be simultaneous, not exclusive: on real hardware an
+            // exclusive zero-distance drag wins the gesture arena against the
+            // internal gestures of overlaid native controls (a SwiftUI Toggle
+            // stopped responding mid-screen on a physical watch; fine on the
+            // simulator, where taps carry no micro-movement). Simultaneity
+            // means this gesture also sees touches that belong to the native
+            // side — `nativeOwnsTouch` drops them so Flutter content behind a
+            // slot never ghost-fires and a tapped proxy field is not
+            // immediately unfocused.
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { runner.touch(at: $0.location, ended: false) }
+                    .onChanged { value in
+                        // Decide ownership ONCE per gesture, at touch-down.
+                        // Slot rects move while Flutter scrolls; re-checking
+                        // against live rects can flip the answer mid-drag and
+                        // strand Flutter with a pointer that never ends.
+                        let owned = dragOwnedByNative ?? {
+                            let o = nativeOwnsTouch(at: value.startLocation)
+                            dragOwnedByNative = o
+                            return o
+                        }()
+                        if owned { return }
+                        runner.touch(at: value.location, ended: false)
+                    }
                     .onEnded { value in
+                        let owned = dragOwnedByNative
+                            ?? nativeOwnsTouch(at: value.startLocation)
+                        dragOwnedByNative = nil
+                        if owned { return }
                         runner.touch(at: value.location, ended: true)
-                        // If this gesture fired, the tap landed OUTSIDE every proxy
-                        // field (a proxy consumes in-field taps). For a tap (small
-                        // drag distance), drop focus: clear SwiftUI focus AND tell
-                        // the engine to unfocus. The watchOS keyboard often clears
-                        // `focusedField` itself when it closes, leaving the Flutter
-                        // field still focused with nothing to clear it; the explicit
+                        // The tap landed outside every native overlay and proxy
+                        // field. For a tap (small drag distance), drop focus:
+                        // clear SwiftUI focus AND tell the engine to unfocus.
+                        // The watchOS keyboard often clears `focusedField`
+                        // itself when it closes, leaving the Flutter field
+                        // still focused with nothing to clear it; the explicit
                         // `endEditing()` (idempotent) covers that. Scrolls/pans
                         // (large translation) leave focus alone.
                         let dragDistance = hypot(value.translation.width,
@@ -90,6 +132,27 @@ struct FlutterHostView: View {
             )
             .onChange(of: crownValue) { oldValue, newValue in
                 runner.sendCrownDelta(newValue - oldValue)
+            }
+            // Platform views (underlay layer). Slots whose widget chose
+            // `layer: .belowFlutter` sit UNDER the frame image; the Flutter
+            // scene keeps a transparent hole at their rect (the frame CGImage
+            // carries alpha), so Flutter content painted above the widget —
+            // dialogs, snackbars, badges — draws ON TOP of the native view.
+            // Touches never reach an underlay view (the frame image above
+            // owns them; interaction is handled in Dart), so hit-testing is
+            // disabled outright to keep routing deterministic.
+            .background {
+                platformViewGroup(platformViews.slots.filter(\.belowFrame))
+                    .allowsHitTesting(false)
+            }
+            // Platform views (overlay layer, the default). The native view
+            // registered for each slot's viewType is overlaid on the Flutter
+            // frame at the rect the engine publishes (tracking
+            // scroll/animation via semantics). Overlay views sit ABOVE all
+            // Flutter content and consume touches inside their rect; the
+            // text-input proxies (next overlay) stay above them.
+            .overlay {
+                platformViewGroup(platformViews.slots.filter { !$0.belowFrame })
             }
             // Text entry. A near-transparent native field is overlaid on each
             // Flutter text field (`textInput.fields`). Because it is present
@@ -160,6 +223,49 @@ struct FlutterHostView: View {
             FlutterRunner.shared.start()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isFocused = true
+            }
+        }
+    }
+
+    /// Whether a touch beginning at `point` belongs to the native side: a
+    /// visible overlay platform view (native controls own their taps) or a
+    /// text-input proxy (the field handles focus itself — ending editing here
+    /// would close the keyboard the tap just opened). Underlay platform views
+    /// are NOT native-owned: they sit below the frame and their interaction
+    /// is handled in Dart.
+    private func nativeOwnsTouch(at point: CGPoint) -> Bool {
+        if platformViews.slots.contains(where: { slot in
+            slot.visible && !slot.belowFrame && slot.rect.contains(point)
+        }) {
+            return true
+        }
+        return textInput.fields.contains { $0.rect.contains(point) }
+    }
+
+    /// The native views for a group of platform-view slots, each positioned
+    /// at its engine-published rect (shared by the underlay and overlay
+    /// layers above). An invisible slot (culled: scrolled out, covered by a
+    /// route) is hidden with opacity, NOT removed from the hierarchy —
+    /// removal would destroy the native view's @State (a toggle would reset
+    /// while a dialog is open); the registry contract is "keep the native
+    /// view alive but hidden".
+    @ViewBuilder
+    private func platformViewGroup(_ slots: [WatchPlatformViewSlot]) -> some View {
+        ForEach(slots) { slot in
+            if let native = WatchPlatformViewRegistry.view(
+                   for: slot.viewType, params: slot.params) {
+                native
+                    // The frame must match the widget's slot exactly; clipped
+                    // so an oversized native view cannot spill over
+                    // surrounding Flutter content.
+                    .frame(width: slot.rect.width, height: slot.rect.height)
+                    .clipped()
+                    // The WHOLE slot is a native hit surface (the documented
+                    // contract), including any transparent parts of the view.
+                    .contentShape(Rectangle())
+                    .position(x: slot.rect.midX, y: slot.rect.midY)
+                    .opacity(slot.visible ? 1 : 0)
+                    .allowsHitTesting(slot.visible)
             }
         }
     }

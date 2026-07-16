@@ -33,4 +33,11 @@ class WatchOSNativeBindings {
   set crownScrollMultiplier(double multiplier) {}
   bool get crownDetentHaptics => true;
   set crownDetentHaptics(bool enabled) {}
+
+  bool get supportsPlatformViews => false;
+  bool get supportsPlatformViewUnderlay => false;
+  void platformViewCreate(int viewId, String viewType, String params,
+      {bool belowFrame = false}) {}
+  void platformViewDispose(int viewId) {}
+  void platformViewSetSize(int viewId, double width, double height) {}
 }

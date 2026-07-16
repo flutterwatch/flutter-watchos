@@ -1,3 +1,15 @@
+## 0.1.0-beta.5
+
+* **New:** `WatchPlatformView` — embeds a native SwiftUI view at its slot in
+  the Flutter layout. Register a factory per `viewType` with
+  `WatchPlatformViewRegistry.register` in the app's runner, then place the
+  widget like any other box. `layer:` picks the composition side:
+  `WatchPlatformViewLayer.aboveFlutter` (default) for interactive native
+  controls, `belowFlutter` to let Flutter content (dialogs, snackbars,
+  badges) draw over the view. `WatchPlatformView.isSupported` and
+  `isUnderlaySupported` report engine support; the widget renders nothing on
+  non-watchOS platforms and on engines that predate the feature.
+
 ## 0.1.0-beta.4
 
 * **Meta:** add pub.dev `topics` and a `documentation` link. No API changes.
