@@ -414,12 +414,19 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
   ApiPattern(
     name: 'FlutterPlatformViews',
     pattern: r'\bFlutterPlatformViewFactory\b|registerViewFactory',
-    severity: Severity.unsupported,
+    severity: Severity.partial,
     note:
-        'Platform views are not supported by the Flutter watchOS embedder — '
-        'there is no native view hierarchy to embed into (watchOS has no '
-        'UIKit view layer). Plugins built around a platform view (webviews, '
-        'maps, native ads) have no watchOS port for that part.',
+        'iOS platform views (FlutterPlatformViewFactory / UIView embedding) '
+        'do not exist on watchOS — there is no UIKit view layer. '
+        'flutter-watchos has its own model instead: the plugin ships SwiftUI '
+        'view sources under watchos/Views/, registers them via '
+        'FlutterWatchOSPluginViews.register from an ffiSymbols entry point, '
+        'and the Dart side embeds them with WatchPlatformView '
+        '(package:flutter_watchos). This part must be REWRITTEN by hand, not '
+        'ported mechanically — see video_player_watchos for a worked '
+        'example. The underlying native view itself must also exist on '
+        'watchOS (AVKit VideoPlayer and MapKit do; WebKit does not, so '
+        'webviews stay impossible).',
   ),
   // ---------------------------------------------------------------------
   // `partial` entries — these compile on watchOS but behave differently or
