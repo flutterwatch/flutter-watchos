@@ -14,14 +14,14 @@ import 'watchos_host_mode.dart';
 import 'watchos_swift_package_manager.dart';
 
 /// Pubspec key, nested under `flutter.plugin.platforms.watchos`, by which an
-/// FFI plugin declares the C symbols it exports for `dart:ffi` lookup. Used to
-/// emit forced link references — see [_collectFfiForcedReferenceSymbols].
+/// FFI plugin declares the C symbols it exports for `dart:ffi` lookup. The
+/// symbols are kept in the binary by `-force_load` of the plugin archive (see
+/// `build_targets/application.dart`); this list documents and validates them.
 const String kWatchosFfiSymbols = 'ffiSymbols';
 
 /// A C identifier: a letter or underscore followed by letters, digits, or
-/// underscores. Declared FFI symbol names are validated against this before
-/// being interpolated into generated C, so a malformed entry can't inject
-/// arbitrary tokens into `GeneratedPluginRegistrant.m`.
+/// underscores. Declared FFI symbol names are validated against this at parse
+/// time, so a malformed pubspec entry is rejected rather than stored.
 final RegExp _cIdentifierPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
 
 const String _swiftPluginRegistryTemplate = '''
@@ -394,88 +394,6 @@ List<String> auditPluginsWithoutWatchosSupport({
   ];
 }
 
-/// Collects the C symbols that must be force-referenced from the Runner so the
-/// static linker keeps them in the binary, in stable declaration order with
-/// duplicates removed.
-///
-/// We only emit forced references for FFI plugins that **ship a Package.swift**:
-/// a CocoaPods-only FFI plugin ships its native code as a *dynamic* framework
-/// whose exports already survive (and force-referencing a symbol that isn't on
-/// the link line would turn a silent no-op into a hard link error).
-List<String> _collectFfiForcedReferenceSymbols(List<WatchosPlugin> plugins) {
-  final seen = <String>{};
-  final ordered = <String>[];
-  for (final plugin in plugins) {
-    if (!plugin.hasFfi() || plugin.ffiSymbols.isEmpty) {
-      continue;
-    }
-    final File packageManifest = globals.fs.file(
-      globals.fs.path.join(plugin.path, 'watchos', 'Package.swift'),
-    );
-    if (!packageManifest.existsSync()) {
-      // CocoaPods-only FFI plugin: dynamic-framework exports already survive.
-      continue;
-    }
-    for (final String symbol in plugin.ffiSymbols) {
-      if (seen.add(symbol)) {
-        ordered.add(symbol);
-      }
-    }
-  }
-  return ordered;
-}
-
-/// Renders the file-scope `extern` prototypes for each FFI symbol in [symbols].
-String _renderFfiForcedReferenceDeclarations(List<String> symbols) {
-  if (symbols.isEmpty) {
-    return '';
-  }
-  final declarations = StringBuffer();
-  for (final symbol in symbols) {
-    declarations.writeln('extern void $symbol(void);');
-  }
-  return '\n'
-      '// FFI plugins resolve their C symbols at runtime via dlsym\n'
-      '// (DynamicLibrary.process()), so nothing in the compiled app references\n'
-      '// them. When such a plugin is linked statically through the generated\n'
-      '// Swift Package Manager umbrella, the linker would drop its unreferenced\n'
-      '// archive member and the symbols would be absent from the binary. The\n'
-      '// references that prevent that are emitted inside the (always-linked,\n'
-      '// always-reachable) registerWithRegistry: method below — see\n'
-      '// _renderFfiForcedReferenceBody. Forward declarations:\n'
-      '$declarations';
-}
-
-/// Renders the statements, emitted *inside* `registerWithRegistry:`, that force
-/// the linker to keep each FFI symbol in [symbols].
-///
-/// The references must live in reachable executable code, not at file scope: a
-/// file-scope `__attribute__((used))` anchor survives compiler dead-code
-/// elimination but is still collected by the linker's `-dead_strip`. Placing
-/// them in `registerWithRegistry:` (called from AppDelegate, rooted via ObjC
-/// metadata) keeps them live. The `__asm__ volatile` sink makes the optimizer
-/// materialize each address at every optimization level (debug AND release/AOT).
-String _renderFfiForcedReferenceBody(List<String> symbols) {
-  if (symbols.isEmpty) {
-    return '';
-  }
-  final references = StringBuffer();
-  for (final symbol in symbols) {
-    references.writeln('    (const void *)&$symbol,');
-  }
-  return '\n'
-      '  // Force the linker to keep the statically-linked FFI plugin archive\n'
-      '  // member(s); see the file-scope note above.\n'
-      '  const void *_flutterWatchosFfiForcedReferences[] = {\n'
-      '$references'
-      '  };\n'
-      '  for (unsigned long _i = 0;\n'
-      '       _i < sizeof(_flutterWatchosFfiForcedReferences) / sizeof(_flutterWatchosFfiForcedReferences[0]);\n'
-      '       _i++) {\n'
-      '    __asm__ volatile("" : : "r"(_flutterWatchosFfiForcedReferences[_i]));\n'
-      '  }\n';
-}
-
 Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   final Directory watchosDir = project.directory.childDirectory('watchos');
   if (!watchosDir.existsSync()) {
@@ -603,73 +521,14 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
 
   globals.logger.printTrace('Generated $registryFile successfully for watchOS');
 
-  // Also generate the ObjC registrant in Runner/ which is what the Xcode
-  // project actually compiles.
-  final Directory runnerDir = watchosDir.childDirectory('Runner');
-  if (runnerDir.existsSync()) {
-    final imports = StringBuffer();
-    final registrations = StringBuffer();
-
-    for (final plugin in plugins) {
-      if (plugin.hasMethodChannel()) {
-        imports.writeln('@import ${plugin.name};');
-        registrations.writeln(
-          // ignore: missing_whitespace_between_adjacent_strings
-          '  [${plugin.pluginClass} registerWithRegistrar:'
-          '[registry registrarForPlugin:@"${plugin.pluginClass}"]];',
-        );
-      }
-    }
-
-    final List<String> ffiForcedSymbols = _collectFfiForcedReferenceSymbols(plugins);
-    final String ffiForcedDeclarations = _renderFfiForcedReferenceDeclarations(ffiForcedSymbols);
-    final String ffiForcedBody = _renderFfiForcedReferenceBody(ffiForcedSymbols);
-
-    final File objcHeader = runnerDir.childFile('GeneratedPluginRegistrant.h');
-    objcHeader.writeAsStringSync(
-      '//\n'
-      '//  Generated file. Do not edit.\n'
-      '//\n'
-      '\n'
-      '#ifndef GeneratedPluginRegistrant_h\n'
-      '#define GeneratedPluginRegistrant_h\n'
-      '\n'
-      '#import <Flutter/Flutter.h>\n'
-      '\n'
-      'NS_ASSUME_NONNULL_BEGIN\n'
-      '\n'
-      '@interface GeneratedPluginRegistrant : NSObject\n'
-      '+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry;\n'
-      '@end\n'
-      '\n'
-      'NS_ASSUME_NONNULL_END\n'
-      '\n'
-      '#endif /* GeneratedPluginRegistrant_h */\n',
-    );
-
-    final File objcImpl = runnerDir.childFile('GeneratedPluginRegistrant.m');
-    objcImpl.writeAsStringSync(
-      '//\n'
-      '//  Generated file. Do not edit.\n'
-      '//\n'
-      '\n'
-      '#import "GeneratedPluginRegistrant.h"\n'
-      '\n'
-      '$imports'
-      '$ffiForcedDeclarations'
-      '\n'
-      '@implementation GeneratedPluginRegistrant\n'
-      '\n'
-      '+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {\n'
-      '$registrations'
-      '$ffiForcedBody'
-      '}\n'
-      '\n'
-      '@end\n',
-    );
-
-    globals.logger.printTrace('Generated ObjC plugin registrant in Runner/');
-  }
+  // No ObjC GeneratedPluginRegistrant is written to Runner/. watchOS plugins
+  // are FFI-only, and the build links their static archive with `-force_load`
+  // (see `build_targets/application.dart`), which keeps every archive member —
+  // so the exported symbols survive without a per-symbol forced-reference
+  // registrant. The old Runner/GeneratedPluginRegistrant.{h,m} was never in the
+  // Xcode Sources phase and had no caller; the slim host-module runner removed
+  // any lingering illusion that it was compiled. Dart-side registration runs
+  // through `dart_plugin_registrant.dart` below.
 
   // Write the watchOS dart plugin registrant now that the native side is fully
   // configured (a second call — the first ran before kernel compilation).

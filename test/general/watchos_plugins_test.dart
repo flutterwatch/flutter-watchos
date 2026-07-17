@@ -244,25 +244,23 @@ void main() {
     });
   });
 
-  group('FFI forced references in GeneratedPluginRegistrant.m', () {
-    // Seeds an app with a single FFI plugin `native_gadget` that declares
-    // `ffiSymbols` and (optionally) ships a watchos/Package.swift, plus the
-    // watchos/Runner/ directory the ObjC registrant is written into.
-    FlutterProject seedFfiProject({
-      required bool hasPackageSwift,
-      List<String> ffiSymbols = const <String>[
-        'native_gadget_init',
-        'native_gadget_version',
-      ],
-    }) {
-      final Directory projectDir = fileSystem.directory('/p')..createSync();
-      projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
-      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+  group('ObjC GeneratedPluginRegistrant is not emitted', () {
+    // watchOS plugins are FFI-only, and the build links their static archive
+    // with `-force_load` (see build_targets/application.dart), which keeps
+    // every member — so the exported symbols survive without a per-symbol
+    // forced-reference registrant. The old Runner/GeneratedPluginRegistrant
+    // .{h,m} was never in the Xcode Sources phase and had no caller, so it is
+    // no longer written.
+    testUsingContext(
+      'no Runner/GeneratedPluginRegistrant.{h,m} is written for an FFI plugin',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
 
-      final Directory pkgDir = fileSystem.directory('/pubcache/native_gadget')
-        ..createSync(recursive: true);
-      final String symbolsYaml = ffiSymbols.map((String s) => '          - $s').join('\n');
-      pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+        final Directory pkgDir = fileSystem.directory('/pubcache/native_gadget')
+          ..createSync(recursive: true);
+        pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
 name: native_gadget
 flutter:
   plugin:
@@ -270,139 +268,41 @@ flutter:
       watchos:
         ffiPlugin: true
         ffiSymbols:
-$symbolsYaml
+          - native_gadget_init
+          - native_gadget_version
 ''');
-      final Directory watchosDir = pkgDir.childDirectory('watchos')..createSync();
-      watchosDir.childFile('native_gadget.podspec').writeAsStringSync('# podspec');
-      if (hasPackageSwift) {
+        final Directory watchosDir = pkgDir.childDirectory('watchos')..createSync();
         watchosDir.childFile('Package.swift').writeAsStringSync(
           'let package = Package(name: "native_gadget")\n',
         );
-      }
 
-      fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-        ..createSync(recursive: true)
-        ..writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'packages': <Map<String, String>>[
-              <String, String>{
-                'name': 'native_gadget',
-                'rootUri': 'file:///pubcache/native_gadget',
-              },
-            ],
-          }),
-        );
-      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-        json.encode(<String, dynamic>{
-          'dependencyGraph': <Map<String, String>>[
-            <String, String>{'name': 'native_gadget'},
-          ],
-        }),
-      );
-      return FlutterProject.fromDirectory(projectDir);
-    }
-
-    String registrantOf(FlutterProject project) => project.directory
-        .childDirectory('watchos')
-        .childDirectory('Runner')
-        .childFile('GeneratedPluginRegistrant.m')
-        .readAsStringSync();
-
-    testUsingContext(
-      'emits a forced reference per symbol for an SPM FFI plugin',
-      () async {
-        final FlutterProject project = seedFfiProject(hasPackageSwift: true);
-        await ensureReadyForWatchosTooling(project);
-
-        final String m = registrantOf(project);
-        // File-scope forward declarations.
-        expect(m, contains('extern void native_gadget_init(void);'));
-        expect(m, contains('extern void native_gadget_version(void);'));
-        // The anchor array + asm sink live INSIDE registerWithRegistry: so the
-        // linker keeps them (a file-scope used-anchor gets dead-stripped).
-        expect(m, contains('const void *_flutterWatchosFfiForcedReferences[]'));
-        expect(m, contains('(const void *)&native_gadget_init,'));
-        expect(m, contains('(const void *)&native_gadget_version,'));
-        expect(
-          m,
-          contains('__asm__ volatile("" : : "r"(_flutterWatchosFfiForcedReferences[_i]));'),
-        );
-        // The array reference must sit within the method body, not at file scope.
-        final int bodyStart = m.indexOf('+ (void)registerWithRegistry:');
-        expect(bodyStart, greaterThanOrEqualTo(0));
-        expect(
-          m.indexOf('_flutterWatchosFfiForcedReferences[] ='),
-          greaterThan(bodyStart),
-          reason: 'anchor array must be emitted inside registerWithRegistry:',
-        );
-      },
-      overrides: <Type, Generator>{
-        FileSystem: () => fileSystem,
-        ProcessManager: () => processManager,
-      },
-    );
-
-    testUsingContext(
-      'emits NO forced references for a CocoaPods-only FFI plugin',
-      () async {
-        // No watchos/Package.swift → resolved via CocoaPods as a dynamic
-        // framework whose exports already survive; forcing a reference to a
-        // symbol that isn't on the link line would be a hard link error.
-        final FlutterProject project = seedFfiProject(hasPackageSwift: false);
-        await ensureReadyForWatchosTooling(project);
-
-        final String m = registrantOf(project);
-        expect(m, isNot(contains('_flutterWatchosFfiForcedReferences')));
-        expect(m, isNot(contains('native_gadget_init')));
-      },
-      overrides: <Type, Generator>{
-        FileSystem: () => fileSystem,
-        ProcessManager: () => processManager,
-      },
-    );
-
-    testUsingContext(
-      'drops symbols that are not valid C identifiers',
-      () async {
-        final FlutterProject project = seedFfiProject(
-          hasPackageSwift: true,
-          ffiSymbols: <String>['good_symbol', 'bad symbol', '0bad', 'also_good'],
-        );
-        await ensureReadyForWatchosTooling(project);
-
-        final String m = registrantOf(project);
-        expect(m, contains('(const void *)&good_symbol,'));
-        expect(m, contains('(const void *)&also_good,'));
-        // The invalid entries must never reach the generated C.
-        expect(m, isNot(contains('bad symbol')));
-        expect(m, isNot(contains('0bad')));
-      },
-      overrides: <Type, Generator>{
-        FileSystem: () => fileSystem,
-        ProcessManager: () => processManager,
-      },
-    );
-
-    testUsingContext(
-      'omits the forced-reference block entirely when there are no FFI plugins',
-      () async {
-        final Directory projectDir = fileSystem.directory('/p')..createSync();
-        projectDir
-            .childDirectory('watchos')
-            .childDirectory('Runner')
-            .createSync(recursive: true);
-        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
         fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
           ..createSync(recursive: true)
-          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+          ..writeAsStringSync(
+            json.encode(<String, dynamic>{
+              'packages': <Map<String, String>>[
+                <String, String>{
+                  'name': 'native_gadget',
+                  'rootUri': 'file:///pubcache/native_gadget',
+                },
+              ],
+            }),
+          );
         projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}),
+          json.encode(<String, dynamic>{
+            'dependencyGraph': <Map<String, String>>[
+              <String, String>{'name': 'native_gadget'},
+            ],
+          }),
         );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForWatchosTooling(project);
 
-        expect(registrantOf(project), isNot(contains('_flutterWatchosFfiForcedReferences')));
+        final Directory runnerDir =
+            project.directory.childDirectory('watchos').childDirectory('Runner');
+        expect(runnerDir.childFile('GeneratedPluginRegistrant.m').existsSync(), isFalse);
+        expect(runnerDir.childFile('GeneratedPluginRegistrant.h').existsSync(), isFalse);
       },
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
