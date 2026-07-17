@@ -29,8 +29,13 @@ class WatchosCleanCommand extends CleanCommand {
       _cleanFile(watchosDir, 'Podfile.lock');
       _cleanFile(watchosDir, '.symlinks');
 
-      // Remove GeneratedPluginRegistrant (regenerated at build time)
+      // Remove GeneratedPluginRegistrant (regenerated at build time).
       _cleanFile(watchosDir, 'Flutter/GeneratedPluginRegistrant.swift');
+      // The ObjC registrant is no longer emitted (FFI symbols are kept by
+      // -force_load; see watchos_plugins.dart); mop up copies left by older
+      // CLI versions so they stop showing up as untracked files.
+      _cleanFile(watchosDir, 'Runner/GeneratedPluginRegistrant.h');
+      _cleanFile(watchosDir, 'Runner/GeneratedPluginRegistrant.m');
 
       globals.logger.printStatus('Cleaned watchOS build artifacts.');
     }
