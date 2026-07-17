@@ -1,12 +1,21 @@
+// The FlutterWatchOS host module — generic glue around the Flutter engine,
+// identical for every app. The flutter-watchos CLI compiles this module at
+// build time and stages it into the app's `watchos/Flutter/` directory; the
+// app's own `App.swift` only does `import FlutterWatchOS` and shows
+// `FlutterHostView()`.
+//
 // 32-bit watches (Series 4–8 / SE) are unsupported; the Flutter host is
-// compiled out for that slice and an info screen is shown instead (see App.swift).
+// compiled out for that slice and the app shows an info screen instead (see
+// the app template's App.swift).
 #if !arch(arm64_32)
 import Foundation
 import CoreGraphics
 import SwiftUI
 import WatchKit
 
-/// One native text-field overlay, positioned in SwiftUI points. App.swift
+import FlutterWatchOSHostC
+
+/// One native text-field overlay, positioned in SwiftUI points. FlutterHostView
 /// places an invisible proxy over each so the first tap on a Flutter TextField
 /// raises the system keyboard (masked when `isObscured`).
 struct WatchProxyField: Identifiable, Equatable {
@@ -79,7 +88,7 @@ final class WatchTextInput: ObservableObject {
     func endEditing() { FlutterWatchOSTextInputEndEditing() }
 }
 
-/// One platform view, positioned in SwiftUI points. App.swift renders the
+/// One platform view, positioned in SwiftUI points. FlutterHostView renders the
 /// native view registered for `viewType` at `rect` — above the frame image
 /// (classic overlay) or, when `belowFrame`, under it (the Flutter scene has a
 /// transparent hole there, so Flutter content can draw on top of the view).
@@ -102,12 +111,12 @@ struct WatchPlatformViewSlot: Identifiable, Equatable {
 ///
 /// `params` is the widget's `creationParams` string (by convention JSON). A
 /// `viewType` with no registered factory renders nothing.
-enum WatchPlatformViewRegistry {
+public enum WatchPlatformViewRegistry {
     private static var factories: [String: (String) -> AnyView] = [:]
 
     /// Registers (or replaces) the factory for a view type. Main thread.
-    static func register(_ viewType: String,
-                         factory: @escaping (String) -> AnyView) {
+    public static func register(_ viewType: String,
+                                factory: @escaping (String) -> AnyView) {
         factories[viewType] = factory
     }
 

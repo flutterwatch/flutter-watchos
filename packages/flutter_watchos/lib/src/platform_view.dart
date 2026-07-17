@@ -36,8 +36,8 @@ enum WatchPlatformViewLayer {
 /// registered for [viewType] on top of the rendered Flutter frame at exactly
 /// that position — the same composition model the engine already uses for
 /// native text input. The native side of a [viewType] is registered in the
-/// app's runner (see `WatchPlatformViewRegistry.register` in the generated
-/// `FlutterRunner.swift`):
+/// app's `App.swift` initializer (`WatchPlatformViewRegistry` comes with the
+/// `FlutterWatchOS` host module every app imports):
 ///
 /// ```swift
 /// WatchPlatformViewRegistry.register("birthday-picker") { params in

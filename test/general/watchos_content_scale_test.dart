@@ -8,34 +8,14 @@
 // plugin's upstream example, shipped verbatim — fit the watch screen. The
 // runner owns the whole conversion: the engine just receives a bigger
 // logical size with a smaller pixel ratio (same physical pixel count), and
-// every coordinate crossing the host boundary is converted in the template.
-
-import 'dart:io' as io;
+// every coordinate crossing the host boundary is converted in the host
+// module.
 
 import '../src/common.dart';
-
-/// Reads a file from the watchOS Runner template, locating the template by
-/// walking up from the current directory (tests may run from the package root
-/// or a workspace root).
-String _readRunnerTemplate(String fileName) {
-  io.Directory dir = io.Directory.current.absolute;
-  while (true) {
-    final candidate = io.File(
-      '${dir.path}/templates/app/swift/watchos.tmpl/Runner/$fileName',
-    );
-    if (candidate.existsSync()) {
-      return candidate.readAsStringSync();
-    }
-    final io.Directory parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('Could not find watchOS Runner template: $fileName');
-    }
-    dir = parent;
-  }
-}
+import '../src/host_sources.dart';
 
 void main() {
-  final String runner = _readRunnerTemplate('FlutterRunner.swift.tmpl');
+  final String runner = readHostSource('FlutterRunner.swift');
 
   group('watchOS content scale — FlutterWatchOSContentScale', () {
     test('reads the Info.plist key, clamped, defaulting to 1.0', () {
