@@ -1145,8 +1145,15 @@ class NativeWatchosBundle extends Target {
     final libraries = <String>{};
     // Objects that are ready to archive without a clang pass — the compiled
     // products of plugins that declare an external SwiftPM dependency (an
-    // external native SDK), harvested from a SwiftPM build below.
+    // external native SDK), harvested from a SwiftPM build below. Two such
+    // plugins that share a dependency (e.g. every Firebase plugin pulls in
+    // FirebaseCore and GoogleUtilities) each produce that dependency's merged
+    // object under the same name; only one copy may be linked — every object
+    // is force-loaded, so a second copy duplicates all its symbols. Both
+    // builds resolve the same manifest constraints, so the copies are
+    // interchangeable and the first one wins.
     final prebuiltObjects = <String>[];
+    final harvestedObjectNames = <String>{};
     // Plugins may also ship SwiftUI platform-view sources (any `.swift` under
     // `watchos/` except the SwiftPM manifest) — compiled per plugin, as the
     // plugin's own module, further down.
@@ -1165,9 +1172,12 @@ class NativeWatchosBundle extends Target {
       // SDK's `+load` component registration (and the FFI exports) have no
       // link-time caller.
       if (hasExternalSwiftPackages(packageSwift)) {
-        prebuiltObjects.addAll(
-          await _buildPluginObjectsViaSwiftPackageManager(plugin, objDir),
-        );
+        for (final String object
+            in await _buildPluginObjectsViaSwiftPackageManager(plugin, objDir)) {
+          if (harvestedObjectNames.add(globals.fs.path.basename(object))) {
+            prebuiltObjects.add(object);
+          }
+        }
         frameworks.addAll(parseLinkedFrameworks(packageSwift));
         libraries.addAll(parseLinkedLibraries(packageSwift));
         continue;
