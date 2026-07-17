@@ -242,6 +242,43 @@ void main() {
         isEmpty,
       );
     });
+
+    testWithoutContext('does not flag integration_test (works via the harness)', () {
+      expect(
+        auditPluginsWithoutWatchosSupport(
+          pluginPlatforms: <String, List<String>>{
+            'integration_test': <String>['android', 'ios'],
+          },
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('scopes warnings to direct dependencies', () {
+      // `jni`/`jni_flutter` reach the graph only transitively (via
+      // path_provider_android); the developer never added them, so they are
+      // not flagged when a direct-dependency set is supplied.
+      final List<String> lines = auditPluginsWithoutWatchosSupport(
+        pluginPlatforms: <String, List<String>>{
+          'gadget': <String>['ios', 'android'],
+          'jni': <String>['android', 'linux', 'windows'],
+          'jni_flutter': <String>['android'],
+        },
+        directDependencies: <String>{'gadget'},
+      );
+      final String joined = lines.join('\n');
+      expect(joined, contains('- gadget (android, ios)'));
+      expect(joined, isNot(contains('jni')));
+    });
+
+    testWithoutContext('audits every plugin when no direct-dependency set is given', () {
+      final List<String> lines = auditPluginsWithoutWatchosSupport(
+        pluginPlatforms: <String, List<String>>{
+          'jni': <String>['android', 'linux', 'windows'],
+        },
+      );
+      expect(lines.join('\n'), contains('- jni (android, linux, windows)'));
+    });
   });
 
   group('ObjC GeneratedPluginRegistrant is not emitted', () {
