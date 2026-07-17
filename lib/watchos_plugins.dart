@@ -305,6 +305,33 @@ List<String> _findAllPluginNames(FlutterProject project) {
   return <String>[for (final dep in _walkPluginDependencies(project)) dep.name];
 }
 
+/// The package names the root project depends on directly (its own
+/// `dependencies:` + `dev_dependencies:`). Returns null when the root pubspec
+/// can't be read/parsed, so callers fall back to auditing every plugin rather
+/// than silently scoping to nothing.
+Set<String>? _directDependencyNames(FlutterProject project) {
+  final File pubspec = project.directory.childFile('pubspec.yaml');
+  if (!pubspec.existsSync()) {
+    return null;
+  }
+  try {
+    final dynamic doc = loadYaml(pubspec.readAsStringSync());
+    if (doc is! YamlMap) {
+      return null;
+    }
+    final names = <String>{};
+    for (final section in const <String>['dependencies', 'dev_dependencies']) {
+      final dynamic block = doc[section];
+      if (block is YamlMap) {
+        names.addAll(block.keys.whereType<String>());
+      }
+    }
+    return names;
+  } on YamlException {
+    return null; // Malformed pubspec — don't scope (audit everything).
+  }
+}
+
 /// Builds the developer-facing warning lines for any plugin in the project's
 /// dep graph that has a FlutterWatch-published watchOS implementation the user
 /// hasn't added yet. Public so tests can drive it without faking a project
@@ -347,6 +374,12 @@ final RegExp _federatedImplementationSuffix = RegExp(
   r'_(android|ios|linux|macos|windows|web|foundation|darwin|avfoundation|platform_interface)$',
 );
 
+/// Framework-provided plugin packages that already work on watchOS through the
+/// flutter-watchos tooling rather than a `watchos:` platform key, so flagging
+/// them as "unsupported" would be a false positive. `integration_test` runs on
+/// the watch simulator via the CLI's own test harness.
+const Set<String> _kWatchSupportedFrameworkPlugins = <String>{'integration_test'};
+
 /// Builds the developer-facing warning lines for plugins in the dependency
 /// graph that ship native code for other platforms but have no watchOS
 /// implementation. Such plugins never break the build — their native code is
@@ -357,8 +390,16 @@ final RegExp _federatedImplementationSuffix = RegExp(
 /// declares under `flutter.plugin.platforms` (empty list = legacy pre-federated
 /// plugin, which is implicitly ios/android). Public so tests can drive it
 /// without faking a project tree.
+///
+/// [directDependencies], when non-null, scopes the warning to packages the
+/// developer added themselves (the root pubspec's `dependencies` +
+/// `dev_dependencies`). Deeply transitive plugins — e.g. a federated impl's
+/// own Android helper packages (`jni`, `jni_flutter`) — are pulled in by a
+/// package the user chose, not called directly, so warning about each of them
+/// individually is noise. When null, every plugin is audited (no scoping).
 List<String> auditPluginsWithoutWatchosSupport({
   required Map<String, List<String>> pluginPlatforms,
+  Set<String>? directDependencies,
 }) {
   final Set<String> allNames = pluginPlatforms.keys.toSet();
   final unsupported = <String>[];
@@ -369,6 +410,13 @@ List<String> auditPluginsWithoutWatchosSupport({
       continue;
     }
     if (_federatedImplementationSuffix.hasMatch(name)) {
+      continue;
+    }
+    if (_kWatchSupportedFrameworkPlugins.contains(name)) {
+      continue;
+    }
+    // Only warn about plugins the developer added directly and can act on.
+    if (directDependencies != null && !directDependencies.contains(name)) {
       continue;
     }
     // A manually added (not yet endorsed) watchOS implementation counts.
@@ -426,6 +474,7 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   }
   final List<String> unsupported = auditPluginsWithoutWatchosSupport(
     pluginPlatforms: pluginPlatforms,
+    directDependencies: _directDependencyNames(project),
   );
   if (unsupported.isNotEmpty) {
     globals.logger.printWarning(unsupported.join('\n'));
