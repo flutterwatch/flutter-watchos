@@ -2,50 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Contract tests for the watchOS Runner template. The runtime is ENGINE-side:
-// the engine owns bootstrap (renderer, Dart snapshots, window metrics,
-// semantics), the frame->CGImage pipeline, touch phase tracking, the full
-// Digital Crown scroll model (including the plugin raw-crown handoff), and the
-// flutter/textinput protocol with per-field state — all behind an exported C
-// ABI. The host template is generic glue: it displays frames, forwards
-// gesture points and raw crown deltas, plays the detent haptic on request,
-// and renders an invisible native input per engine-published rect. The
-// runtime behaviour is exercised manually on the Simulator (and the engine
-// logic by the engine repo's gtest suites); these guard the template
-// invariants that behaviour depends on, so a refactor that silently drops the
-// wiring — or re-grows host-side logic — fails fast in CI rather than at the
-// next manual run.
-
-import 'dart:io' as io;
+// Contract tests for the FlutterWatchOS host module (the CLI-compiled runner
+// glue in host/). The runtime is ENGINE-side: the engine owns bootstrap
+// (renderer, Dart snapshots, window metrics, semantics), the frame->CGImage
+// pipeline, touch phase tracking, the full Digital Crown scroll model
+// (including the plugin raw-crown handoff), and the flutter/textinput
+// protocol with per-field state — all behind an exported C ABI. The host
+// module is generic glue: it displays frames, forwards gesture points and
+// raw crown deltas, plays the detent haptic on request, and renders an
+// invisible native input per engine-published rect. The runtime behaviour is
+// exercised manually on the Simulator (and the engine logic by the engine
+// repo's gtest suites); these guard the host invariants that behaviour
+// depends on, so a refactor that silently drops the wiring — or re-grows
+// host-side logic — fails fast in CI rather than at the next manual run.
 
 import '../src/common.dart';
-
-/// Reads a file from the watchOS Runner template, locating the template by
-/// walking up from the current directory (tests may run from the package root
-/// or a workspace root).
-String _readRunnerTemplate(String fileName) {
-  io.Directory dir = io.Directory.current.absolute;
-  while (true) {
-    final candidate = io.File(
-      '${dir.path}/templates/app/swift/watchos.tmpl/Runner/$fileName',
-    );
-    if (candidate.existsSync()) {
-      return candidate.readAsStringSync();
-    }
-    final io.Directory parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('Could not find watchOS Runner template: $fileName');
-    }
-    dir = parent;
-  }
-}
+import '../src/host_sources.dart';
 
 void main() {
-  final String runner = _readRunnerTemplate('FlutterRunner.swift.tmpl');
-  final String app = _readRunnerTemplate('App.swift.tmpl');
-  final String bridge = _readRunnerTemplate('Bridge.h.tmpl');
+  final String runner = readHostSource('FlutterRunner.swift');
+  final String app = readHostSource('FlutterHostView.swift');
+  final String bridge = readHostSource('flutter_watchos_host.h');
 
-  group('watchOS engine C ABI (Bridge.h)', () {
+  group('watchOS engine C ABI (flutter_watchos_host.h)', () {
     test('declares the host-runtime ABI', () {
       for (final symbol in <String>[
         'FlutterWatchOSFrameCallback',
@@ -178,7 +157,7 @@ void main() {
     });
   });
 
-  group('watchOS text input — App.swift proxy overlay', () {
+  group('watchOS text input — FlutterHostView proxy overlay', () {
     test('renders a proxy per engine-published field', () {
       expect(app, contains('ForEach(textInput.fields'));
       expect(app, contains(r'.focused($focusedField, equals: field.id)'));

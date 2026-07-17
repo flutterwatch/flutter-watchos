@@ -21,8 +21,10 @@ import 'package:package_config/package_config.dart';
 
 import '../watchos_artifacts.dart';
 import '../watchos_build_info.dart';
+import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
+import 'watchos_host_module.dart';
 import 'watchos_plugin_views.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
@@ -338,12 +340,27 @@ class NativeWatchosBundle extends Target {
     //    .flutter-plugins-dependencies without the watchos key).
     await ensureReadyForWatchosTooling(project);
 
-    // 6. Compile federated watchOS plugin native code (FFI plugins) into a
-    //    static archive and wire its watch-scoped force-load flag into
-    //    Generated.xcconfig (so it survives the HostApp-scheme archive too).
-    await _buildPluginStaticArchive(project, watchosProjectDir);
+    // 6. Compile the FlutterWatchOS host module (the generic runner glue —
+    //    frame display, input forwarding, native overlays) into a static
+    //    archive + .swiftmodule under watchos/Flutter/, unless this is a
+    //    legacy project that still compiles the glue as app source.
+    final String? hostArchive = await _buildHostModule(watchosProjectDir);
 
-    // 7. Run pod install if Podfile exists
+    // 7. Compile federated watchOS plugin native code (FFI plugins) into a
+    //    static archive, then wire the watch-scoped force-load flags for both
+    //    archives into Generated.xcconfig (so they survive the HostApp-scheme
+    //    archive too).
+    final (String, Set<String>)? pluginArchive = await _buildPluginStaticArchive(
+      project,
+      watchosProjectDir,
+    );
+    _appendNativeLinkFlags(
+      watchosProjectDir,
+      hostArchive: hostArchive,
+      pluginArchive: pluginArchive,
+    );
+
+    // 8. Run pod install if Podfile exists
     if (watchosProjectDir.childFile('Podfile').existsSync()) {
       final Status podStatus = globals.logger.startProgress('Running pod install...');
       try {
@@ -360,7 +377,7 @@ class NativeWatchosBundle extends Target {
       }
     }
 
-    // 8. Run xcodebuild.
+    // 9. Run xcodebuild.
     globals.logger.printTrace('Executing xcodebuild for watchOS (${buildInfo.sdkName})...');
 
     final String configuration = buildInfo.configuration;
@@ -961,10 +978,144 @@ class NativeWatchosBundle extends Target {
     }
   }
 
+  /// Compiles the FlutterWatchOS host module — the generic Swift glue around
+  /// the engine, shipped as CLI sources in `host/` (see
+  /// watchos_host_module.dart) — into `watchos/Flutter/`:
+  /// `libFlutterWatchOSHost.a` + `FlutterWatchOS.swiftmodule/` + the staged
+  /// `FlutterWatchOSHostC` clang module. Returns the archive path for
+  /// [_appendNativeLinkFlags], or null for a legacy project (one whose
+  /// template still compiles `Runner/FlutterRunner.swift` as app source — the
+  /// module would collide with it).
+  ///
+  /// Device builds compile arm64 AND arm64_32: the Xcode project builds the
+  /// Standard Architectures (the App Store requires an arm64_32 slice below
+  /// deployment target 27.0), so `App.swift`'s `import FlutterWatchOS` must
+  /// resolve for both. The glue is `#if !arch(arm64_32)`-guarded throughout,
+  /// so the arm64_32 slice compiles to an empty module — mirroring the app
+  /// template, whose arm64_32 slice shows only the fallback screen.
+  Future<String?> _buildHostModule(Directory watchosProjectDir) async {
+    if (isLegacyRunnerProject(watchosProjectDir)) {
+      globals.logger.printTrace(
+        'Legacy watchOS project (Runner/FlutterRunner.swift present): '
+        'skipping the FlutterWatchOS host module.',
+      );
+      return null;
+    }
+    final Directory hostDir =
+        watchosToolRootDirectory(globals.fs).childDirectory('host');
+    final List<String> sources = collectHostModuleSources(hostDir);
+    if (sources.isEmpty) {
+      throwToolExit(
+        'FlutterWatchOS host sources not found at ${hostDir.path}. '
+        'The flutter-watchos installation is incomplete.',
+      );
+    }
+
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter')
+      ..createSync(recursive: true);
+    // Stage the C module next to the .swiftmodule: this compile resolves it
+    // via -I, and Xcode's App.swift compile resolves it via the same
+    // SWIFT_INCLUDE_PATHS that finds the .swiftmodule.
+    for (final name in <String>['flutter_watchos_host.h', 'module.modulemap']) {
+      hostDir.childFile(name).copySync(globals.fs.path.join(flutterDir.path, name));
+    }
+
+    final String deploymentTarget = parseWatchosDeploymentTarget(
+      watchosProjectDir
+          .childDirectory('Runner.xcodeproj')
+          .childFile('project.pbxproj'),
+    );
+    // Simulator builds are pinned to arm64 (matching the ARCHS=arm64 the
+    // build passes to xcodebuild); device builds cover the fat executable.
+    final archs = buildInfo.simulator
+        ? const <String>['arm64']
+        : const <String>['arm64', 'arm64_32'];
+
+    final Directory objDir = flutterDir.childDirectory('.host_build')
+      ..createSync(recursive: true);
+    final Directory moduleDir =
+        flutterDir.childDirectory('FlutterWatchOS.swiftmodule')
+          ..createSync(recursive: true);
+
+    final objects = <String>[];
+    for (final arch in archs) {
+      final String object =
+          globals.fs.path.join(objDir.path, 'FlutterWatchOS_$arch.o');
+      final ProcessResult r = await globals.processManager.run(
+        hostModuleSwiftcArgs(
+          sdkName: buildInfo.sdkName,
+          simulator: buildInfo.simulator,
+          arch: arch,
+          deploymentTarget: deploymentTarget,
+          moduleOutputPath: globals.fs.path.join(
+            moduleDir.path,
+            swiftmoduleFileName(arch: arch, simulator: buildInfo.simulator),
+          ),
+          objectOutputPath: object,
+          cModuleSearchPath: flutterDir.path,
+          sources: sources,
+        ),
+      );
+      if (r.exitCode != 0) {
+        globals.logger.printError(
+          'Compiling the FlutterWatchOS host module ($arch) failed:\n${r.stderr}',
+        );
+        throw Exception('Compiling the FlutterWatchOS host module failed');
+      }
+      objects.add(object);
+    }
+
+    // One thin object per arch → one (fat, on device) object → the archive.
+    String archiveInput = objects.first;
+    if (objects.length > 1) {
+      archiveInput = globals.fs.path.join(objDir.path, 'FlutterWatchOS.o');
+      final ProcessResult lipoR = await globals.processManager.run(<String>[
+        'xcrun',
+        'lipo',
+        '-create',
+        ...objects,
+        '-output',
+        archiveInput,
+      ]);
+      if (lipoR.exitCode != 0) {
+        globals.logger.printError(
+          'Combining host module slices failed:\n${lipoR.stderr}',
+        );
+        throw Exception('Combining host module slices failed');
+      }
+    }
+    final String archive =
+        globals.fs.path.join(flutterDir.path, 'libFlutterWatchOSHost.a');
+    final File archiveFile = globals.fs.file(archive);
+    if (archiveFile.existsSync()) {
+      archiveFile.deleteSync();
+    }
+    final ProcessResult libR = await globals.processManager.run(<String>[
+      'xcrun',
+      '-sdk',
+      buildInfo.sdkName,
+      'libtool',
+      '-static',
+      '-o',
+      archive,
+      archiveInput,
+    ]);
+    if (libR.exitCode != 0) {
+      globals.logger.printError(
+        'Linking the FlutterWatchOS host archive failed:\n${libR.stderr}',
+      );
+      throw Exception('Linking the FlutterWatchOS host archive failed');
+    }
+    globals.logger.printTrace(
+      'Built the FlutterWatchOS host module ($archive, ${archs.join('+')}).',
+    );
+    return archive;
+  }
+
   /// Compiles the native sources of every federated watchOS plugin that ships
-  /// a `watchos/Package.swift` into a single static archive and wires an
-  /// `OTHER_LDFLAGS` assignment into `Generated.xcconfig` that force-loads it
-  /// into the watch (Runner) link. No-op when there are no such plugins.
+  /// a `watchos/Package.swift` into a single static archive. Returns the
+  /// archive path and the frameworks it needs, for [_appendNativeLinkFlags];
+  /// null when there are no such plugins.
   ///
   /// watchOS plugins here are **FFI-only** (the software-rendering embedder
   /// exposes no `Flutter` Swift module or plugin registrar), so instead of
@@ -974,20 +1125,13 @@ class NativeWatchosBundle extends Target {
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
   /// `DynamicLibrary.process()` / dlsym.
-  ///
-  /// The flag is written into the xcconfig — not passed on the `xcodebuild`
-  /// command line — with an `[sdk=watch…*]` qualifier so it applies ONLY to
-  /// the watch target. That is what lets `flutter-watchos archive` build the
-  /// `HostApp` scheme (Runner + the iOS container) in one pass: a global
-  /// `OTHER_LDFLAGS` would try to force-load this watchOS archive into the iOS
-  /// host's link and fail.
-  Future<void> _buildPluginStaticArchive(
+  Future<(String, Set<String>)?> _buildPluginStaticArchive(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
     final List<WatchosSpmPlugin> plugins = discoverWatchosSpmPlugins(project);
     if (plugins.isEmpty) {
-      return;
+      return null;
     }
 
     final sources = <String>[];
@@ -1022,7 +1166,7 @@ class NativeWatchosBundle extends Target {
       frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
     }
     if (sources.isEmpty && swiftSourcesByPlugin.isEmpty) {
-      return;
+      return null;
     }
     // watchOS plugins virtually always need these; harmless if already linked.
     frameworks.addAll(<String>['WatchKit', 'Foundation']);
@@ -1119,35 +1263,75 @@ class NativeWatchosBundle extends Target {
       'Built watchOS plugin archive ($archive) from ${objects.length} object(s); '
       'force-loading into Runner with frameworks: ${frameworks.join(', ')}',
     );
+    return (archive, frameworks);
+  }
 
-    // Force-load flags, qualified to the watch SDK so they never reach the iOS
-    // HostApp link during `flutter-watchos archive` (which builds both targets
-    // via the HostApp scheme).
-    final ldflags = StringBuffer(r'$(inherited) -force_load ');
-    ldflags.write(archive);
-    for (final fw in frameworks) {
-      ldflags.write(' -framework $fw');
+  /// Appends the link flags for the host-module and plugin archives to
+  /// `Generated.xcconfig`. No-op when neither archive was built (a legacy
+  /// project without plugins — its xcconfig stays exactly as generated).
+  ///
+  /// The flags live in the xcconfig — not on the `xcodebuild` command line —
+  /// with an `[sdk=watch…*]` qualifier so they apply ONLY to the watch target.
+  /// That is what lets `flutter-watchos archive` build the `HostApp` scheme
+  /// (Runner + the iOS container) in one pass: a global `OTHER_LDFLAGS` would
+  /// try to force-load these watchOS archives into the iOS host's link and
+  /// fail. Both archives ride ONE assignment: within an xcconfig a later
+  /// assignment of the same setting replaces the earlier one ($(inherited)
+  /// reaches the level below, not up the same file).
+  void _appendNativeLinkFlags(
+    Directory watchosProjectDir, {
+    required String? hostArchive,
+    required (String, Set<String>)? pluginArchive,
+  }) {
+    if (hostArchive == null && pluginArchive == null) {
+      return;
     }
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
+
+    final ldflags = StringBuffer(r'$(inherited)');
+    if (hostArchive != null) {
+      // -force_load keeps the module's dlsym-reached plugin registration
+      // entry point (and everything else) out of dead-strip's reach. The
+      // frameworks back the glue's imports; autolink metadata would usually
+      // pull them in, but being explicit costs nothing.
+      ldflags.write(' -force_load $hostArchive');
+      for (final fw in <String>['SwiftUI', 'WatchKit', 'Foundation']) {
+        ldflags.write(' -framework $fw');
+      }
+    }
+    if (pluginArchive != null) {
+      final (String archive, Set<String> frameworks) = pluginArchive;
+      ldflags.write(' -force_load $archive');
+      for (final fw in frameworks) {
+        ldflags.write(' -framework $fw');
+      }
+    }
+
     // `_generateXcconfigs` (step 4) already rewrote Generated.xcconfig this
-    // build; append the qualified assignment so the watch target picks it up
-    // via its base configuration. Debug builds link the simulator SDK, device
-    // builds link `watchos` — qualify to the active one.
+    // build; append the qualified assignments so the watch target picks them
+    // up via its base configuration. Debug builds link the simulator SDK,
+    // device builds link `watchos` — qualify to the active one.
     final sdkQualifier = '${buildInfo.sdkName}*';
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(
           'OTHER_LDFLAGS[sdk=$sdkQualifier]=$ldflags\n'
-          // The FFI exports above are reached only via dlsym(RTLD_DEFAULT) at
-          // runtime, so they have no link-time caller. `xcodebuild archive`
-          // runs the install-time strip (DEPLOYMENT_POSTPROCESSING /
-          // STRIP_INSTALLED_PRODUCT=YES) which, with the default
-          // STRIP_STYLE=all, prunes them from the symbol table — the app then
-          // throws "Failed to lookup symbol …: symbol not found" on the first
-          // FFI call, its root widget's initState blows up, and it renders a
-          // blank/gray screen. This ONLY bites archived/TestFlight builds:
-          // `flutter-watchos run` builds without the install strip, so the
-          // symbols survive there (which is why on-device run works but the
-          // App Store build is gray). Keep global symbols so the exports
-          // survive the strip; locals are still stripped.
-          'STRIP_STYLE = non-global\n',
+          // FFI exports and the host module's plugin registration entry point
+          // are reached only via dlsym(RTLD_DEFAULT) at runtime, so they have
+          // no link-time caller. `xcodebuild archive` runs the install-time
+          // strip (DEPLOYMENT_POSTPROCESSING / STRIP_INSTALLED_PRODUCT=YES)
+          // which, with the default STRIP_STYLE=all, prunes them from the
+          // symbol table — the app then throws "Failed to lookup symbol …:
+          // symbol not found" on the first FFI call, its root widget's
+          // initState blows up, and it renders a blank/gray screen. This ONLY
+          // bites archived/TestFlight builds: `flutter-watchos run` builds
+          // without the install strip, so the symbols survive there (which is
+          // why on-device run works but the App Store build is gray). Keep
+          // global symbols so the exports survive the strip; locals are still
+          // stripped.
+          'STRIP_STYLE = non-global\n'
+          // Resolves `import FlutterWatchOS` (the staged .swiftmodule) and
+          // its FlutterWatchOSHostC clang module when Xcode compiles
+          // App.swift. Harmless for legacy projects (nothing imports it).
+          'SWIFT_INCLUDE_PATHS[sdk=watch*] = \$(PROJECT_DIR)/Flutter\n',
           mode: FileMode.append,
         );
   }

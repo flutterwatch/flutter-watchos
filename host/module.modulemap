@@ -1,0 +1,4 @@
+module FlutterWatchOSHostC {
+  header "flutter_watchos_host.h"
+  export *
+}

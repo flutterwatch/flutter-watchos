@@ -2,46 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Contract tests for the watchOS Runner template's platform-view wiring. The
-// runtime is ENGINE-side: identity (create/dispose + viewType/params) arrives
-// over FFI from package:flutter_watchos, geometry rides the engine's
-// semantics walk (the same one that positions the text-input proxy fields),
-// and the registry is published behind the exported C ABI. The host template
-// is a pure mirror: it copies the slot list on the engine's change callback
-// and overlays the SwiftUI view the app registered for each slot's viewType.
-// These tests guard those template invariants — a refactor that drops the
-// wiring or re-grows host-side geometry logic fails fast in CI.
-
-import 'dart:io' as io;
+// Contract tests for the FlutterWatchOS host module's platform-view wiring.
+// The runtime is ENGINE-side: identity (create/dispose + viewType/params)
+// arrives over FFI from package:flutter_watchos, all geometry is computed in
+// the engine, and the registry is published behind the exported C ABI. The
+// host module is a pure mirror: it copies the slot list on the engine's
+// change callback and overlays the SwiftUI view the app registered for each
+// slot's viewType. These tests guard those host invariants — a refactor that
+// drops the wiring or re-grows host-side geometry logic fails fast in CI.
 
 import '../src/common.dart';
-
-/// Reads a file from the watchOS Runner template, locating the template by
-/// walking up from the current directory (tests may run from the package root
-/// or a workspace root).
-String _readRunnerTemplate(String fileName) {
-  io.Directory dir = io.Directory.current.absolute;
-  while (true) {
-    final candidate = io.File(
-      '${dir.path}/templates/app/swift/watchos.tmpl/Runner/$fileName',
-    );
-    if (candidate.existsSync()) {
-      return candidate.readAsStringSync();
-    }
-    final io.Directory parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('Could not find watchOS Runner template: $fileName');
-    }
-    dir = parent;
-  }
-}
+import '../src/host_sources.dart';
 
 void main() {
-  final String runner = _readRunnerTemplate('FlutterRunner.swift.tmpl');
-  final String app = _readRunnerTemplate('App.swift.tmpl');
-  final String bridge = _readRunnerTemplate('Bridge.h.tmpl');
+  final String runner = readHostSource('FlutterRunner.swift');
+  final String app = readHostSource('FlutterHostView.swift');
+  final String bridge = readHostSource('flutter_watchos_host.h');
 
-  group('watchOS platform views — engine C ABI (Bridge.h)', () {
+  group('watchOS platform views — engine C ABI (flutter_watchos_host.h)', () {
     test('declares the slot struct and the full mirror ABI', () {
       expect(bridge, contains('FlutterWatchOSPlatformViewSlot'));
       for (final symbol in <String>[
@@ -92,8 +70,7 @@ void main() {
       expect(runner, contains('static func register('));
     });
 
-    test('hosts no geometry logic (that lives in the engine semantics walk)',
-        () {
+    test('hosts no geometry logic (that lives in the engine)', () {
       // Scroll tracking, culling, and hot-restart cleanup are engine-side;
       // the host must not re-grow rect math or visibility heuristics.
       expect(runner, isNot(contains('platformViewId')));
@@ -101,7 +78,7 @@ void main() {
     });
   });
 
-  group('watchOS platform views — App.swift overlay', () {
+  group('watchOS platform views — FlutterHostView overlay', () {
     test('renders the registered native view per engine-published slot', () {
       expect(app, contains('platformViewGroup(_ slots: [WatchPlatformViewSlot])'));
       expect(app, contains('ForEach(slots)'));
@@ -164,8 +141,11 @@ void main() {
       expect(textInputOverlay, greaterThan(platformViewOverlay));
     });
 
-    test('documents factory registration in the app initializer', () {
-      expect(app, contains('WatchPlatformViewRegistry.register('));
+    test('documents factory registration in the app template initializer', () {
+      // The app-facing registration example lives in the (now tiny) template
+      // App.swift, where apps actually register their factories.
+      expect(readRunnerTemplate('App.swift.tmpl'),
+          contains('WatchPlatformViewRegistry.register('));
     });
   });
 

@@ -36,10 +36,13 @@ debug is Simulator-only.
 
 watchOS has no UIKit, so the iOS runner/plugin-registrar model doesn't apply
 (the engine still ships as an embedded `Flutter.framework`, but there is no
-`FlutterViewController` or registrar). The `create` template emits a small
-SwiftUI runner (`watchos/Runner/`) that hosts the Flutter engine. It is generic glue — identical for every app — and
-rendering, input, and text input are handled by the engine, so improvements
-ship with engine updates without touching your app project:
+`FlutterViewController` or registrar). The `create` template emits a tiny
+SwiftUI app entry (`watchos/Runner/App.swift`) that just shows
+`FlutterHostView()` from the `FlutterWatchOS` host module — the generic glue
+the CLI compiles into `watchos/Flutter/` on every build, the same split as
+stock Flutter's dozen-line iOS Runner. Rendering, input, and text input are
+handled by the engine and the host module, so improvements ship with engine
+and CLI updates without touching your app project:
 
 - **Input.** Touch and the Digital Crown work out of the box, with a native
   scroll feel. Raw crown input is available to Dart via the `flutter_watchos`

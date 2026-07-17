@@ -1,19 +1,17 @@
-#ifndef RUNNER_BRIDGE_H_
-#define RUNNER_BRIDGE_H_
+#ifndef FLUTTER_WATCHOS_HOST_H_
+#define FLUTTER_WATCHOS_HOST_H_
 
 #include <stdbool.h>
 #include <stdint.h>
 
 #include <CoreGraphics/CoreGraphics.h>
 
-#include "flutter_embedder.h"
-
 // -----------------------------------------------------------------------------
-// watchOS host runtime — the C entry points the Swift runner links against.
-// The runner is generic glue: it displays frames, forwards gesture points and
-// raw crown deltas, plays the detent haptic on request, and renders the
-// text-field overlay. These symbols are always present, so they are declared
-// (not dlsym'd) here.
+// watchOS host runtime — the C entry points the FlutterWatchOS host module
+// links against. The host is generic glue: it displays frames, forwards
+// gesture points and raw crown deltas, plays the detent haptic on request,
+// and renders the text-field overlay. These symbols are always present in the
+// engine, so they are declared (not dlsym'd) here.
 // -----------------------------------------------------------------------------
 
 // A rendered frame. Swift/ARC retains the CGImageRef when the callback captures
@@ -101,4 +99,4 @@ const char* FlutterWatchOSPlatformViewGetParams(int64_t view_id);
 // transparent hole for it); false: classic overlay above the frame.
 bool FlutterWatchOSPlatformViewGetBelowFrame(int64_t view_id);
 
-#endif  // RUNNER_BRIDGE_H_
+#endif  // FLUTTER_WATCHOS_HOST_H_

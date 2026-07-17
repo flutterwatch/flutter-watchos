@@ -3,38 +3,17 @@
 // found in the LICENSE file.
 
 // Tests for plugin-shipped native SwiftUI platform views: the CLI-side source
-// discovery + registration shim, and the Runner template's C entry point they
+// discovery + registration shim, and the host module's C entry point they
 // bridge to. A plugin ships `.swift` view sources next to its FFI classes;
 // the CLI compiles them (plus the shim) into the force-loaded plugin archive,
 // and the plugin's Dart `registerWith()` triggers registration through
-// `FlutterWatchOSPlatformViewRegisterNativeFactory` in the generated runner.
-
-import 'dart:io' as io;
+// `FlutterWatchOSPlatformViewRegisterNativeFactory` in the host module.
 
 import 'package:file/memory.dart';
 import 'package:flutter_watchos/build_targets/watchos_plugin_views.dart';
 
 import '../src/common.dart';
-
-/// Reads a file from the watchOS Runner template, locating the template by
-/// walking up from the current directory (tests may run from the package root
-/// or a workspace root).
-String _readRunnerTemplate(String fileName) {
-  io.Directory dir = io.Directory.current.absolute;
-  while (true) {
-    final candidate = io.File(
-      '${dir.path}/templates/app/swift/watchos.tmpl/Runner/$fileName',
-    );
-    if (candidate.existsSync()) {
-      return candidate.readAsStringSync();
-    }
-    final io.Directory parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('Could not find watchOS Runner template: $fileName');
-    }
-    dir = parent;
-  }
-}
+import '../src/host_sources.dart';
 
 void main() {
   group('collectPluginSwiftViewSources', () {
@@ -138,8 +117,8 @@ void main() {
     });
   });
 
-  group('Runner template — plugin registration entry point', () {
-    final String runner = _readRunnerTemplate('FlutterRunner.swift.tmpl');
+  group('host module — plugin registration entry point', () {
+    final String runner = readHostSource('FlutterRunner.swift');
 
     test('exports the @_cdecl entry point the shim dlsym-resolves', () {
       expect(
