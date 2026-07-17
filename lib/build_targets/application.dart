@@ -350,7 +350,8 @@ class NativeWatchosBundle extends Target {
     //    static archive, then wire the watch-scoped force-load flags for both
     //    archives into Generated.xcconfig (so they survive the HostApp-scheme
     //    archive too).
-    final (String, Set<String>)? pluginArchive = await _buildPluginStaticArchive(
+    final (String, Set<String>, Set<String>)? pluginArchive =
+        await _buildPluginStaticArchive(
       project,
       watchosProjectDir,
     );
@@ -1125,7 +1126,7 @@ class NativeWatchosBundle extends Target {
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
   /// `DynamicLibrary.process()` / dlsym.
-  Future<(String, Set<String>)?> _buildPluginStaticArchive(
+  Future<(String, Set<String>, Set<String>)?> _buildPluginStaticArchive(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
@@ -1134,9 +1135,18 @@ class NativeWatchosBundle extends Target {
       return null;
     }
 
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
+    final Directory objDir = flutterDir.childDirectory('.plugins_build')
+      ..createSync(recursive: true);
+
     final sources = <String>[];
     final headerDirs = <String>{};
     final frameworks = <String>{};
+    final libraries = <String>{};
+    // Objects that are ready to archive without a clang pass — the compiled
+    // products of plugins that declare an external SwiftPM dependency (an
+    // external native SDK), harvested from a SwiftPM build below.
+    final prebuiltObjects = <String>[];
     // Plugins may also ship SwiftUI platform-view sources (any `.swift` under
     // `watchos/` except the SwiftPM manifest) — compiled per plugin, as the
     // plugin's own module, further down.
@@ -1144,6 +1154,22 @@ class NativeWatchosBundle extends Target {
     for (final plugin in plugins) {
       final Directory pluginDir = globals.fs.directory(plugin.packagePath);
       if (!pluginDir.existsSync()) {
+        continue;
+      }
+      final File packageSwift = pluginDir.childFile('Package.swift');
+      // Plugins that wrap an external native SDK declare it as a SwiftPM
+      // package dependency. The CLI's own clang pass can't resolve that graph,
+      // so build the plugin's SwiftPM package with xcodebuild (which compiles
+      // its `.m` with the external module available) and harvest the objects.
+      // Every object is force-loaded below, which is required anyway: the
+      // SDK's `+load` component registration (and the FFI exports) have no
+      // link-time caller.
+      if (hasExternalSwiftPackages(packageSwift)) {
+        prebuiltObjects.addAll(
+          await _buildPluginObjectsViaSwiftPackageManager(plugin, objDir),
+        );
+        frameworks.addAll(parseLinkedFrameworks(packageSwift));
+        libraries.addAll(parseLinkedLibraries(packageSwift));
         continue;
       }
       for (final FileSystemEntity entity in pluginDir.listSync(recursive: true)) {
@@ -1163,22 +1189,20 @@ class NativeWatchosBundle extends Target {
         // Plugin view code builds SwiftUI views by definition.
         frameworks.add('SwiftUI');
       }
-      frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
+      frameworks.addAll(parseLinkedFrameworks(packageSwift));
+      libraries.addAll(parseLinkedLibraries(packageSwift));
     }
-    if (sources.isEmpty && swiftSourcesByPlugin.isEmpty) {
+    if (sources.isEmpty && swiftSourcesByPlugin.isEmpty && prebuiltObjects.isEmpty) {
       return null;
     }
     // watchOS plugins virtually always need these; harmless if already linked.
     frameworks.addAll(<String>['WatchKit', 'Foundation']);
 
-    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
-    final Directory objDir = flutterDir.childDirectory('.plugins_build')
-      ..createSync(recursive: true);
     final clangTarget = buildInfo.simulator
         ? 'arm64-apple-watchos9.0-simulator'
         : 'arm64-apple-watchos9.0';
 
-    final objects = <String>[];
+    final objects = <String>[...prebuiltObjects];
     for (final src in sources) {
       final String obj = globals.fs.path.join(objDir.path, '${globals.fs.path.basename(src)}.o');
       final ProcessResult r = await globals.processManager.run(<String>[
@@ -1263,7 +1287,7 @@ class NativeWatchosBundle extends Target {
       'Built watchOS plugin archive ($archive) from ${objects.length} object(s); '
       'force-loading into Runner with frameworks: ${frameworks.join(', ')}',
     );
-    return (archive, frameworks);
+    return (archive, frameworks, libraries);
   }
 
   /// Appends the link flags for the host-module and plugin archives to
@@ -1281,7 +1305,7 @@ class NativeWatchosBundle extends Target {
   void _appendNativeLinkFlags(
     Directory watchosProjectDir, {
     required String? hostArchive,
-    required (String, Set<String>)? pluginArchive,
+    required (String, Set<String>, Set<String>)? pluginArchive,
   }) {
     if (hostArchive == null && pluginArchive == null) {
       return;
@@ -1300,10 +1324,14 @@ class NativeWatchosBundle extends Target {
       }
     }
     if (pluginArchive != null) {
-      final (String archive, Set<String> frameworks) = pluginArchive;
+      final (String archive, Set<String> frameworks, Set<String> libraries) =
+          pluginArchive;
       ldflags.write(' -force_load $archive');
       for (final fw in frameworks) {
         ldflags.write(' -framework $fw');
+      }
+      for (final lib in libraries) {
+        ldflags.write(' -l$lib');
       }
     }
 
@@ -1346,6 +1374,110 @@ class NativeWatchosBundle extends Target {
     return RegExp(
       r'\.linkedFramework\(\s*"([^"]+)"\s*\)',
     ).allMatches(content).map((Match m) => m.group(1)!).toList();
+  }
+
+  /// Parses `.linkedLibrary("z")` entries from a plugin's `Package.swift`
+  /// (e.g. `z`, `c++`) — emitted as `-l<name>` when linking Runner. Plugins
+  /// wrapping an external SDK declare the system libraries it needs here.
+  @visibleForTesting
+  static List<String> parseLinkedLibraries(File packageSwift) {
+    if (!packageSwift.existsSync()) {
+      return const <String>[];
+    }
+    final String content = packageSwift.readAsStringSync();
+    return RegExp(
+      r'\.linkedLibrary\(\s*"([^"]+)"\s*\)',
+    ).allMatches(content).map((Match m) => m.group(1)!).toList();
+  }
+
+  /// Whether a plugin's `Package.swift` declares an external SwiftPM package
+  /// dependency (`.package(url:…)` / `.package(path:…)`) — i.e. it links an
+  /// external native SDK, not just system frameworks. Such plugins are built
+  /// with xcodebuild's SwiftPM (see
+  /// [_buildPluginObjectsViaSwiftPackageManager]) instead of the direct clang
+  /// pass, because the CLI's clang invocation can't resolve an SPM graph.
+  @visibleForTesting
+  static bool hasExternalSwiftPackages(File packageSwift) {
+    if (!packageSwift.existsSync()) {
+      return false;
+    }
+    final String content = packageSwift.readAsStringSync();
+    return RegExp(r'\.package\(\s*(?:url|path)\s*:').hasMatch(content);
+  }
+
+  /// Builds a plugin's SwiftPM package (its `watchos/Package.swift`, which
+  /// pulls in an external native SDK) with xcodebuild for the active watch
+  /// SDK, and returns every compiled object under the build's Products
+  /// directory — the plugin's own object (carrying the FFI exports) plus the
+  /// SDK's objects. The caller force-loads them all into Runner.
+  Future<List<String>> _buildPluginObjectsViaSwiftPackageManager(
+    WatchosSpmPlugin plugin,
+    Directory objDir,
+  ) async {
+    final Directory packageDir = globals.fs.directory(plugin.packagePath);
+    final Directory derivedData = objDir.childDirectory('spm_${plugin.name}');
+    final destination = buildInfo.simulator
+        ? 'generic/platform=watchOS Simulator'
+        : 'generic/platform=watchOS';
+    // Match the app's build configuration so the objects' optimization level
+    // and the Products subdirectory (`<Config>-<sdk>`) line up.
+    final configuration =
+        buildInfo.buildInfo.mode == BuildMode.debug ? 'Debug' : 'Release';
+
+    globals.logger.printStatus(
+      'Resolving and building watchOS SDK dependency for ${plugin.name} '
+      '(SwiftPM)…',
+    );
+    final ProcessResult result = await globals.processManager.run(
+      <String>[
+        'xcrun',
+        'xcodebuild',
+        '-scheme',
+        plugin.name,
+        '-destination',
+        destination,
+        '-configuration',
+        configuration,
+        '-derivedDataPath',
+        derivedData.path,
+        '-sdk',
+        buildInfo.sdkName,
+        'build',
+      ],
+      workingDirectory: packageDir.path,
+    );
+    if (result.exitCode != 0) {
+      globals.logger.printError(
+        'Building watchOS plugin ${plugin.name} via SwiftPM failed:\n'
+        '${result.stdout}\n${result.stderr}',
+      );
+      throw Exception('Building watchOS plugin SwiftPM package failed');
+    }
+
+    final Directory productsDir = derivedData
+        .childDirectory('Build')
+        .childDirectory('Products')
+        .childDirectory('$configuration-${buildInfo.sdkName}');
+    if (!productsDir.existsSync()) {
+      throw Exception(
+        'SwiftPM build for ${plugin.name} produced no products directory at '
+        '${productsDir.path}',
+      );
+    }
+    final objects = <String>[
+      for (final FileSystemEntity e in productsDir.listSync())
+        if (e is File && e.path.endsWith('.o')) e.path,
+    ];
+    if (objects.isEmpty) {
+      throw Exception(
+        'SwiftPM build for ${plugin.name} produced no object files in '
+        '${productsDir.path}',
+      );
+    }
+    globals.logger.printTrace(
+      'Harvested ${objects.length} SwiftPM object(s) for ${plugin.name}.',
+    );
+    return objects;
   }
 
   /// Builds the gen_snapshot command line for the watchOS AOT assembly step.

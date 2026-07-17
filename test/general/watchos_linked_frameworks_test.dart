@@ -54,4 +54,54 @@ let package = Package(name: "foo", targets: [.target(name: "foo")])
       <String>['WatchKit', 'Foundation', 'CoreMotion'],
     );
   });
+
+  testWithoutContext('extracts every .linkedLibrary("X") entry', () {
+    final File f = packageSwift('''
+.target(
+  name: "foo",
+  linkerSettings: [
+    .linkedLibrary("z"),
+    .linkedLibrary( "c++" )
+  ]
+)
+''');
+    expect(
+      NativeWatchosBundle.parseLinkedLibraries(f),
+      <String>['z', 'c++'],
+    );
+  });
+
+  testWithoutContext('hasExternalSwiftPackages is false for a system-framework-only plugin', () {
+    final File f = packageSwift('''
+let package = Package(
+  name: "foo",
+  targets: [.target(name: "foo", linkerSettings: [.linkedFramework("Foundation")])]
+)
+''');
+    expect(NativeWatchosBundle.hasExternalSwiftPackages(f), isFalse);
+  });
+
+  testWithoutContext('hasExternalSwiftPackages is true when a package url/path dependency is declared', () {
+    final File urlDep = packageSwift('''
+let package = Package(
+  name: "foo",
+  dependencies: [
+    .package(url: "https://github.com/firebase/firebase-ios-sdk.git", .upToNextMajor(from: "11.0.0")),
+  ],
+)
+''');
+    expect(NativeWatchosBundle.hasExternalSwiftPackages(urlDep), isTrue);
+
+    final File pathDep = packageSwift('''
+dependencies: [ .package( path : "../vendored" ) ],
+''');
+    expect(NativeWatchosBundle.hasExternalSwiftPackages(pathDep), isTrue);
+  });
+
+  testWithoutContext('hasExternalSwiftPackages is false when the manifest is absent', () {
+    expect(
+      NativeWatchosBundle.hasExternalSwiftPackages(fileSystem.file('/nope/Package.swift')),
+      isFalse,
+    );
+  });
 }
