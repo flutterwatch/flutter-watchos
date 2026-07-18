@@ -9,6 +9,12 @@ import FlutterWatchOS
 @main
 struct {{pascalCaseProjectName}}App: App {
     #if !arch(arm64_32)
+    // Remote-notification plumbing (APNs device token, notification payloads)
+    // for plugins that need it, e.g. firebase_messaging. Safe to keep even if
+    // no plugin uses notifications.
+    @WKApplicationDelegateAdaptor(FlutterWatchOSAppDelegate.self)
+    private var flutterAppDelegate
+
     init() {
         // Native platform views: register a SwiftUI factory for every
         // `viewType` your Dart code embeds with WatchPlatformView
