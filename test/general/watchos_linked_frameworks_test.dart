@@ -104,4 +104,60 @@ dependencies: [ .package( path : "../vendored" ) ],
       isFalse,
     );
   });
+
+  testWithoutContext('hasExternalSwiftPackages matches the legacy name-first form', () {
+    final File f = packageSwift('''
+dependencies: [
+  .package(name: "Firebase", url: "https://github.com/firebase/firebase-ios-sdk.git", from: "11.0.0"),
+],
+''');
+    expect(NativeWatchosBundle.hasExternalSwiftPackages(f), isTrue);
+  });
+
+  testWithoutContext('hasExternalSwiftPackages ignores commented-out dependencies', () {
+    final File f = packageSwift('''
+let package = Package(
+  name: "foo",
+  // dependencies: [ .package(url: "https://example.com/sdk.git", from: "1.0.0") ],
+  targets: [.target(name: "foo", linkerSettings: [.linkedFramework("Foundation")])]
+)
+''');
+    expect(NativeWatchosBundle.hasExternalSwiftPackages(f), isFalse);
+  });
+
+  testWithoutContext('parseResolvedPins reads v2 pins and tolerates absence', () {
+    final File resolved = fileSystem.file('/plugin/watchos/Package.resolved')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('''
+{
+  "pins": [
+    {
+      "identity": "firebase-ios-sdk",
+      "kind": "remoteSourceControl",
+      "state": {"revision": "abc123", "version": "11.15.0"}
+    },
+    {
+      "identity": "nanopb",
+      "state": {"revision": "def456"}
+    }
+  ],
+  "version": 2
+}
+''');
+    expect(
+      NativeWatchosBundle.parseResolvedPins(resolved),
+      <String, String>{'firebase-ios-sdk': '11.15.0', 'nanopb': 'def456'},
+    );
+    expect(
+      NativeWatchosBundle.parseResolvedPins(fileSystem.file('/nope/Package.resolved')),
+      isEmpty,
+    );
+  });
+
+  testWithoutContext('parseResolvedPins returns empty for malformed JSON', () {
+    final File resolved = fileSystem.file('/plugin/watchos/Package.resolved')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('not json');
+    expect(NativeWatchosBundle.parseResolvedPins(resolved), isEmpty);
+  });
 }

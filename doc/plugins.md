@@ -111,25 +111,41 @@ worked examples.
 ### Remote notifications
 
 watchOS delivers the APNs device token and remote-notification payloads
-only to the app-level `WKApplicationDelegate`. Apps created by the current
-templates install `FlutterWatchOSAppDelegate` (from the `FlutterWatchOS`
-module) via `@WKApplicationDelegateAdaptor`; it rebroadcasts those
-callbacks on `NotificationCenter.default` so plugins can observe them with
-no compile-time coupling:
+only to the app-level `WKApplicationDelegate`, and
+`UNUserNotificationCenter` has a single process-global delegate slot. Both
+are owned by `FlutterWatchOSAppDelegate` (from the `FlutterWatchOS`
+module), which apps created by the current templates install via
+`@WKApplicationDelegateAdaptor`. It rebroadcasts each callback on
+`NotificationCenter.default` so plugins can observe them with no
+compile-time coupling — no plugin should claim either delegate slot
+itself:
 
 | Name | userInfo |
 |---|---|
 | `FlutterWatchOSRemoteNotificationsDidRegister` | `"deviceToken": Data` |
 | `FlutterWatchOSRemoteNotificationsDidFail` | `"error": Error` |
 | `FlutterWatchOSRemoteNotificationDidReceive` | the raw APNs payload |
+| `FlutterWatchOSNotificationWillPresent` | `"payload"` + mutable `"options"` dictionary — set `options["options"]` to a `UNNotificationPresentationOptions` raw value during the (synchronous) post |
+| `FlutterWatchOSNotificationDidReceiveResponse` | `"payload"` + `"actionIdentifier"` |
 
-An app created before this delegate existed adopts it by adding one line
-inside its `App` struct:
+Callbacks that fire before any plugin observer exists (an at-launch APNs
+token, the tap that launched the app) are buffered; a plugin posts
+`FlutterWatchOSRemoteNotificationObserversReady` once its observers are
+installed and the delegate replays the buffered events.
+
+A **host-module** app created before this delegate existed adopts it by
+adding one line inside its `App` struct:
 
 ```swift
 @WKApplicationDelegateAdaptor(FlutterWatchOSAppDelegate.self)
 private var flutterAppDelegate
 ```
+
+A **legacy runner** project (one that still compiles its own
+`Runner/FlutterRunner.swift`) does not build the `FlutterWatchOS` module,
+so `FlutterWatchOSAppDelegate` does not exist there — migrate the runner
+to the current template first. The build prints a warning when a plugin
+needs these callbacks and the app cannot deliver them.
 
 ## Porting an existing iOS plugin
 
