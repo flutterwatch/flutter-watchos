@@ -91,6 +91,46 @@ Dart side embeds the view with `WatchPlatformView` from
 [`video_player_watchos`](https://github.com/flutterwatch/plugins) for a
 complete worked example.
 
+### Linking an external native SDK
+
+A plugin's `watchos/Package.swift` can declare external SwiftPM
+dependencies (for example the Firebase Apple SDK's `FirebaseMessaging`
+product). At build time the CLI resolves and builds the package graph with
+xcodebuild's SwiftPM, harvests the resulting objects — deduplicating
+modules shared between plugins, so two Firebase plugins link one copy of
+`FirebaseCore` — and force-loads them into the watch app. No CocoaPods and
+no manual Xcode configuration.
+
+Two requirements: the SDK must build **from source** for watchOS (a
+product wrapping a prebuilt binary without a watchOS slice cannot link),
+and the `linkerSettings` in `Package.swift` must only name system
+frameworks that exist on watchOS. The `firebase_*_watchos` packages in
+[`flutterwatch/plugins`](https://github.com/flutterwatch/plugins) are
+worked examples.
+
+### Remote notifications
+
+watchOS delivers the APNs device token and remote-notification payloads
+only to the app-level `WKApplicationDelegate`. Apps created by the current
+templates install `FlutterWatchOSAppDelegate` (from the `FlutterWatchOS`
+module) via `@WKApplicationDelegateAdaptor`; it rebroadcasts those
+callbacks on `NotificationCenter.default` so plugins can observe them with
+no compile-time coupling:
+
+| Name | userInfo |
+|---|---|
+| `FlutterWatchOSRemoteNotificationsDidRegister` | `"deviceToken": Data` |
+| `FlutterWatchOSRemoteNotificationsDidFail` | `"error": Error` |
+| `FlutterWatchOSRemoteNotificationDidReceive` | the raw APNs payload |
+
+An app created before this delegate existed adopts it by adding one line
+inside its `App` struct:
+
+```swift
+@WKApplicationDelegateAdaptor(FlutterWatchOSAppDelegate.self)
+private var flutterAppDelegate
+```
+
 ## Porting an existing iOS plugin
 
 `flutter-watchos plugin port` will scaffold a federated `*_watchos` package
