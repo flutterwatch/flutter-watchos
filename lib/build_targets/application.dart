@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert' show json;
+
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
@@ -350,7 +352,8 @@ class NativeWatchosBundle extends Target {
     //    static archive, then wire the watch-scoped force-load flags for both
     //    archives into Generated.xcconfig (so they survive the HostApp-scheme
     //    archive too).
-    final (String, Set<String>)? pluginArchive = await _buildPluginStaticArchive(
+    final (String, Set<String>, Set<String>)? pluginArchive =
+        await _buildPluginStaticArchive(
       project,
       watchosProjectDir,
     );
@@ -1125,7 +1128,7 @@ class NativeWatchosBundle extends Target {
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
   /// `DynamicLibrary.process()` / dlsym.
-  Future<(String, Set<String>)?> _buildPluginStaticArchive(
+  Future<(String, Set<String>, Set<String>)?> _buildPluginStaticArchive(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
@@ -1134,9 +1137,33 @@ class NativeWatchosBundle extends Target {
       return null;
     }
 
+    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
+    final Directory objDir = flutterDir.childDirectory('.plugins_build')
+      ..createSync(recursive: true);
+
     final sources = <String>[];
     final headerDirs = <String>{};
     final frameworks = <String>{};
+    final libraries = <String>{};
+    // Objects that are ready to archive without a clang pass — the compiled
+    // products of plugins that declare an external SwiftPM dependency (an
+    // external native SDK), harvested from a SwiftPM build below. Two such
+    // plugins that share a dependency (e.g. every Firebase plugin pulls in
+    // FirebaseCore and GoogleUtilities) each produce that dependency's merged
+    // object under the same name; only one copy may be linked — every object
+    // is force-loaded, so a second copy duplicates all its symbols. The first
+    // copy wins; that is only sound when every plugin resolves the same
+    // dependency versions, so mismatched `Package.resolved` pins are
+    // detected below and warned about.
+    final prebuiltObjects = <String>[];
+    final harvestedObjectNames = <String>{};
+    // Pinned external-package versions per plugin (from Package.resolved),
+    // for the version-mismatch warning.
+    final resolvedPinsByPlugin = <String, Map<String, String>>{};
+    // Plugins that link UserNotifications consume the runner's
+    // remote-notification rebroadcasts — used to warn when the app never
+    // installs the delegate that posts them.
+    final pluginsWantingNotifications = <String>[];
     // Plugins may also ship SwiftUI platform-view sources (any `.swift` under
     // `watchos/` except the SwiftPM manifest) — compiled per plugin, as the
     // plugin's own module, further down.
@@ -1146,13 +1173,39 @@ class NativeWatchosBundle extends Target {
       if (!pluginDir.existsSync()) {
         continue;
       }
+      final File packageSwift = pluginDir.childFile('Package.swift');
+      final String? manifest = _manifestContent(packageSwift);
+      // Plugins that wrap an external native SDK declare it as a SwiftPM
+      // package dependency. The CLI's own clang pass can't resolve that graph,
+      // so build the plugin's SwiftPM package with xcodebuild (which compiles
+      // its `.m` with the external module available) and harvest the objects.
+      // Every object is force-loaded below, which is required anyway: the
+      // SDK's `+load` component registration (and the FFI exports) have no
+      // link-time caller.
+      final bool hasExternalDeps = _hasExternalSwiftPackages(manifest);
+      if (hasExternalDeps) {
+        for (final String object
+            in await _buildPluginObjectsViaSwiftPackageManager(plugin, objDir)) {
+          if (harvestedObjectNames.add(globals.fs.path.basename(object))) {
+            prebuiltObjects.add(object);
+          }
+        }
+        resolvedPinsByPlugin[plugin.name] =
+            parseResolvedPins(pluginDir.childFile('Package.resolved'));
+      }
+      // The shared per-plugin pass runs for every plugin: headers stay
+      // visible to other plugins' compiles and platform-view sources are
+      // collected either way. Only the `.m` compile is skipped for
+      // external-dep plugins — SwiftPM compiled those above.
       for (final FileSystemEntity entity in pluginDir.listSync(recursive: true)) {
         if (entity is! File) {
           continue;
         }
         final String p = entity.path;
         if (p.endsWith('.m') || p.endsWith('.mm') || p.endsWith('.c')) {
-          sources.add(p);
+          if (!hasExternalDeps) {
+            sources.add(p);
+          }
         } else if (p.endsWith('.h')) {
           headerDirs.add(entity.parent.path);
         }
@@ -1163,22 +1216,29 @@ class NativeWatchosBundle extends Target {
         // Plugin view code builds SwiftUI views by definition.
         frameworks.add('SwiftUI');
       }
-      frameworks.addAll(parseLinkedFrameworks(pluginDir.childFile('Package.swift')));
+      final List<String> linkedFrameworks =
+          _manifestEntries(manifest, 'linkedFramework');
+      if (linkedFrameworks.contains('UserNotifications')) {
+        pluginsWantingNotifications.add(plugin.name);
+      }
+      frameworks.addAll(linkedFrameworks);
+      libraries.addAll(_manifestEntries(manifest, 'linkedLibrary'));
     }
-    if (sources.isEmpty && swiftSourcesByPlugin.isEmpty) {
+    _warnOnMismatchedResolvedPins(resolvedPinsByPlugin);
+    if (pluginsWantingNotifications.isNotEmpty) {
+      _warnIfAppDelegateNotInstalled(watchosProjectDir, pluginsWantingNotifications);
+    }
+    if (sources.isEmpty && swiftSourcesByPlugin.isEmpty && prebuiltObjects.isEmpty) {
       return null;
     }
     // watchOS plugins virtually always need these; harmless if already linked.
     frameworks.addAll(<String>['WatchKit', 'Foundation']);
 
-    final Directory flutterDir = watchosProjectDir.childDirectory('Flutter');
-    final Directory objDir = flutterDir.childDirectory('.plugins_build')
-      ..createSync(recursive: true);
     final clangTarget = buildInfo.simulator
         ? 'arm64-apple-watchos9.0-simulator'
         : 'arm64-apple-watchos9.0';
 
-    final objects = <String>[];
+    final objects = <String>[...prebuiltObjects];
     for (final src in sources) {
       final String obj = globals.fs.path.join(objDir.path, '${globals.fs.path.basename(src)}.o');
       final ProcessResult r = await globals.processManager.run(<String>[
@@ -1263,7 +1323,7 @@ class NativeWatchosBundle extends Target {
       'Built watchOS plugin archive ($archive) from ${objects.length} object(s); '
       'force-loading into Runner with frameworks: ${frameworks.join(', ')}',
     );
-    return (archive, frameworks);
+    return (archive, frameworks, libraries);
   }
 
   /// Appends the link flags for the host-module and plugin archives to
@@ -1281,7 +1341,7 @@ class NativeWatchosBundle extends Target {
   void _appendNativeLinkFlags(
     Directory watchosProjectDir, {
     required String? hostArchive,
-    required (String, Set<String>)? pluginArchive,
+    required (String, Set<String>, Set<String>)? pluginArchive,
   }) {
     if (hostArchive == null && pluginArchive == null) {
       return;
@@ -1300,10 +1360,14 @@ class NativeWatchosBundle extends Target {
       }
     }
     if (pluginArchive != null) {
-      final (String archive, Set<String> frameworks) = pluginArchive;
+      final (String archive, Set<String> frameworks, Set<String> libraries) =
+          pluginArchive;
       ldflags.write(' -force_load $archive');
       for (final fw in frameworks) {
         ldflags.write(' -framework $fw');
+      }
+      for (final lib in libraries) {
+        ldflags.write(' -l$lib');
       }
     }
 
@@ -1336,16 +1400,242 @@ class NativeWatchosBundle extends Target {
         );
   }
 
-  /// Parses `.linkedFramework("X")` entries from a plugin's `Package.swift`.
-  @visibleForTesting
-  static List<String> parseLinkedFrameworks(File packageSwift) {
-    if (!packageSwift.existsSync()) {
+  /// Reads a plugin's `Package.swift` once; null when absent. The manifest
+  /// helpers below take the content so one read serves all of them.
+  static String? _manifestContent(File packageSwift) =>
+      packageSwift.existsSync() ? packageSwift.readAsStringSync() : null;
+
+  static List<String> _manifestEntries(String? content, String directive) {
+    if (content == null) {
       return const <String>[];
     }
-    final String content = packageSwift.readAsStringSync();
     return RegExp(
-      r'\.linkedFramework\(\s*"([^"]+)"\s*\)',
+      '\\.$directive\\(\\s*"([^"]+)"\\s*\\)',
     ).allMatches(content).map((Match m) => m.group(1)!).toList();
+  }
+
+  /// Parses `.linkedFramework("X")` entries from a plugin's `Package.swift`.
+  @visibleForTesting
+  static List<String> parseLinkedFrameworks(File packageSwift) =>
+      _manifestEntries(_manifestContent(packageSwift), 'linkedFramework');
+
+  /// Parses `.linkedLibrary("z")` entries from a plugin's `Package.swift`
+  /// (e.g. `z`, `c++`) — emitted as `-l<name>` when linking Runner. Plugins
+  /// wrapping an external SDK declare the system libraries it needs here.
+  @visibleForTesting
+  static List<String> parseLinkedLibraries(File packageSwift) =>
+      _manifestEntries(_manifestContent(packageSwift), 'linkedLibrary');
+
+  /// Whether a plugin's `Package.swift` declares an external SwiftPM package
+  /// dependency — i.e. it links an external native SDK, not just system
+  /// frameworks. Such plugins are built with xcodebuild's SwiftPM (see
+  /// [_buildPluginObjectsViaSwiftPackageManager]) instead of the direct clang
+  /// pass, because the CLI's clang invocation can't resolve an SPM graph.
+  ///
+  /// Any `.package(…)` dependency counts, whatever its argument order or
+  /// form (`url:`, `path:`, `name:` first, registry `id:`); line comments are
+  /// stripped first so a commented-out dependency doesn't reroute the build.
+  @visibleForTesting
+  static bool hasExternalSwiftPackages(File packageSwift) =>
+      _hasExternalSwiftPackages(_manifestContent(packageSwift));
+
+  static bool _hasExternalSwiftPackages(String? content) {
+    if (content == null) {
+      return false;
+    }
+    final String code = content.replaceAll(RegExp(r'//[^\n]*'), '');
+    return code.contains('.package(');
+  }
+
+  /// Warns when a plugin consumes the runner's remote-notification
+  /// rebroadcasts (derived: its manifest links UserNotifications) but the
+  /// app never installs `FlutterWatchOSAppDelegate` — the plugin would be
+  /// silently inert, like a pluginClass-only plugin.
+  static void _warnIfAppDelegateNotInstalled(
+    Directory watchosProjectDir,
+    List<String> pluginNames,
+  ) {
+    final String names = pluginNames.join(', ');
+    if (isLegacyRunnerProject(watchosProjectDir)) {
+      globals.logger.printWarning(
+        'The following plugin(s) use remote notifications, but this is a '
+        'legacy runner project (Runner/FlutterRunner.swift) that does not '
+        'build the FlutterWatchOS host module providing '
+        'FlutterWatchOSAppDelegate — notification callbacks will not reach '
+        'them: $names. Migrate the runner to the current template '
+        '(host-module App.swift) to use remote notifications.',
+      );
+      return;
+    }
+    final Directory runnerDir = watchosProjectDir.childDirectory('Runner');
+    if (!runnerDir.existsSync()) {
+      return;
+    }
+    final bool installed = runnerDir
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((File f) => f.path.endsWith('.swift'))
+        .any((File f) =>
+            f.readAsStringSync().contains('WKApplicationDelegateAdaptor'));
+    if (!installed) {
+      globals.logger.printWarning(
+        'The following plugin(s) use remote notifications, but the app '
+        'never installs FlutterWatchOSAppDelegate, so the APNs token and '
+        'notification callbacks will not reach them: $names. Add this line '
+        'inside your App struct in watchos/Runner/App.swift:\n'
+        '  @WKApplicationDelegateAdaptor(FlutterWatchOSAppDelegate.self) '
+        'private var flutterAppDelegate',
+      );
+    }
+  }
+
+  /// Warns when two plugins pin different versions of the same external
+  /// package: the harvested shared objects are deduplicated first-wins by
+  /// name, which is only sound when every plugin resolves the same build.
+  static void _warnOnMismatchedResolvedPins(
+    Map<String, Map<String, String>> resolvedPinsByPlugin,
+  ) {
+    if (resolvedPinsByPlugin.length < 2) {
+      return;
+    }
+    // identity -> version -> plugins pinning it.
+    final byIdentity = <String, Map<String, List<String>>>{};
+    resolvedPinsByPlugin.forEach((String plugin, Map<String, String> pins) {
+      pins.forEach((String identity, String version) {
+        (byIdentity[identity] ??= <String, List<String>>{})
+            .putIfAbsent(version, () => <String>[])
+            .add(plugin);
+      });
+    });
+    byIdentity.forEach((String identity, Map<String, List<String>> versions) {
+      if (versions.length > 1) {
+        final String detail = versions.entries
+            .map((MapEntry<String, List<String>> e) =>
+                '${e.value.join(', ')} -> ${e.key}')
+            .join('; ');
+        globals.logger.printWarning(
+          'watchOS plugins pin different versions of the shared native '
+          'package "$identity" ($detail). One copy of its objects is linked '
+          '(first wins), which can fail the link or misbehave at runtime — '
+          "align the plugins' Package.swift constraints / Package.resolved.",
+        );
+      }
+    });
+  }
+
+  /// Parses a SwiftPM `Package.resolved` into `identity -> pinned version`
+  /// (or revision when no version exists). Returns an empty map when the
+  /// file is absent or unreadable — resolution info is advisory here.
+  @visibleForTesting
+  static Map<String, String> parseResolvedPins(File packageResolved) {
+    if (!packageResolved.existsSync()) {
+      return const <String, String>{};
+    }
+    try {
+      final Object? decoded = json.decode(packageResolved.readAsStringSync());
+      if (decoded is! Map<String, dynamic>) {
+        return const <String, String>{};
+      }
+      // v2/v3: top-level "pins"; v1: "object" -> "pins".
+      final Object? pins =
+          decoded['pins'] ?? (decoded['object'] as Map<String, dynamic>?)?['pins'];
+      if (pins is! List<Object?>) {
+        return const <String, String>{};
+      }
+      final pinned = <String, String>{};
+      for (final Object? pin in pins) {
+        if (pin is! Map<String, dynamic>) {
+          continue;
+        }
+        final Object? identity = pin['identity'] ?? pin['package'];
+        final Object? state = pin['state'];
+        if (identity is! String || state is! Map<String, dynamic>) {
+          continue;
+        }
+        final Object? version = state['version'] ?? state['revision'];
+        if (version is String) {
+          pinned[identity.toLowerCase()] = version;
+        }
+      }
+      return pinned;
+    } on FormatException {
+      return const <String, String>{};
+    }
+  }
+
+  /// Builds a plugin's SwiftPM package (its `watchos/Package.swift`, which
+  /// pulls in an external native SDK) with xcodebuild for the active watch
+  /// SDK, and returns every compiled object under the build's Products
+  /// directory — the plugin's own object (carrying the FFI exports) plus the
+  /// SDK's objects. The caller force-loads them all into Runner.
+  Future<List<String>> _buildPluginObjectsViaSwiftPackageManager(
+    WatchosSpmPlugin plugin,
+    Directory objDir,
+  ) async {
+    final Directory packageDir = globals.fs.directory(plugin.packagePath);
+    final Directory derivedData = objDir.childDirectory('spm_${plugin.name}');
+    final destination = buildInfo.simulator
+        ? 'generic/platform=watchOS Simulator'
+        : 'generic/platform=watchOS';
+    // Match the app's build configuration so the objects' optimization level
+    // and the Products subdirectory (`<Config>-<sdk>`) line up.
+    final configuration =
+        buildInfo.buildInfo.mode == BuildMode.debug ? 'Debug' : 'Release';
+
+    globals.logger.printStatus(
+      'Resolving and building watchOS SDK dependency for ${plugin.name} '
+      '(SwiftPM)…',
+    );
+    final ProcessResult result = await globals.processManager.run(
+      <String>[
+        'xcrun',
+        'xcodebuild',
+        '-scheme',
+        plugin.name,
+        '-destination',
+        destination,
+        '-configuration',
+        configuration,
+        '-derivedDataPath',
+        derivedData.path,
+        '-sdk',
+        buildInfo.sdkName,
+        'build',
+      ],
+      workingDirectory: packageDir.path,
+    );
+    if (result.exitCode != 0) {
+      globals.logger.printError(
+        'Building watchOS plugin ${plugin.name} via SwiftPM failed:\n'
+        '${result.stdout}\n${result.stderr}',
+      );
+      throw Exception('Building watchOS plugin SwiftPM package failed');
+    }
+
+    final Directory productsDir = derivedData
+        .childDirectory('Build')
+        .childDirectory('Products')
+        .childDirectory('$configuration-${buildInfo.sdkName}');
+    if (!productsDir.existsSync()) {
+      throw Exception(
+        'SwiftPM build for ${plugin.name} produced no products directory at '
+        '${productsDir.path}',
+      );
+    }
+    final objects = <String>[
+      for (final FileSystemEntity e in productsDir.listSync())
+        if (e is File && e.path.endsWith('.o')) e.path,
+    ];
+    if (objects.isEmpty) {
+      throw Exception(
+        'SwiftPM build for ${plugin.name} produced no object files in '
+        '${productsDir.path}',
+      );
+    }
+    globals.logger.printTrace(
+      'Harvested ${objects.length} SwiftPM object(s) for ${plugin.name}.',
+    );
+    return objects;
   }
 
   /// Builds the gen_snapshot command line for the watchOS AOT assembly step.
