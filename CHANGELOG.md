@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A failed engine-artifact download no longer points at a GitHub repo that
+  does not exist. That path is only reachable when `WATCHOS_ENGINE_BASE_URL`
+  redirects the CLI at a custom host, so the error now names that host and the
+  tag it looked for.
+
 ## 0.1.0-beta.2 (closed beta)
 
 Requires engine artifacts **v0.1.1** (`bin/internal/engine.version`), which add

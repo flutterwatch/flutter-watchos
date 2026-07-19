@@ -98,8 +98,15 @@ String? apiGateErrorCode(File responseFile) {
   return null;
 }
 
-/// The default GitHub Releases base URL for engine artifact zips.
-/// Tag and filename are appended: {base}/{tag}/{name}.zip
+/// Fallback base URL for engine artifact zips, used only when the artifact
+/// API is switched off ([kArtifactApiByDefault] false, or
+/// `WATCHOS_ENGINE_BASE_URL` set to a non-http value). Tag and filename are
+/// appended: {base}/{tag}/{name}.zip
+///
+/// Artifacts are served from flutterwatch.dev, not from GitHub — this repo
+/// does not exist, so reaching this URL means the API was disabled without a
+/// replacement host being supplied. Kept as the shape of a base URL rather
+/// than a working endpoint.
 const String kDefaultEngineBaseUrl =
     'https://github.com/flutterwatch/engine-artifacts/releases/download';
 
@@ -390,12 +397,16 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             }
           } else if (curlResult.exitCode != 0) {
             status.cancel();
+            // Only reachable when WATCHOS_ENGINE_BASE_URL points the CLI at a
+            // custom host, so send the user to that host — not to the default
+            // one, which is not where their artifacts live.
             throwToolExit(
               'Failed to download $zipName from $url.\n\n${curlResult.stderr}\n\n'
-              'Check that the release tag "$tag" exists at:\n'
-              '  https://github.com/flutterwatch/engine-artifacts/releases\n\n'
-              'You can also override the download URL with the '
-              'WATCHOS_ENGINE_BASE_URL environment variable.',
+              'Check that "$tag/$zipName" exists under the artifact host:\n'
+              '  $engineBaseUrl\n\n'
+              'The tag comes from bin/internal/engine.version; the host from '
+              'the WATCHOS_ENGINE_BASE_URL environment variable. Unset that '
+              'variable to download from flutterwatch.dev instead.',
             );
           }
 
