@@ -143,7 +143,8 @@ where possible; watchOS-specific behaviour is called out per command.
 - ### `login` / `logout`
 
   Connect this machine to your flutterwatch.dev account (required to
-  download engine artifacts; during the closed beta, access is by invite).
+  download engine artifacts; joining the closed beta is self-serve at
+  flutterwatch.dev).
 
   ```sh
   flutter-watchos login
