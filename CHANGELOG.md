@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.1.0-beta.2 (closed beta)
+
+Requires engine artifacts **v0.1.1** (`bin/internal/engine.version`), which add
+the platform-view embedder ABI. The v0.1.0 artifacts stay in place, so a
+checkout pinned to them keeps working — but platform views need the bump.
+
+- **Platform views**: plugins can embed native SwiftUI views in a Flutter
+  layout (`WatchPlatformView` in `package:flutter_watchos`), and can ship
+  their own SwiftUI sources for the CLI to compile into the app.
+- **Host module**: the runner glue is compiled by the CLI into
+  `watchos/Flutter/` as the `FlutterWatchOS` module instead of being copied
+  into the app template, so host fixes reach existing apps on a CLI update.
+  Apps carrying their own `Runner/FlutterRunner.swift` stay in legacy mode.
+- **External SwiftPM SDKs**: a plugin's `watchos/Package.swift` may depend on
+  an external Swift package (e.g. the Firebase Apple SDK); the CLI resolves
+  and builds it through xcodebuild's SwiftPM and force-loads the objects,
+  linking one shared copy across plugins.
+- **`FlutterWatchOSAppDelegate`**: opt-in remote-notification plumbing (APNs
+  token and payload delivery) for plugins such as firebase_messaging. The
+  build warns when a plugin needs it but the app has not installed it.
+- **Content scale**: `FlutterWatchOSContentScale` fits phone-designed UIs on
+  the watch screen without touching Dart code.
+- **`plugin port`**: scaffolds a watchOS FFI port of an existing plugin,
+  optionally with the upstream example (`--include-example`).
 - Standalone vs. companion host modes, derived from the project shape (no
   configuration): a project without an iOS app ships the watch-only
   (`WKWatchOnly`) watch app inside the thin HostApp container in `watchos/`;
