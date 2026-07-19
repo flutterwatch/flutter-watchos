@@ -6,7 +6,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 > **macOS only.** Xcode is required.
 
-> **Closed beta.** The watchOS engine ships as pre-built binaries tied to your account; access is currently by invite. Request access at [flutterwatch.dev](https://flutterwatch.dev), then `flutter-watchos login`.
+> **Closed beta.** The watchOS engine ships as pre-built binaries tied to your account. Joining is self-serve and instant — sign in with GitHub at [flutterwatch.dev](https://flutterwatch.dev), then `flutter-watchos login`.
 
 ## Current version
 
