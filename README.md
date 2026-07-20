@@ -85,7 +85,7 @@ flutter:
 
 A watchOS build only loads plugins that declare this key. Plugins targeting only `ios:` are not picked up — Apple Watch has a different surface (no WebKit, Digital Crown input, a tiny screen), so the safe default is to require explicit opt-in.
 
-The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the watch-specific APIs the framework doesn't cover: Digital Crown scrolling and raw input, Taptic Engine haptics, device info, and the system-clock toggle. A plugin that only implements iOS or macOS needs a watchOS implementation added under this key — see [Using and writing watchOS plugins](doc/plugins.md). (An automated `plugin port` scaffolder is planned.)
+The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the watch-specific APIs the framework doesn't cover: Digital Crown scrolling and raw input, Taptic Engine haptics, device info, and the system-clock toggle. A plugin that only implements iOS or macOS needs a watchOS implementation added under this key — see [Using and writing watchOS plugins](doc/plugins.md). `flutter-watchos plugin port --from-pub <package>` scaffolds that federated `*_watchos` package for you, along with a report of how each API the plugin uses fares on watchOS — you supply the native implementation.
 
 ### Writing cross-platform apps (iOS + Android + watchOS)
 
@@ -133,6 +133,7 @@ Text input (the system keyboard), Digital Crown scrolling and haptics, and app-l
 - [Getting started](doc/get-started.md)
 - [Supported commands](doc/commands.md)
 - [Debugging apps](doc/debug-app.md)
+- [Fragment shaders](doc/shaders.md)
 - [Publishing to the App Store](doc/publish-app.md)
 - [Accounts & engine artifacts](doc/accounts.md)
 

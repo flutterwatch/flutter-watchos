@@ -149,8 +149,35 @@ needs these callbacks and the app cannot deliver them.
 
 ## Porting an existing iOS plugin
 
-`flutter-watchos plugin port` will scaffold a federated `*_watchos` package
-from an existing iOS/macOS plugin. It is **not yet available** in the
-current build — for now, start from `create --template=plugin` and copy the
-relevant native code, replacing UIKit APIs with WatchKit/SwiftUI
-equivalents.
+`flutter-watchos plugin port` scaffolds a federated `*_watchos` package from
+an existing iOS/macOS plugin, so you start from a wired-up package instead of
+an empty one:
+
+```sh
+# from pub.dev
+flutter-watchos plugin port --from-pub sensors_plus
+
+# or from a git checkout
+flutter-watchos plugin port --from-git https://github.com/… 
+```
+
+| Flag | Effect |
+|---|---|
+| `--from-pub <pkg>` | Fetch the source plugin from pub.dev |
+| `--from-git <url>` | Fetch the source plugin from a git URL |
+| `--dry-run` | Print what would be written without writing it |
+| `--force` | Overwrite an existing output package |
+| `--report` | Write a `PORTING_REPORT.md` (on by default) |
+| `--include-example` | Wire the source plugin's example app up for watchOS |
+
+What you get is the whole federated shell: `pubspec.yaml` with the `watchos:`
+platform key and `ffiSymbols`, the Dart class implementing the upstream
+platform interface, the `watchos/Classes/` native skeleton, and a
+`PORTING_REPORT.md` listing every API the source plugin used with its watchOS
+availability.
+
+**The native implementation is yours to write.** The porter emits a scaffold,
+not working code — it cannot know what the WatchKit or SwiftUI equivalent of
+a given UIKit call should be. The report tells you which APIs carry over,
+which need a substitute, and which have no watch equivalent at all; you fill
+in the Swift/Objective-C behind the exported symbols.
