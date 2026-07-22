@@ -16,6 +16,13 @@
   listed first and failing with `No Account for Team` naming an id that
   appears nowhere in the project. Setting `DEVELOPMENT_TEAM` in the
   environment was the workaround; it is no longer needed.
+- **Signing**: when a project sets no team and the keychain holds more than
+  one, the build now stops and lists them instead of picking whichever the
+  keychain returned first. That order means nothing — an expired or closed
+  team sorts ahead of a working one just as easily — so the guess cost a full
+  build and then failed inside Xcode with `No Account for Team` naming an id
+  from no project. Several certificates belonging to one team are not
+  ambiguous and still auto-detect.
 - A failed engine-artifact download no longer points at a GitHub repo that
   does not exist. That path is only reachable when `WATCHOS_ENGINE_BASE_URL`
   redirects the CLI at a custom host, so the error now names that host and the
