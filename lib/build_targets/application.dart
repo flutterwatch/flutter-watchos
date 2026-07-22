@@ -539,8 +539,7 @@ class NativeWatchosBundle extends Target {
     return teamRegex.firstMatch(pbxprojContent)?.group(1);
   }
 
-  /// Discovers the development teams of the Apple Development signing
-  /// identities in the login keychain.
+  /// Discovers the teams of the signing identities in the login keychain.
   Future<List<String>> _discoverTeamsFromKeychain() async {
     try {
       final ProcessResult result = await globals.processManager.run(<String>[
@@ -559,17 +558,24 @@ class NativeWatchosBundle extends Target {
     }
   }
 
-  /// The distinct team ids of the Apple Development identities in `security
-  /// find-identity` output, in the order it lists them.
+  /// The distinct team ids in `security find-identity` output, in the order it
+  /// lists them.
   ///
   /// Distinct, because a team routinely holds several identities (one per
   /// certificate) and that says nothing about which team to sign with; only
-  /// the number of *teams* makes the choice ambiguous. Development identities
-  /// only: these are device builds, and an Apple Distribution certificate
-  /// cannot sign one.
+  /// the number of *teams* makes the choice ambiguous.
+  ///
+  /// Every identity counts, not just `Apple Development` ones. Signing here is
+  /// automatic and runs with `-allowProvisioningUpdates`, so what a team needs
+  /// is an Xcode account, not a development certificate already sitting in the
+  /// keychain — Xcode issues one on demand. Reading only development
+  /// identities hid exactly the team the developer meant to use whenever
+  /// theirs had so far only been used to distribute.
   @visibleForTesting
   static List<String> parseKeychainTeams(String securityOutput) {
-    final identityRegex = RegExp(r'Apple Development:[^\n]*\(([A-Z0-9]{10})\)');
+    // Identity lines end `... (TEAMID)"`; anchoring on the closing quote keeps
+    // a team id out of a certificate's common name.
+    final identityRegex = RegExp(r'\(([A-Z0-9]{10})\)"');
     final teams = <String>[];
     for (final RegExpMatch match in identityRegex.allMatches(securityOutput)) {
       final String team = match.group(1)!;
