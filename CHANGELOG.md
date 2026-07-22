@@ -9,6 +9,13 @@
   built before this ship keep working and report "not dimmed" (their
   `WatchAlwaysOn.isSupported` reads false). Needs `flutter_watchos`
   0.1.0-beta.6 or later; the wiring is skipped for apps that don't link it.
+- **Signing**: device builds read `DEVELOPMENT_TEAM` from the Xcode project
+  again when the value is quoted — which is how `create` writes it, so this
+  affected every freshly created project. The team was silently not found and
+  the build fell through to the keychain, signing with whatever identity was
+  listed first and failing with `No Account for Team` naming an id that
+  appears nowhere in the project. Setting `DEVELOPMENT_TEAM` in the
+  environment was the workaround; it is no longer needed.
 - A failed engine-artifact download no longer points at a GitHub repo that
   does not exist. That path is only reachable when `WATCHOS_ENGINE_BASE_URL`
   redirects the CLI at a custom host, so the error now names that host and the
