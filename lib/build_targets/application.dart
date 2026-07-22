@@ -477,13 +477,29 @@ class NativeWatchosBundle extends Target {
       return <String>['DEVELOPMENT_TEAM=$pbxprojTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
-    final String? keychainTeam = await _discoverTeamFromKeychain();
-    if (keychainTeam != null) {
+    final List<String> keychainTeams = await _discoverTeamsFromKeychain();
+    if (keychainTeams.length == 1) {
       globals.logger.printStatus(
         'Automatically signing watchOS for device deployment using development '
-        'team auto-detected from the keychain: $keychainTeam',
+        'team auto-detected from the keychain: ${keychainTeams.single}',
       );
-      return <String>['DEVELOPMENT_TEAM=$keychainTeam', 'CODE_SIGN_STYLE=Automatic'];
+      return <String>['DEVELOPMENT_TEAM=${keychainTeams.single}', 'CODE_SIGN_STYLE=Automatic'];
+    }
+
+    // More than one team and nothing to choose between them: keychain order is
+    // arbitrary, and an expired or closed team sorts ahead of a working one as
+    // easily as not. Guessing costs a full build and reports the wrong team's
+    // id in an Xcode error that names nothing the developer recognises, so ask
+    // instead.
+    if (keychainTeams.length > 1) {
+      throwToolExit(
+        'Found ${keychainTeams.length} development teams in the keychain, and '
+        'the Xcode project does not say which to use:\n'
+        '${keychainTeams.map((String t) => '  $t').join('\n')}\n\n'
+        'Set the team for this build:\n'
+        '  DEVELOPMENT_TEAM=<team_id> flutter-watchos build watchos --release\n'
+        'or once, in watchos/Runner.xcodeproj → Signing & Capabilities.',
+      );
     }
 
     globals.logger.printError(
@@ -523,9 +539,9 @@ class NativeWatchosBundle extends Target {
     return teamRegex.firstMatch(pbxprojContent)?.group(1);
   }
 
-  /// Discovers the development team ID from the first valid Apple Development
-  /// signing identity in the login keychain.
-  Future<String?> _discoverTeamFromKeychain() async {
+  /// Discovers the development teams of the Apple Development signing
+  /// identities in the login keychain.
+  Future<List<String>> _discoverTeamsFromKeychain() async {
     try {
       final ProcessResult result = await globals.processManager.run(<String>[
         'security',
@@ -535,16 +551,33 @@ class NativeWatchosBundle extends Target {
         'codesigning',
       ]);
       if (result.exitCode != 0) {
-        return null;
+        return const <String>[];
       }
-
-      final output = result.stdout as String;
-      final identityRegex = RegExp(r'Apple Development:.*\(([A-Z0-9]{10})\)');
-      final Match? match = identityRegex.firstMatch(output);
-      return match?.group(1);
+      return parseKeychainTeams(result.stdout as String);
     } on Exception {
-      return null;
+      return const <String>[];
     }
+  }
+
+  /// The distinct team ids of the Apple Development identities in `security
+  /// find-identity` output, in the order it lists them.
+  ///
+  /// Distinct, because a team routinely holds several identities (one per
+  /// certificate) and that says nothing about which team to sign with; only
+  /// the number of *teams* makes the choice ambiguous. Development identities
+  /// only: these are device builds, and an Apple Distribution certificate
+  /// cannot sign one.
+  @visibleForTesting
+  static List<String> parseKeychainTeams(String securityOutput) {
+    final identityRegex = RegExp(r'Apple Development:[^\n]*\(([A-Z0-9]{10})\)');
+    final teams = <String>[];
+    for (final RegExpMatch match in identityRegex.allMatches(securityOutput)) {
+      final String team = match.group(1)!;
+      if (!teams.contains(team)) {
+        teams.add(team);
+      }
+    }
+    return teams;
   }
 
   /// Stages the embedder engine bits into the watchos project's `Flutter/`

@@ -100,4 +100,54 @@ void main() {
       );
     });
   });
+
+  group('parseKeychainTeams', () {
+    test('returns nothing when the keychain has no development identity', () {
+      expect(
+        NativeWatchosBundle.parseKeychainTeams('     0 valid identities found'),
+        isEmpty,
+      );
+    });
+
+    test('collapses several certificates of one team to a single team', () {
+      // A team accumulates an identity per certificate; that is not a choice
+      // between teams, so it must not read as an ambiguous keychain.
+      const output = '''
+  1) AAAA "Apple Development: dev@example.com (5JRCVYT8MY)"
+  2) BBBB "Apple Development: dev@example.com (5JRCVYT8MY)"
+     2 valid identities found''';
+      expect(
+        NativeWatchosBundle.parseKeychainTeams(output),
+        <String>['5JRCVYT8MY'],
+      );
+    });
+
+    test('reports every distinct team, in keychain order', () {
+      // Real output from a machine where auto-detection picked the wrong team:
+      // the defunct personal team sorts first, so signing failed with "No
+      // Account for Team" naming an id absent from the project. Distribution
+      // and Developer ID identities are not development identities and must
+      // not be offered as candidates.
+      const output = '''
+  1) AAAA "Apple Development: dev@example.com (5JRCVYT8MY)"
+  2) BBBB "Apple Development: dev@example.com (5JRCVYT8MY)"
+  3) CCCC "Apple Development: EXAMPLE DEVELOPER (PHVH875RU9)"
+  4) DDDD "Apple Distribution: EXAMPLE DEVELOPER (866PPL96Z4)"
+  5) EEEE "Developer ID Application: EXAMPLE DEVELOPER (866PPL96Z4)"
+     5 valid identities found''';
+      expect(
+        NativeWatchosBundle.parseKeychainTeams(output),
+        <String>['5JRCVYT8MY', 'PHVH875RU9'],
+      );
+    });
+
+    test('does not run identities together across lines', () {
+      // `.*` without a newline guard lets one identity's prefix pair with a
+      // later line's team id.
+      const output = '''
+  1) AAAA "Apple Development: dev@example.com"
+  2) BBBB "Apple Distribution: EXAMPLE DEVELOPER (866PPL96Z4)"''';
+      expect(NativeWatchosBundle.parseKeychainTeams(output), isEmpty);
+    });
+  });
 }
