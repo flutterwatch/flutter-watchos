@@ -10,7 +10,7 @@ import 'dart:io' show Platform;
 /// On a flutter-watchos build:
 /// - `Platform.operatingSystem == "watchos"`
 /// - `Platform.isIOS == true` (watchOS is an iOS-family OS)
-/// - `Platform.isWatch == true` (new Dart VM getter)
+/// - `Platform.isWatchOS == true` (new Dart VM getter)
 ///
 /// Since `Platform.isIOS` is `true` on both real iOS and watchOS, app code
 /// that wants to branch "iPhone/iPad only" vs "Apple Watch only" needs a way
@@ -33,16 +33,19 @@ import 'dart:io' show Platform;
 /// }
 /// ```
 ///
-/// Note on naming: we cannot add a true `Platform.isWatch` static getter —
-/// Dart does not (yet) support static extensions on external classes. The
-/// core Dart VM exposes `Platform.isWatch` via our engine patch; this class
-/// mirrors the existing convention of `isIOS` / `isAndroid`.
+/// Note on naming: our Dart VM patch does add a real `Platform.isWatchOS`, but
+/// prefer these helpers in app code. The analyzer resolves `dart:io` from the
+/// stock Dart SDK, which has no such getter, so naming it directly turns every
+/// IDE and `dart analyze` run red even though the code compiles and runs. We
+/// cannot paper over that with a static `Platform.isWatch` — Dart does not
+/// (yet) support static extensions on external classes — so this class mirrors
+/// the `isIOS` / `isAndroid` convention under its own name instead.
 abstract final class FlutterWatchosPlatform {
   /// Whether the current operating system is watchOS.
   ///
   /// Equivalent to `Platform.operatingSystem == 'watchos'` (the string emitted
   /// by our Dart VM patch on Apple Watch). The engine also exposes a native
-  /// `Platform.isWatch` getter at runtime, but we use the string check here
+  /// `Platform.isWatchOS` getter at runtime, but we use the string check here
   /// so code analyzes cleanly against an unpatched Dart SDK in IDE tooling.
   static bool get isWatch => Platform.operatingSystem == 'watchos';
 

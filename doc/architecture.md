@@ -65,8 +65,12 @@ Apps see honest-but-compatible platform values:
 | `Platform.isWatchOS` | `true` | First-class watch check |
 | `defaultTargetPlatform` | `TargetPlatform.iOS` | Same reason as `isIOS` |
 
-Branch watch-specific UI on `Platform.isWatchOS` (or
-`operatingSystem == "watchos"`), never on screen size alone.
+Branch watch-specific UI on `FlutterWatchosPlatform.isWatch` (or
+`operatingSystem == "watchos"`), never on screen size alone. `isWatchOS` comes
+from our Dart VM patch and does not exist in the stock SDK: naming it fails
+analysis even here, and hard-fails the CFE (`Member not found: 'isWatchOS'`)
+when regular Flutter compiles the same file for iOS or Android. Keep it out of
+any `lib/` shared with those targets.
 
 ## Build pipeline
 

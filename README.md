@@ -67,6 +67,13 @@ On a watchOS build, the Dart VM reports:
 | `Platform.isWatchOS` | `true` | `false` |
 | `defaultTargetPlatform` | `TargetPlatform.iOS` | `TargetPlatform.iOS` |
 
+**`Platform.isWatchOS` exists only inside this toolchain — don't put it in shared code.** The getter comes from our Dart VM patch, so it is real when *we* build the watch app, but it is absent from the stock Dart SDK. That has two consequences, and the second one is the serious one:
+
+- Your IDE reports `The getter 'isWatchOS' isn't defined for the type 'Platform'`, because the analyzer resolves `dart:io` from the stock SDK even here.
+- **Building the same file with regular Flutter fails outright** — `Error: Member not found: 'isWatchOS'`. Not a warning; the iOS and Android builds stop. Any `lib/` file shared with your iPhone or Android target must never name it.
+
+Write `FlutterWatchosPlatform.isWatch` (from the `flutter_watchos` package) instead. It is a plain `operatingSystem == "watchos"` comparison, so it compiles under every toolchain and answers `false` off the watch. Reach for `Platform.isWatchOS` only in watch-only code that no stock Flutter build ever compiles.
+
 **`Platform.isIOS` is `true` on watchOS.** Apple Watch runs the same Darwin kernel and Foundation as iPhone and iPad — it's part of the iOS family. Standard Flutter widgets that branch on `Platform.isIOS` or `defaultTargetPlatform` already render with iOS styling (Cupertino, SF font) on the watch, with no Flutter framework changes required.
 
 The Flutter framework that flutter-watchos uses is unmodified. watchOS identity is contributed entirely by the Dart VM in our engine build and by the `flutter-watchos` CLI itself.
@@ -91,7 +98,7 @@ The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the w
 
 If your app already targets iOS/Android and you're adding watchOS support, keep these patterns in mind:
 
-**1. Don't rely on `Platform.isIOS` alone for "phone/tablet iOS" logic.** It's also `true` on Apple Watch. Refine with `Platform.isWatch`:
+**1. Don't rely on `Platform.isIOS` alone for "phone/tablet iOS" logic.** It's also `true` on Apple Watch. Refine with the `flutter_watchos` helpers:
 
 ```dart
 import 'package:flutter_watchos/flutter_watchos.dart';
