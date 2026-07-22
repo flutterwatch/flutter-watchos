@@ -26,6 +26,7 @@ export 'src/platform_extension.dart'
     show FlutterWatchosPlatform, FlutterWatchosPlatformExt;
 export 'src/haptics.dart' show WatchHaptics, WatchHapticType;
 export 'src/status_bar.dart' show WatchStatusBar;
+export 'src/always_on.dart' show WatchAlwaysOn, WatchAlwaysOnBuilder;
 export 'src/scroll_physics.dart' show WatchScrollPhysics, WatchScrollBehavior;
 export 'src/crown_scroll.dart'
     show WatchCrownScroll, WatchCrownScrolling, WatchCrownSensitivity;

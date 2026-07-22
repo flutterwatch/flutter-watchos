@@ -109,7 +109,7 @@ if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
 }
 ```
 
-**2. Design for the watch screen and the Digital Crown.** Apps are small, scrollable, single-focus. Wrap scrollables in `WatchCrownScroll` for the native crown feel, or take the crown as raw input with `WatchCrown` for games and pickers — see the [`flutter_watchos`](packages/flutter_watchos) README.
+**2. Design for the watch screen and the Digital Crown.** Apps are small, scrollable, single-focus. Wrap scrollables in `WatchCrownScroll` for the native crown feel, or take the crown as raw input with `WatchCrown` for games and pickers. Handle the wrist going down with `WatchAlwaysOnBuilder` — watchOS keeps your app on screen, dimmed, so pause animations and hide private content. See the [`flutter_watchos`](packages/flutter_watchos) README.
 
 **3. Plugin dependencies:** if your iOS app uses `url_launcher`, `shared_preferences`, `path_provider`, etc., each one needs a watchOS federated package or your watch build will compile but calls will throw `MissingPluginException` at runtime. Audit your `pubspec.yaml` for plugins with native iOS code before porting.
 

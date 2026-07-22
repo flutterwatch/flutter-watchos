@@ -25,6 +25,9 @@ class WatchOSNativeBindings {
   bool get statusBarHidden => false;
   set statusBarHidden(bool hidden) {}
 
+  bool get alwaysOnActive => false;
+  bool get alwaysOnSupported => false;
+
   int get crownMode => 0;
   set crownMode(int mode) {}
   double consumeCrownDelta() => 0.0;

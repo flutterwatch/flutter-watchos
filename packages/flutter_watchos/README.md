@@ -23,6 +23,12 @@ channels, no async.
   watch draws over every app (visible by default, per the HIG; hide it for
   games and full-bleed UIs — watchOS cannot reposition it, so a custom
   placement means hiding it and drawing your own).
+- **Always-On** — `WatchAlwaysOn` / `WatchAlwaysOnBuilder` tell you when the
+  wrist is down and watchOS is showing your app dimmed, so you can pause
+  animations, hide private content, and drop bright fills (the HIG
+  expectation). It reflects SwiftUI's `\.isLuminanceReduced`, which is more
+  precise than `AppLifecycleState.inactive` — that also fires for notification
+  banners and Control Center.
 - **Digital Crown** — `WatchCrownScroll` gives scrollables the native feel:
   watch-tuned scroll physics (`WatchScrollPhysics` — a firm, live, shallow
   edge bounce instead of the iPhone-style deep stretch; no edge haptic, just
@@ -48,6 +54,38 @@ if (FlutterWatchosPlatform.isWatch) {
   // compact, crown-driven UI
 }
 ```
+
+### Always-On
+
+When the wrist drops, watchOS keeps your app on screen at reduced luminance
+rather than blanking it. Your last frame stays visible with no work on your
+part — but the HIG expects you to *react*: stop animations that now burn
+battery for nobody, and hide anything a bystander shouldn't read.
+
+```dart
+WatchAlwaysOnBuilder(
+  builder: (context, alwaysOn, _) => alwaysOn
+      ? const DimmedFace()   // static, dark, no private data
+      : const LiveFace(),    // the full UI
+)
+```
+
+Outside the widget tree — to pause a controller or cancel a timer — listen to
+`WatchAlwaysOn.state`, or read `WatchAlwaysOn.isActive` once.
+
+Don't reach for `AppLifecycleState.inactive` here: watchOS also resigns active
+for notification banners and Control Center, so it can't tell "wrist down"
+from "something is covering the app". This API reflects SwiftUI's
+`\.isLuminanceReduced`, which means exactly the former.
+
+The two do fire together, in no guaranteed order — so **don't read
+`WatchAlwaysOn.isActive` from inside your own `didChangeAppLifecycleState`**.
+At that instant the watch host may not have reported yet, and a one-shot read
+can return the pre-transition value. Listen to `WatchAlwaysOn.state` and let it
+settle. Doing so doesn't disturb your own lifecycle observers.
+
+An app that would rather blank than dim opts out in its `Info.plist` with
+`WKSupportsAlwaysOnDisplay` = `false`; `isActive` then never becomes true.
 
 ### Digital Crown
 

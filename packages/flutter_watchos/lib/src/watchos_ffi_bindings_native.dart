@@ -73,6 +73,14 @@ class WatchOSNativeBindings {
       .lookupFunction<Void Function(Bool), void Function(bool)>(
           'flutter_watchos_set_status_bar_hidden');
 
+  late final bool Function() _alwaysOnActive = _lib!
+      .lookupFunction<Bool Function(), bool Function()>(
+          'flutter_watchos_always_on_active');
+
+  late final bool Function() _alwaysOnSupported = _lib!
+      .lookupFunction<Bool Function(), bool Function()>(
+          'flutter_watchos_always_on_supported');
+
   late final int Function() _crownMode = _lib!
       .lookupFunction<Int32 Function(), int Function()>(
           'flutter_watchos_crown_mode');
@@ -189,6 +197,18 @@ class WatchOSNativeBindings {
   set statusBarHidden(bool hidden) {
     if (_lib != null) _setStatusBarHidden(hidden);
   }
+
+  // --- Always-On display ---
+  // Read-only from Dart: the watch host is the only writer. Null-safe against
+  // [WatchOSNativeBindings.forTesting] — off-watch both read false, i.e. "not
+  // dimmed, and nothing is reporting".
+
+  /// Whether the display is currently in the dimmed Always-On state.
+  bool get alwaysOnActive => _lib == null ? false : _alwaysOnActive();
+
+  /// Whether the watch host reports Always-On state at all (false under a
+  /// host module built before the bridge existed).
+  bool get alwaysOnSupported => _lib == null ? false : _alwaysOnSupported();
 
   // --- Raw Digital Crown bridge ---
   // Null-safe against the [WatchOSNativeBindings.forTesting] constructor (no
