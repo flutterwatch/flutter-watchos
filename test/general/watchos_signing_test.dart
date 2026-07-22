@@ -102,7 +102,7 @@ void main() {
   });
 
   group('parseKeychainTeams', () {
-    test('returns nothing when the keychain has no development identity', () {
+    test('returns nothing when the keychain has no identity', () {
       expect(
         NativeWatchosBundle.parseKeychainTeams('     0 valid identities found'),
         isEmpty,
@@ -123,11 +123,15 @@ void main() {
     });
 
     test('reports every distinct team, in keychain order', () {
-      // Real output from a machine where auto-detection picked the wrong team:
+      // Shape of a real keychain where auto-detection picked the wrong team:
       // the defunct personal team sorts first, so signing failed with "No
-      // Account for Team" naming an id absent from the project. Distribution
-      // and Developer ID identities are not development identities and must
-      // not be offered as candidates.
+      // Account for Team" naming an id absent from the project.
+      //
+      // 866PPL96Z4 must appear even though it holds no Apple Development
+      // certificate. It is the team that actually builds on that machine —
+      // automatic signing runs with -allowProvisioningUpdates and issues a
+      // development certificate for any team with an Xcode account, so
+      // listing only development identities omits the right answer.
       const output = '''
   1) AAAA "Apple Development: dev@example.com (5JRCVYT8MY)"
   2) BBBB "Apple Development: dev@example.com (5JRCVYT8MY)"
@@ -137,17 +141,18 @@ void main() {
      5 valid identities found''';
       expect(
         NativeWatchosBundle.parseKeychainTeams(output),
-        <String>['5JRCVYT8MY', 'PHVH875RU9'],
+        <String>['5JRCVYT8MY', 'PHVH875RU9', '866PPL96Z4'],
       );
     });
 
-    test('does not run identities together across lines', () {
-      // `.*` without a newline guard lets one identity's prefix pair with a
-      // later line's team id.
-      const output = '''
-  1) AAAA "Apple Development: dev@example.com"
-  2) BBBB "Apple Distribution: EXAMPLE DEVELOPER (866PPL96Z4)"''';
-      expect(NativeWatchosBundle.parseKeychainTeams(output), isEmpty);
+    test('ignores a ten-character token in a certificate name', () {
+      // Only the trailing parenthesised team id counts; anchoring on the
+      // closing quote is what keeps a common name from reading as a team.
+      const output = '  1) AAAA "Apple Development: (ABCDEFGHIJ) Ltd (5JRCVYT8MY)"';
+      expect(
+        NativeWatchosBundle.parseKeychainTeams(output),
+        <String>['5JRCVYT8MY'],
+      );
     });
   });
 }
