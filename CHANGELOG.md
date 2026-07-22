@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Always-On**: the host module now reports the watchOS Always-On state (the
+  wrist-down, reduced-luminance display) to Dart, where `WatchAlwaysOn` in
+  `package:flutter_watchos` exposes it. The state is only readable through
+  SwiftUI's `\.isLuminanceReduced`, so it has to come from the host; apps
+  built before this ship keep working and report "not dimmed" (their
+  `WatchAlwaysOn.isSupported` reads false). Needs `flutter_watchos`
+  0.1.0-beta.6 or later; the wiring is skipped for apps that don't link it.
 - A failed engine-artifact download no longer points at a GitHub repo that
   does not exist. That path is only reachable when `WATCHOS_ENGINE_BASE_URL`
   redirects the CLI at a custom host, so the error now names that host and the

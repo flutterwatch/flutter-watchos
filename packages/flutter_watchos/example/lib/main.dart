@@ -63,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _Row('simulator', '${WatchOSInfo.isSimulator}'),
               _Row('screen', WatchOSInfo.screenResolution),
               _Row('scale', '${WatchOSInfo.screenScale}x'),
+              const _AlwaysOnRow(),
               const SizedBox(height: 10),
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -226,6 +227,54 @@ class _CrownDemoScreenState extends State<CrownDemoScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Always-On (`WatchAlwaysOn`): lower the wrist and watchOS shows the app
+/// dimmed instead of blanking it. Apps are expected to pause animation and
+/// hide private content while it lasts.
+///
+/// The row also COUNTS the dimmings, because the state cannot be read while it
+/// is happening — raising your wrist to look at the screen is exactly what
+/// ends it. On a physical watch: open this screen, drop your wrist, raise it
+/// again, and the count should have gone up. (The Simulator has no way to
+/// enter the Always-On state, so there the count stays at 0.)
+class _AlwaysOnRow extends StatefulWidget {
+  const _AlwaysOnRow();
+
+  @override
+  State<_AlwaysOnRow> createState() => _AlwaysOnRowState();
+}
+
+class _AlwaysOnRowState extends State<_AlwaysOnRow> {
+  int _dimmings = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WatchAlwaysOn.state.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    WatchAlwaysOn.state.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (WatchAlwaysOn.state.value) setState(() => _dimmings++);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WatchAlwaysOnBuilder(
+      builder: (BuildContext context, bool alwaysOn, Widget? child) {
+        final String state = alwaysOn
+            ? 'dimmed'
+            : (WatchAlwaysOn.isSupported ? 'lit' : 'not reported');
+        return _Row('always-on', '$state (${_dimmings}x)');
+      },
     );
   }
 }

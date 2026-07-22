@@ -137,6 +137,39 @@ void flutter_watchos_set_status_bar_hidden(bool hidden) {
     os_unfair_lock_unlock(&s_status_bar_lock);
 }
 
+// --- Always-On display ------------------------------------------------------
+// Written by the watch host when SwiftUI's `\.isLuminanceReduced` flips (main
+// thread), read by Dart (UI thread). Same lock discipline as the status bar.
+// Defaults to false: an app that never reaches the host — off-watch, or a
+// build predating the host wiring — reads "not dimmed", which is the state
+// every existing app already assumes.
+static os_unfair_lock s_always_on_lock = OS_UNFAIR_LOCK_INIT;
+static bool s_always_on_active = false;
+// Set by the host's startup report; distinguishes "not dimmed" from "nobody is
+// telling us" (an app built by a CLI whose host module predates this bridge).
+static bool s_always_on_reported = false;
+
+bool flutter_watchos_always_on_active(void) {
+    os_unfair_lock_lock(&s_always_on_lock);
+    bool active = s_always_on_active;
+    os_unfair_lock_unlock(&s_always_on_lock);
+    return active;
+}
+
+void flutter_watchos_set_always_on_active(bool active) {
+    os_unfair_lock_lock(&s_always_on_lock);
+    s_always_on_active = active;
+    s_always_on_reported = true;
+    os_unfair_lock_unlock(&s_always_on_lock);
+}
+
+bool flutter_watchos_always_on_supported(void) {
+    os_unfair_lock_lock(&s_always_on_lock);
+    bool reported = s_always_on_reported;
+    os_unfair_lock_unlock(&s_always_on_lock);
+    return reported;
+}
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // Shared state between the watch host (pushes rotation, reads mode — main
 // thread) and Dart (sets mode, drains rotation — UI thread). Pure C, so it

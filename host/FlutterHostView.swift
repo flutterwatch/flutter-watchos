@@ -17,6 +17,10 @@ public struct FlutterHostView: View {
     @ObservedObject var textInput = WatchTextInput.shared
     // Likewise for platform-view slots (rects + view types).
     @ObservedObject var platformViews = WatchPlatformViews.shared
+    // Always-On: true while the wrist is down and watchOS is showing the app
+    // dimmed. Readable only here — it is a SwiftUI environment value, with no
+    // WatchKit equivalent — so the host forwards it to Dart (WatchAlwaysOn).
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @State private var crownValue: Double = 0.0
     @FocusState private var isFocused: Bool
     // Which text-field proxy (by semantics node id) currently holds focus.
@@ -190,6 +194,21 @@ public struct FlutterHostView: View {
         // games or full-bleed UIs; there is no system API to reposition the
         // clock, so a custom placement means hiding it and drawing your own.
         .modifier(SystemTimeHidden(hidden: runner.statusBarHidden))
+        // Always-On. With the wrist lowered watchOS keeps the frontmost app on
+        // screen at reduced luminance, and dims this view's frame image for us,
+        // so nothing has to change for the app to stay visible. What Dart can't
+        // see on its own is that it HAPPENED: this environment value is the only
+        // public signal, and it exists solely inside SwiftUI. Report it so
+        // `WatchAlwaysOn` can pause animations and hide private content, per the
+        // watchOS HIG.
+        //
+        // `initial: true` matters twice over: it seeds the state for an app
+        // launched straight into the dimmed state (raise-to-wake off, a
+        // complication tap), and the report itself is how Dart learns this host
+        // reports at all (WatchAlwaysOn.isSupported).
+        .onChange(of: isLuminanceReduced, initial: true) { _, reduced in
+            runner.reportAlwaysOn(reduced)
+        }
         .onAppear {
             FlutterRunner.shared.start()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

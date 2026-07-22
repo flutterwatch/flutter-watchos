@@ -1,3 +1,15 @@
+## 0.1.0-beta.6
+
+* **New:** `WatchAlwaysOn` / `WatchAlwaysOnBuilder` — react to the watchOS
+  Always-On display, i.e. the wrist going down and the system showing the app
+  dimmed instead of blanking it. Apps use it to pause animations, hide private
+  content, and drop bright fills, per the watchOS HIG. The state comes from
+  SwiftUI's `\.isLuminanceReduced`, so unlike `AppLifecycleState.inactive` it
+  does not also fire for notification banners and Control Center.
+  `WatchAlwaysOn.isSupported` reports whether the app's watch host reports the
+  state at all (false under a host module built by an older CLI, where
+  `isActive` would read false regardless of the display).
+
 ## 0.1.0-beta.5
 
 * **New:** `WatchPlatformView` — embeds a native SwiftUI view at its slot in

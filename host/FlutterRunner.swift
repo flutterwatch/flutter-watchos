@@ -274,6 +274,14 @@ final class FlutterRunner: ObservableObject {
         return unsafeBitCast(sym, to: (@convention(c) () -> Bool).self)
     }()
 
+    /// Likewise dlsym-resolved: nil when the app doesn't link
+    /// package:flutter_watchos, or links a version predating WatchAlwaysOn.
+    private static let setAlwaysOnFn: (@convention(c) (Bool) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "flutter_watchos_set_always_on_active") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (Bool) -> Void).self)
+    }()
+
     /// Display geometry (SwiftUI points) — what the frame image is framed to.
     private(set) var sizePoints: CGSize = WKInterfaceDevice.current().screenBounds.size
 
@@ -338,6 +346,19 @@ final class FlutterRunner: ObservableObject {
     /// points so the physical scroll feel is identical at any content scale.
     func sendCrownDelta(_ delta: Double) {
         FlutterWatchOSCrownDelta(delta / WatchContentScale.value)
+    }
+
+    /// Report the Always-On (reduced-luminance) state to Dart, where
+    /// `WatchAlwaysOn` reads it. Called from FlutterHostView whenever SwiftUI's
+    /// `\.isLuminanceReduced` changes AND once when the view first appears —
+    /// the startup report is what lets Dart tell "the display is lit" apart
+    /// from "this host is too old to report", so it must not be skipped.
+    ///
+    /// SwiftUI is the only public source for this state: WatchKit's app-state
+    /// notifications say the app resigned active, which also happens for a
+    /// notification banner or Control Center.
+    func reportAlwaysOn(_ active: Bool) {
+        Self.setAlwaysOnFn?(active)
     }
 
     /// Main thread: publish the frame and mirror the plugin's status-bar

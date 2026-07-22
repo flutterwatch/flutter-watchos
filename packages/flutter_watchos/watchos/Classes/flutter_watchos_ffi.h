@@ -62,6 +62,31 @@ FLUTTER_WATCHOS_EXPORT bool flutter_watchos_status_bar_hidden(void);
 /// Sets the status-bar-hidden request. Called from Dart (WatchStatusBar).
 FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_status_bar_hidden(bool hidden);
 
+// --- Always-On display ------------------------------------------------------
+// With the wrist lowered, watchOS keeps the frontmost app on screen at reduced
+// luminance instead of blanking it (Always On, enabled by default since
+// watchOS 8). The state is only observable through SwiftUI's
+// `\.isLuminanceReduced` environment value, so the watch host (main thread)
+// writes it here and Dart (FFI/UI thread) reads it via WatchAlwaysOn.
+//
+// The app-lifecycle channel is NOT a substitute: watchOS also resigns active
+// for a notification banner or Control Center, so `AppLifecycleState.inactive`
+// cannot tell "wrist down" from "something is covering the app".
+
+/// Whether the display is currently in the dimmed Always-On state.
+FLUTTER_WATCHOS_EXPORT bool flutter_watchos_always_on_active(void);
+
+/// Sets the Always-On state. Called from the watch host on each change, and
+/// once at startup with the initial value — which is what makes
+/// `flutter_watchos_always_on_supported` meaningful.
+FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_always_on_active(bool active);
+
+/// Whether the watch host has reported Always-On state at least once. False
+/// under a host module that predates this bridge (the app was built by an
+/// older CLI), where `flutter_watchos_always_on_active` would stay false
+/// forever rather than tracking the display.
+FLUTTER_WATCHOS_EXPORT bool flutter_watchos_always_on_supported(void);
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // By default the watch host forwards Digital Crown rotation to Flutter as
 // trackpad scroll. An app that wants the crown as a direct input (a game, a
