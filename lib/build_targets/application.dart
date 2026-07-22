@@ -504,11 +504,23 @@ class NativeWatchosBundle extends Target {
     if (!pbxproj.existsSync()) {
       return null;
     }
+    return parseDevelopmentTeam(pbxproj.readAsStringSync());
+  }
 
-    final String content = pbxproj.readAsStringSync();
-    final teamRegex = RegExp(r'DEVELOPMENT_TEAM\s*=\s*([A-Z0-9]{10});');
-    final Match? match = teamRegex.firstMatch(content);
-    return match?.group(1);
+  /// Extracts the team id from a `project.pbxproj`, or null if none is set.
+  ///
+  /// The value may or may not be quoted, and both forms are routine: the
+  /// pbxproj is an old-style plist, where a bare alphanumeric token needs no
+  /// quotes but is equally valid with them. `create` renders the site quoted —
+  /// it has to, since an empty team must render `DEVELOPMENT_TEAM = "";` to
+  /// parse at all (see `watchos_pbxproj_template_test.dart`) — while Xcode
+  /// drops the quotes whenever it rewrites the file. Reading only the bare
+  /// form silently missed every freshly created project and fell through to
+  /// the keychain, signing with whatever stale identity happened to be first.
+  @visibleForTesting
+  static String? parseDevelopmentTeam(String pbxprojContent) {
+    final teamRegex = RegExp(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Z0-9]{10})"?\s*;');
+    return teamRegex.firstMatch(pbxprojContent)?.group(1);
   }
 
   /// Discovers the development team ID from the first valid Apple Development
