@@ -74,13 +74,16 @@ where possible; watchOS-specific behaviour is called out per command.
 
   # Add watchOS to an existing Flutter project (run in the project dir)
   flutter-watchos create . --platforms=watchos
-
-  # New plugin project
-  flutter-watchos create --template=plugin --platforms=watchos my_plugin
   ```
 
   `--platforms=watchos` is accepted even though stock Flutter would reject
   it; combined lists like `--platforms=ios,watchos` work too.
+
+  `--template=plugin` / `--template=plugin_ffi` are **not** supported:
+  stock Flutter's plugin templates generate method-channel (or
+  native-assets) code, and neither model runs on watchOS. To create a
+  watchOS plugin, port an existing one (`flutter-watchos plugin port`) or
+  author an FFI package by hand — see [plugins.md](plugins.md).
 
   `create` also wires up the app's **host mode** from the project shape: a
   watchOS-only project is *standalone* (watch-only app inside a thin iOS
@@ -166,10 +169,13 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `plugin`
 
-  Inspect the plugins a project uses and their watchOS support.
+  Inspect the plugins a project uses and their watchOS support, or
+  scaffold a `*_watchos` FFI package from an existing iOS/macOS plugin
+  (see [plugin-porting.md](plugin-porting.md)).
 
   ```sh
   flutter-watchos plugin list
+  flutter-watchos plugin port --from-pub url_launcher_ios
   ```
 
 - ### `run`

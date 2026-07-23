@@ -87,12 +87,15 @@ flutter:
   plugin:
     platforms:
       watchos:
-        pluginClass: MyPlugin
+        ffiPlugin: true
+        dartPluginClass: MyPluginWatchos
+        ffiSymbols:
+          - my_plugin_watchos_do_thing
 ```
 
-A watchOS build only loads plugins that declare this key. Plugins targeting only `ios:` are not picked up — Apple Watch has a different surface (no WebKit, Digital Crown input, a tiny screen), so the safe default is to require explicit opt-in.
+A watchOS build only loads plugins that declare this key. Plugins targeting only `ios:` are not picked up — Apple Watch has a different surface (no WebKit, Digital Crown input, a tiny screen), so the safe default is to require explicit opt-in. watchOS plugins ship native code via **dart:ffi**; method-channel plugins are not supported (a `pluginClass:`-only entry builds, but its calls throw `MissingPluginException` — the tool warns about this).
 
-The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the watch-specific APIs the framework doesn't cover: Digital Crown scrolling and raw input, Taptic Engine haptics, device info, and the system-clock toggle. A plugin that only implements iOS or macOS needs a watchOS implementation added under this key — see [Using and writing watchOS plugins](doc/plugins.md). `flutter-watchos plugin port --from-pub <package>` scaffolds that federated `*_watchos` package for you, along with a report of how each API the plugin uses fares on watchOS — you supply the native implementation.
+The first-party [`flutter_watchos`](packages/flutter_watchos) package adds the watch-specific APIs the framework doesn't cover: Digital Crown scrolling and raw input, Taptic Engine haptics, device info, and the system-clock toggle. A plugin that only implements iOS or macOS needs a watchOS implementation added under this key — see [Using and writing watchOS plugins](doc/plugins.md). `flutter-watchos plugin port --from-pub <package>` scaffolds that federated `*_watchos` package for you (details in [`plugin port`](doc/plugin-porting.md)), along with a report of how each API the plugin uses fares on watchOS — you supply the native implementation. Ready-made `*_watchos` packages live in [flutterwatch/plugins](https://github.com/flutterwatch/plugins).
 
 ### Writing cross-platform apps (iOS + Android + watchOS)
 
