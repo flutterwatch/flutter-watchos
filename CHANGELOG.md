@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.1.0-beta.3 (closed beta)
+
+Uses the same engine artifacts as beta.2 (`v0.1.1`); no `precache` needed when
+upgrading from beta.2.
+
+- **Plugin porter**: `flutter-watchos plugin port` scaffolds a federated
+  `*_watchos` FFI package from an existing iOS or macOS plugin — a pubspec with
+  the `watchos:` platform key and `ffiSymbols`, a Dart class over the upstream
+  platform interface, the `watchos/Classes/` native skeleton, and a
+  `PORTING_REPORT.md` mapping every API the source uses to its watchOS
+  availability. Take the source from a local path, `--from-pub`, or
+  `--from-git`. The native implementation is yours to write; the porter emits a
+  building, linking scaffold, not working code. See doc/plugin-porting.md.
 - **Always-On**: the host module now reports the watchOS Always-On state (the
   wrist-down, reduced-luminance display) to Dart, where `WatchAlwaysOn` in
   `package:flutter_watchos` exposes it. The state is only readable through
