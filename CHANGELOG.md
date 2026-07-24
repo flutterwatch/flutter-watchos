@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`create`**: a watchOS-only project (`--platforms=watchos`) now starts from
+  the same counter app stock `flutter create` generates, instead of a
+  placeholder that only printed a line of text. Projects created with another
+  platform alongside always got the real starter app — they come from
+  `flutter create` itself — so the two paths disagreed on what a new project
+  looks like. The labels are shortened to fit a watch ("Pushes:" rather than
+  the full sentence), and `test/widget_test.dart` is the standard counter
+  smoke test rather than a placeholder that asserted on the removed text.
+  Existing projects are unaffected; template changes only reach newly created
+  ones.
+
 ## 0.1.0-beta.3 (closed beta)
 
 Uses the same engine artifacts as beta.2 (`v0.1.1`); no `precache` needed when

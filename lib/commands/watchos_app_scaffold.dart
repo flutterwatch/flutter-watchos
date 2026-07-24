@@ -22,7 +22,7 @@ class WatchosAppScaffold {
     final Directory root = _fs.directory(projectDirPath)..createSync(recursive: true);
 
     _put(root.childFile('pubspec.yaml'), _pubspec(name));
-    _put(root.childDirectory('lib').childFile('main.dart'), _mainDart(name));
+    _put(root.childDirectory('lib').childFile('main.dart'), _mainDart());
     _put(root.childDirectory('test').childFile('widget_test.dart'), _widgetTest(name));
     _put(root.childFile('analysis_options.yaml'), _analysisOptions());
     _put(root.childFile('.gitignore'), _gitignore());
@@ -60,21 +60,96 @@ flutter:
   uses-material-design: true
 ''';
 
-  String _mainDart(String name) => '''
+  String _mainDart() => r'''
 import 'package:flutter/material.dart';
 
-void main() => runApp(const ${_pascal(name)}App());
+void main() {
+  runApp(const MyApp());
+}
 
-class ${_pascal(name)}App extends StatelessWidget {
-  const ${_pascal(name)}App({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
+  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '$name',
-      theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
-      home: Scaffold(
-        body: Center(child: Text('Running on Apple Watch')),
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        // This is the theme of your application.
+        //
+        // TRY THIS: Try running your application with "flutter-watchos run".
+        // You'll see the counter is styled with a deep-purple accent. Then,
+        // without quitting the app, try changing the seedColor below to
+        // Colors.green and invoke "hot reload" (save your changes, or press
+        // "r" in the console where you started the app).
+        //
+        // Notice that the counter didn't reset back to zero; the application
+        // state is not lost during the reload. To reset the state, use hot
+        // restart instead.
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      home: const MyHomePage(title: 'Flutter Demo'),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key, required this.title});
+
+  // This widget is the home page of your application. It is stateful, meaning
+  // that it has a State object (defined below) that contains fields that affect
+  // how it looks.
+
+  final String title;
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  int _counter = 0;
+
+  void _incrementCounter() {
+    setState(() {
+      // This call to setState tells the Flutter framework that something has
+      // changed in this State, which causes it to rerun the build method below
+      // so that the display can reflect the updated values.
+      _counter++;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // This method is rerun every time setState is called, for instance as done
+    // by the _incrementCounter method above.
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: Text(widget.title),
+      ),
+      body: Center(
+        // Center is a layout widget. It takes a single child and positions it
+        // in the middle of the parent.
+        child: Column(
+          // Column is also a layout widget. It takes a list of children and
+          // arranges them vertically. By default, it sizes itself to fit its
+          // children horizontally, and tries to be as tall as its parent.
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Text('Pushes:'),
+            Text(
+              '$_counter',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _incrementCounter,
+        tooltip: 'Increment',
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -82,15 +157,34 @@ class ${_pascal(name)}App extends StatelessWidget {
 ''';
 
   String _widgetTest(String name) => '''
+// This is a basic Flutter widget test.
+//
+// To perform an interaction with a widget in your test, use the WidgetTester
+// utility in the flutter_test package. For example, you can send tap and scroll
+// gestures. You can also use WidgetTester to find child widgets in the widget
+// tree, read text, and verify that the values of widget properties are correct.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:$name/main.dart';
 
 void main() {
-  testWidgets('app builds', (WidgetTester tester) async {
-    await tester.pumpWidget(const ${_pascal(name)}App());
-    expect(find.text('Running on Apple Watch'), findsOneWidget);
+  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+    // Build our app and trigger a frame.
+    await tester.pumpWidget(const MyApp());
+
+    // Verify that our counter starts at 0.
+    expect(find.text('0'), findsOneWidget);
+    expect(find.text('1'), findsNothing);
+
+    // Tap the '+' icon and trigger a frame.
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pump();
+
+    // Verify that our counter has incremented.
+    expect(find.text('0'), findsNothing);
+    expect(find.text('1'), findsOneWidget);
   });
 }
 ''';
@@ -125,11 +219,4 @@ A watchOS-only example app. Run it on an Apple Watch simulator with:
 flutter-watchos run
 ```
 ''';
-
-  /// `my_app_example` → `MyAppExample`.
-  String _pascal(String s) => s
-      .split(RegExp(r'[_\- ]'))
-      .where((String p) => p.isNotEmpty)
-      .map((String p) => p[0].toUpperCase() + p.substring(1))
-      .join();
 }
