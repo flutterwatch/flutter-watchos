@@ -79,7 +79,9 @@ class WatchosDeviceDiscovery extends PollingDeviceDiscovery {
     }
 
     try {
-      devices.addAll(await WatchosEmulator.getPhysicalDevices(_logger));
+      // A wireless watch is often unreachable on the first query; honour
+      // `--device-timeout` by waiting for it within that budget.
+      devices.addAll(await WatchosEmulator.getPhysicalDevices(_logger, timeout: timeout));
     } on Exception catch (err) {
       _logger.printTrace('Failed to discover physical watchOS devices: $err');
     }
