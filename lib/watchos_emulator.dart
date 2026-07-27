@@ -86,17 +86,70 @@ class WatchosEmulator {
     return patch == null ? 'watchOS $major.$minor' : 'watchOS $major.$minor.$patch';
   }
 
+  /// How long to wait between `devicectl` queries while a paired watch is
+  /// still bringing its tunnel up.
+  static const _retryInterval = Duration(seconds: 2);
+
+  /// Set once per process so the hint below doesn't repeat on every poll.
+  static bool _warnedAboutUnreachableWatch = false;
+
   /// Queries `xcrun devicectl list devices` to find paired physical Apple
   /// Watch devices.
   ///
   /// Requires Xcode 15+ with CoreDevice support. The JSON output is written to
   /// a temporary file (devicectl does not support stdout JSON output).
+  ///
+  /// An Apple Watch is only ever wirelessly paired, and devicectl reports it as
+  /// unreachable (`tunnelState == "unavailable"`) until its CoreDevice tunnel
+  /// comes up — which routinely takes longer than a single query. When [timeout]
+  /// is set (`--device-timeout`), keep querying within that budget for a watch
+  /// that is paired but not reachable yet. Without it, return immediately:
+  /// waiting would tax everyone whose watch is simply put away.
   static Future<List<WatchosDevice>> getPhysicalDevices(
     Logger logger, {
     ProcessUtils? processUtils,
+    Duration? timeout,
+    @visibleForTesting Duration retryInterval = _retryInterval,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    while (true) {
+      final ({List<WatchosDevice> devices, bool sawUnreachableWatch}) scan =
+          await _scanForPhysicalDevices(logger, processUtils);
+      if (scan.devices.isNotEmpty || !scan.sawUnreachableWatch) {
+        return scan.devices;
+      }
+      if (timeout == null) {
+        if (!_warnedAboutUnreachableWatch) {
+          _warnedAboutUnreachableWatch = true;
+          logger.printStatus(
+            'An Apple Watch is paired but not reachable yet — its CoreDevice '
+            'tunnel is still coming up. Pass --device-timeout <seconds> to wait '
+            'for it.',
+          );
+        }
+        return scan.devices;
+      }
+      if (stopwatch.elapsed + retryInterval >= timeout) {
+        return scan.devices;
+      }
+      logger.printTrace(
+        'A paired Apple Watch is not reachable yet; retrying devicectl in '
+        '${retryInterval.inSeconds}s.',
+      );
+      await Future<void>.delayed(retryInterval);
+    }
+  }
+
+  /// One `devicectl list devices` pass. The `sawUnreachableWatch` field reports
+  /// whether a physical watch was filtered out for being offline, which is the
+  /// only case worth retrying.
+  static Future<({List<WatchosDevice> devices, bool sawUnreachableWatch})> _scanForPhysicalDevices(
+    Logger logger,
+    ProcessUtils? processUtils,
+  ) async {
     final ProcessUtils pUtils = processUtils ?? globals.processUtils;
     final devices = <WatchosDevice>[];
+    var sawUnreachableWatch = false;
 
     try {
       final String tempPath = globals.fs.path.join(
@@ -115,18 +168,19 @@ class WatchosEmulator {
 
       if (result.exitCode != 0) {
         logger.printTrace('devicectl list devices failed: ${result.stderr}');
-        return devices;
+        return (devices: devices, sawUnreachableWatch: sawUnreachableWatch);
       }
 
       final File jsonFile = globals.fs.file(tempPath);
       if (!jsonFile.existsSync()) {
         logger.printTrace('devicectl JSON output not found at $tempPath');
-        return devices;
+        return (devices: devices, sawUnreachableWatch: sawUnreachableWatch);
       }
 
       try {
         final String jsonContent = jsonFile.readAsStringSync();
         devices.addAll(parseDevicectlOutput(jsonContent, logger));
+        sawUnreachableWatch = hasUnreachableWatch(jsonContent);
       } finally {
         jsonFile.deleteSync();
       }
@@ -134,7 +188,42 @@ class WatchosEmulator {
       logger.printTrace('Error querying devicectl: $e');
     }
 
-    return devices;
+    return (devices: devices, sawUnreachableWatch: sawUnreachableWatch);
+  }
+
+  /// Whether devicectl reported a physical Apple Watch that is paired but not
+  /// reachable — the state a wirelessly-paired watch sits in until its
+  /// CoreDevice tunnel is established, and the one case worth waiting out.
+  @visibleForTesting
+  static bool hasUnreachableWatch(String jsonContent) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(jsonContent);
+    } on FormatException {
+      return false;
+    }
+    final Object? deviceList = (decoded is Map && decoded['result'] is Map)
+        ? (decoded['result'] as Map)['devices']
+        : null;
+    if (deviceList is! List) {
+      return false;
+    }
+    for (final Object? device in deviceList) {
+      if (device is! Map) {
+        continue;
+      }
+      final Object? hardware = device['hardwareProperties'];
+      if (hardware is! Map ||
+          hardware['platform'] != 'watchOS' ||
+          hardware['reality'] != 'physical') {
+        continue;
+      }
+      final Object? connection = device['connectionProperties'];
+      if (connection is Map && connection['tunnelState'] == 'unavailable') {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Parses devicectl JSON output and returns paired physical Apple Watch

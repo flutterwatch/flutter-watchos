@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **`run`/`attach`/`drive` on a physical watch**: fixed
+  `Bad state: Invalid argument(s): serviceUri 'http://127.0.0.1:0' is not an
+  IPv6 address`, which aborted every launch that needed a Dart VM Service
+  connection on a wirelessly-paired Apple Watch ([#2]). flutter_tools picks the
+  DDS bind address from `--ipv6` (off by default) while DDS picks its own
+  address family by resolving the watch's VM service host — IPv6-only for a
+  wireless watch — and then rejects the IPv4 bind address it was handed. The
+  bind family now follows the device. mDNS lookups also retry over IPv6 when
+  the watch publishes no A record, and the devicectl address fallback prefers a
+  routable address over an unusable link-local one. The app is now launched
+  with `--vm-service-host=::0` (dual-stack) rather than IPv4-only `0.0.0.0`.
+
+  This unblocks the crash, but **on-device `drive` still does not complete**:
+  the app's Dart VM binds loopback and does not receive the launch arguments
+  the tool passes, so DDS reaches the watch and is refused. Verified on an
+  Apple Watch Series 10 — the `--vm-service-host` value above has no effect
+  until the arguments are forwarded. Issue [#2] stays open for that.
+
+- **Device discovery**: `--device-timeout` now actually waits for a physical
+  watch. A wirelessly-paired watch is reported by `devicectl` as unreachable
+  until its CoreDevice tunnel comes up, and is hidden until then; discovery
+  ignored the timeout entirely, so finding the watch came down to whether the
+  one query it made happened to land after the tunnel was ready. It now
+  re-queries within the timeout, but only while a paired-yet-unreachable watch
+  is actually present — a watch that is simply put away still costs nothing.
+  Without the flag, that case now prints a one-line hint instead of being
+  silently invisible.
+
+[#2]: https://github.com/flutterwatch/flutter-watchos/issues/2
+
 - **`create`**: a watchOS-only project (`--platforms=watchos`) now starts from
   the same counter app stock `flutter create` generates, instead of a
   placeholder that only printed a line of text. Projects created with another
