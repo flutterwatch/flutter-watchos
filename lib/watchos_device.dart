@@ -4,11 +4,12 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Process;
+import 'dart:io' show InternetAddress, InternetAddressType, Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/dds.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -27,6 +28,7 @@ import 'package:meta/meta.dart';
 import 'watchos_application_package.dart';
 import 'watchos_build_info.dart';
 import 'watchos_builder.dart';
+import 'watchos_dds.dart';
 
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
@@ -101,7 +103,15 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       // enough.
       '--enable-dart-profiling',
       '--disable-service-auth-codes',
-      '--vm-service-host=0.0.0.0',
+      // `::0` binds dual-stack (Dart does not set IPV6_V6ONLY), so the service
+      // is reachable over both families. `0.0.0.0` would listen on IPv4 only,
+      // and a wirelessly-paired watch is often reachable only over IPv6.
+      //
+      // NOTE: inert today. These arguments do not reach the app's Dart VM —
+      // it binds loopback with an auth code, i.e. the VM defaults, so nothing
+      // off-device can connect. Forwarding them is an engine-side change; the
+      // values here are what we want the moment that lands.
+      '--vm-service-host=::0',
     ];
     _logProcess = await globals.processManager.start(cmd);
 
@@ -343,6 +353,12 @@ class WatchosDevice extends Device {
   /// Human-readable OS version such as `watchOS 11.0 22R5xxx` (physical) or
   /// `watchOS 11.0` (simulator).
   final String? osVersion;
+
+  /// DDS has to bind on the same address family as the watch's Dart VM Service,
+  /// which `DebuggingOptions.ipv6` (i.e. `--ipv6`) does not know about.
+  @override
+  DartDevelopmentService get dds => _dds;
+  late final DartDevelopmentService _dds = WatchosDartDevelopmentService(logger: logger);
 
   DeviceLogReader? _logReader;
   LLDB? _lldb;
@@ -763,16 +779,25 @@ class WatchosDevice extends Device {
           );
           return LaunchResult.failed();
         }
+        // IPv4 first, then IPv6 — a wireless watch often publishes only AAAA
+        // records, and an IPv4-only query throws rather than returning null.
         Uri? xcodeUri;
-        try {
-          xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
-            bundleId,
-            this,
-            useDeviceIPAsHost: true,
-            timeout: const Duration(seconds: 60),
-          );
-        } on Object catch (e) {
-          logger.printTrace('mDNS VM Service lookup failed: $e');
+        for (final ipv6 in <bool>[false, true]) {
+          try {
+            xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
+              bundleId,
+              this,
+              usesIpv6: ipv6,
+              useDeviceIPAsHost: true,
+              // Halved so two queries keep the original 60s budget.
+              timeout: const Duration(seconds: 30),
+            );
+          } on Object catch (e) {
+            logger.printTrace('mDNS ${ipv6 ? 'IPv6' : 'IPv4'} VM Service lookup failed: $e');
+          }
+          if (xcodeUri != null) {
+            break;
+          }
         }
         if (xcodeUri != null) {
           logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
@@ -789,8 +814,11 @@ class WatchosDevice extends Device {
       }
     }
 
-    // Discover the Mac-reachable VM service URI (console scan + mDNS; prefer
-    // mDNS since --vm-service-host=0.0.0.0 makes the LAN URL reachable).
+    // Discover the Mac-reachable VM service URI: scrape the console for the
+    // URL the VM printed, then rewrite its device-local host via mDNS or
+    // devicectl. Note the VM currently binds loopback regardless of the
+    // --vm-service-host we pass, so the rewritten URL is not yet connectable —
+    // see the launch arguments in startLogStreamForBundle.
     final discovery = ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger);
 
     Uri? vmServiceUri = await discovery.uri.timeout(
@@ -799,35 +827,8 @@ class WatchosDevice extends Device {
     );
     await discovery.cancel();
 
-    if (vmServiceUri != null &&
-        (vmServiceUri.host == '127.0.0.1' || vmServiceUri.host == '0.0.0.0')) {
-      final int devicePort = vmServiceUri.port;
-      final String authPath = vmServiceUri.path;
-      try {
-        final MDnsVmServiceDiscoveryResult? result =
-            // ignore: invalid_use_of_visible_for_testing_member
-            await MDnsVmServiceDiscovery.instance!.queryForLaunch(
-              applicationId: bundleId,
-              deviceVmservicePort: devicePort,
-              useDeviceIPAsHost: true,
-              timeout: const Duration(seconds: 10),
-            );
-        if (result != null && result.ipAddress != null) {
-          vmServiceUri = Uri(
-            scheme: 'http',
-            host: result.ipAddress!.address,
-            port: result.port,
-            path: authPath,
-          );
-        } else {
-          final String? deviceIp = await _resolveDeviceIp(id);
-          if (deviceIp != null) {
-            vmServiceUri = vmServiceUri.replace(host: deviceIp);
-          }
-        }
-      } on Object catch (e) {
-        logger.printTrace('mDNS lookup failed: $e');
-      }
+    if (vmServiceUri != null && isDeviceLocalHost(vmServiceUri.host)) {
+      vmServiceUri = await _resolveMacReachableVmServiceUri(vmServiceUri, bundleId);
     }
 
     if (vmServiceUri != null) {
@@ -842,6 +843,84 @@ class WatchosDevice extends Device {
       'Security ▸ Local Network) and that the Apple Watch is on the same network.',
     );
     return LaunchResult.succeeded();
+  }
+
+  /// Whether [host] only means something on the watch itself — a wildcard bind
+  /// address (`::`, `0.0.0.0`) or loopback. The Dart VM prints the address it
+  /// bound to, so the URI scraped from the console always needs its host
+  /// rewritten to something the Mac can dial.
+  static bool isDeviceLocalHost(String host) {
+    final InternetAddress? address = InternetAddress.tryParse(host);
+    if (address == null) {
+      return false;
+    }
+    // An all-zero address is the wildcard bind in either family, spelled
+    // `0.0.0.0`, `::`, or `::0` depending on who printed it.
+    return address.isLoopback || address.rawAddress.every((int byte) => byte == 0);
+  }
+
+  /// Rewrites the host of a device-local VM service URI to a Mac-reachable
+  /// address: the mDNS record first, then devicectl's hostname.
+  Future<Uri> _resolveMacReachableVmServiceUri(Uri deviceUri, String bundleId) async {
+    try {
+      final MDnsVmServiceDiscoveryResult? result = await _queryMdnsForVmService(
+        bundleId,
+        deviceUri.port,
+      );
+      final InternetAddress? mdnsAddress = result?.ipAddress;
+      final Uri? mdnsUri = mdnsAddress == null
+          ? null
+          : Uri(
+              scheme: 'http',
+              host: mdnsAddress.address,
+              port: result!.port,
+              path: deviceUri.path,
+            );
+
+      // A link-local address (fe80::/10) is unusable without a scope id, which
+      // mDNS does not report — devicectl's `.coredevice.local` hostname
+      // resolves to one that works, so prefer it in that case.
+      if (mdnsUri != null && !mdnsAddress!.isLinkLocal) {
+        return mdnsUri;
+      }
+      final String? deviceHost = await _resolveDeviceIp(id);
+      if (deviceHost != null) {
+        return deviceUri.replace(host: deviceHost);
+      }
+      return mdnsUri ?? deviceUri;
+    } on Object catch (e) {
+      logger.printTrace('Could not resolve a Mac-reachable VM service host: $e');
+      return deviceUri;
+    }
+  }
+
+  /// Asks mDNS for the app's Dart VM Service record, IPv4 first then IPv6.
+  ///
+  /// A wirelessly-paired watch commonly publishes AAAA records only, and an
+  /// IPv4-only query throws `Did not find IP for service` in that case.
+  Future<MDnsVmServiceDiscoveryResult?> _queryMdnsForVmService(
+    String bundleId,
+    int devicePort,
+  ) async {
+    for (final ipv6 in <bool>[false, true]) {
+      try {
+        final MDnsVmServiceDiscoveryResult? result =
+            // ignore: invalid_use_of_visible_for_testing_member
+            await MDnsVmServiceDiscovery.instance!.queryForLaunch(
+              applicationId: bundleId,
+              deviceVmservicePort: devicePort,
+              useDeviceIPAsHost: true,
+              ipv6: ipv6,
+              timeout: const Duration(seconds: 10),
+            );
+        if (result != null) {
+          return result;
+        }
+      } on Object catch (e) {
+        logger.printTrace('mDNS ${ipv6 ? 'IPv6' : 'IPv4'} query failed: $e');
+      }
+    }
+    return null;
   }
 
   /// Tears down the in-flight devicectl `--console` launch and lldb session so
@@ -915,7 +994,8 @@ class WatchosDevice extends Device {
       interfaceType: DeviceConnectionInterface.wireless,
     )..removeWhere((String a) => a == '--enable-checked-mode' || a == '--verify-entry-points');
     for (final flag in <String>[
-      '--vm-service-host=0.0.0.0',
+      // Dual-stack: see the same flag in startLogStreamForBundle.
+      '--vm-service-host=::0',
       '--disable-service-auth-codes',
       '--enable-dart-profiling',
     ]) {
@@ -1002,6 +1082,88 @@ class WatchosDevice extends Device {
     return null;
   }
 
+  /// Extracts a Mac-reachable address for [deviceId] from
+  /// `devicectl list devices --json-output`.
+  ///
+  /// In preference order: an IPv4 address, a routable IPv6 address, then a
+  /// `.coredevice.local` (or other `.local`) hostname. Link-local IPv6
+  /// literals are skipped — they need a scope id devicectl does not report,
+  /// while the hostname resolves to a usable address.
+  static String? parseDeviceAddress(String jsonOutput, String deviceId) {
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(jsonOutput);
+    } on FormatException {
+      return null;
+    }
+    final dynamic devices = (decoded is Map && decoded['result'] is Map)
+        ? (decoded['result'] as Map)['devices']
+        : null;
+    if (devices is! List) {
+      return null;
+    }
+    for (final Object? d in devices) {
+      if (d is! Map || d['identifier'] != deviceId) {
+        continue;
+      }
+      final dynamic conn = d['connectionProperties'];
+      if (conn is Map) {
+        // `networkAddresses` entries are plain strings on some devicectl
+        // versions and `{"address": ...}` maps on others.
+        final addresses = <InternetAddress>[];
+        final dynamic netAddrs = conn['networkAddresses'];
+        if (netAddrs is List) {
+          for (final Object? a in netAddrs) {
+            final Object? raw = a is Map ? a['address'] : a;
+            final InternetAddress? parsed = raw is String ? InternetAddress.tryParse(raw) : null;
+            if (parsed != null) {
+              addresses.add(parsed);
+            }
+          }
+        }
+        for (final a in addresses) {
+          if (a.type == InternetAddressType.IPv4) {
+            return a.address;
+          }
+        }
+        for (final a in addresses) {
+          if (!a.isLinkLocal && !a.isLoopback) {
+            return a.address;
+          }
+        }
+
+        final dynamic hostnames = conn['potentialHostnames'];
+        if (hostnames is List) {
+          String? best;
+          for (final Object? h in hostnames) {
+            if (h is! String || !h.endsWith('.coredevice.local')) {
+              continue;
+            }
+            if (best == null || h.length < best.length) {
+              best = h;
+            }
+          }
+          if (best != null) {
+            return best;
+          }
+        }
+        final dynamic localHostnames = conn['localHostnames'];
+        if (localHostnames is List) {
+          for (final Object? h in localHostnames) {
+            if (h is String && h.endsWith('.local')) {
+              return h;
+            }
+          }
+        }
+      }
+      final dynamic hp = d['hardwareProperties'];
+      if (hp is Map && hp['address'] is String) {
+        return hp['address'] as String;
+      }
+    }
+    return null;
+  }
+
   /// Asks devicectl for the device's network IP (fallback when mDNS fails).
   Future<String?> _resolveDeviceIp(String deviceId) async {
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ip.');
@@ -1018,68 +1180,7 @@ class WatchosDevice extends Device {
       if (r.exitCode != 0 || !out.existsSync()) {
         return null;
       }
-      try {
-        final dynamic decoded = jsonDecode(out.readAsStringSync());
-        final dynamic devices = (decoded is Map && decoded['result'] is Map)
-            ? (decoded['result'] as Map)['devices']
-            : null;
-        if (devices is! List) {
-          return null;
-        }
-        for (final Object? d in devices) {
-          if (d is! Map) {
-            continue;
-          }
-          final dynamic hp = d['hardwareProperties'];
-          final dynamic identifier = d['identifier'];
-          if (identifier != deviceId) {
-            continue;
-          }
-          final dynamic conn = d['connectionProperties'];
-          if (conn is Map) {
-            final dynamic netAddrs = conn['networkAddresses'];
-            if (netAddrs is List) {
-              for (final Object? a in netAddrs) {
-                if (a is String && RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(a)) {
-                  return a;
-                }
-              }
-            }
-            final dynamic hostnames = conn['potentialHostnames'];
-            if (hostnames is List) {
-              String? best;
-              for (final Object? h in hostnames) {
-                if (h is! String) {
-                  continue;
-                }
-                if (!h.endsWith('.coredevice.local')) {
-                  continue;
-                }
-                if (best == null || h.length < best.length) {
-                  best = h;
-                }
-              }
-              if (best != null) {
-                return best;
-              }
-            }
-            final dynamic addrs = conn['localHostnames'];
-            if (addrs is List && addrs.isNotEmpty) {
-              for (final Object? h in addrs) {
-                if (h is String && h.endsWith('.local')) {
-                  return h;
-                }
-              }
-            }
-          }
-          if (hp is Map && hp['address'] is String) {
-            return hp['address'] as String;
-          }
-        }
-      } on FormatException {
-        return null;
-      }
-      return null;
+      return parseDeviceAddress(out.readAsStringSync(), deviceId);
     } finally {
       try {
         tmp.deleteSync(recursive: true);

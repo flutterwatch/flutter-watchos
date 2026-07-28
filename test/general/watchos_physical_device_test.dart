@@ -66,7 +66,9 @@ void main() {
         '2026-06-27 11:21:49.030171+0200 Runner[2936] '
         'fopen failed for data file: errno = 2 (No such file or directory)',
       );
-      reader.processLogLine('2026-06-27 11:21:49.030179+0200 Runner[2936] Errors found! Invalidating cache...');
+      reader.processLogLine(
+        '2026-06-27 11:21:49.030179+0200 Runner[2936] Errors found! Invalidating cache...',
+      );
       reader.processLogLine(
         '2026-06-27 11:21:54.413893+0200 Runner[2936] [] App is being debugged, do not track this hang',
       );
@@ -174,6 +176,93 @@ void main() {
     testWithoutContext('returns null for malformed or empty JSON', () {
       expect(WatchosDevice.parseDeviceUdid('not json'), isNull);
       expect(WatchosDevice.parseDeviceUdid(''), isNull);
+    });
+  });
+
+  group('WatchosDevice.isDeviceLocalHost', () {
+    // The Dart VM prints the address it bound to, which is meaningful only on
+    // the watch — it always has to be rewritten to a Mac-reachable host.
+    testWithoutContext('recognises wildcard and loopback binds', () {
+      expect(WatchosDevice.isDeviceLocalHost('0.0.0.0'), isTrue);
+      expect(WatchosDevice.isDeviceLocalHost('127.0.0.1'), isTrue);
+      expect(WatchosDevice.isDeviceLocalHost('::'), isTrue);
+      expect(WatchosDevice.isDeviceLocalHost('::0'), isTrue);
+      expect(WatchosDevice.isDeviceLocalHost('::1'), isTrue);
+    });
+
+    testWithoutContext('leaves a real address or hostname alone', () {
+      expect(WatchosDevice.isDeviceLocalHost('192.168.1.42'), isFalse);
+      expect(WatchosDevice.isDeviceLocalHost('fd12:3456::1'), isFalse);
+      expect(WatchosDevice.isDeviceLocalHost('my-watch.coredevice.local'), isFalse);
+    });
+  });
+
+  group('WatchosDevice.parseDeviceAddress', () {
+    String devicesJson(String connectionProperties) =>
+        '{"result": {"devices": [{"identifier": "watch-1", '
+        '"connectionProperties": $connectionProperties}]}}';
+
+    testWithoutContext('prefers an IPv4 address', () {
+      final String json = devicesJson(
+        '{"networkAddresses": ["fd12:3456::1", "192.168.1.42"], '
+        '"potentialHostnames": ["my-watch.coredevice.local"]}',
+      );
+      expect(WatchosDevice.parseDeviceAddress(json, 'watch-1'), '192.168.1.42');
+    });
+
+    testWithoutContext('falls back to a routable IPv6 address', () {
+      final String json = devicesJson(
+        '{"networkAddresses": ["fd12:3456::1"], '
+        '"potentialHostnames": ["my-watch.coredevice.local"]}',
+      );
+      expect(WatchosDevice.parseDeviceAddress(json, 'watch-1'), 'fd12:3456::1');
+    });
+
+    testWithoutContext('prefers the hostname over a link-local address', () {
+      // fe80::/10 needs a scope id that devicectl doesn't report, so the raw
+      // address is unusable — the .coredevice.local name resolves with one.
+      final String json = devicesJson(
+        '{"networkAddresses": ["fe80::1cb2:3d4e:5f60:7189"], '
+        '"potentialHostnames": ["long-name.my-watch.coredevice.local", '
+        '"my-watch.coredevice.local"]}',
+      );
+      expect(WatchosDevice.parseDeviceAddress(json, 'watch-1'), 'my-watch.coredevice.local');
+    });
+
+    testWithoutContext('reads addresses given as objects', () {
+      final String json = devicesJson(
+        '{"networkAddresses": [{"address": "192.168.1.42", "family": "IPv4"}]}',
+      );
+      expect(WatchosDevice.parseDeviceAddress(json, 'watch-1'), '192.168.1.42');
+    });
+
+    testWithoutContext('falls back to a .local hostname, then hardware address', () {
+      expect(
+        WatchosDevice.parseDeviceAddress(
+          devicesJson('{"localHostnames": ["My-Watch.local"]}'),
+          'watch-1',
+        ),
+        'My-Watch.local',
+      );
+      expect(
+        WatchosDevice.parseDeviceAddress(
+          '{"result": {"devices": [{"identifier": "watch-1", '
+              '"hardwareProperties": {"address": "192.168.1.9"}}]}}',
+          'watch-1',
+        ),
+        '192.168.1.9',
+      );
+    });
+
+    testWithoutContext('ignores other devices', () {
+      final String json = devicesJson('{"networkAddresses": ["192.168.1.42"]}');
+      expect(WatchosDevice.parseDeviceAddress(json, 'some-other-device'), isNull);
+    });
+
+    testWithoutContext('returns null for malformed or empty JSON', () {
+      expect(WatchosDevice.parseDeviceAddress('not json', 'watch-1'), isNull);
+      expect(WatchosDevice.parseDeviceAddress('', 'watch-1'), isNull);
+      expect(WatchosDevice.parseDeviceAddress('{"result": {}}', 'watch-1'), isNull);
     });
   });
 }
