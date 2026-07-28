@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 import 'package:flutter_watchos/watchos_emulator.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
 import '../src/fake_process_manager.dart';
 
 void main() {
@@ -162,4 +165,147 @@ void main() {
       expect(WatchosEmulator.parseDevicectlOutput('{"result":{}}', logger), isEmpty);
     });
   });
+
+  group('hasUnreachableWatch', () {
+    testWithoutContext('is true for a paired watch whose tunnel is not up', () {
+      expect(WatchosEmulator.hasUnreachableWatch(_offlineWatchJson), isTrue);
+    });
+
+    testWithoutContext('is false for a connected watch', () {
+      expect(WatchosEmulator.hasUnreachableWatch(_connectedWatchJson), isFalse);
+    });
+
+    testWithoutContext('ignores unreachable devices that are not watches', () {
+      const json =
+          '{"result":{"devices":[{"identifier":"ios-1",'
+          '"hardwareProperties":{"platform":"iOS","reality":"physical"},'
+          '"connectionProperties":{"tunnelState":"unavailable"}}]}}';
+      expect(WatchosEmulator.hasUnreachableWatch(json), isFalse);
+    });
+
+    testWithoutContext('is false for malformed or empty JSON', () {
+      expect(WatchosEmulator.hasUnreachableWatch('not json'), isFalse);
+      expect(WatchosEmulator.hasUnreachableWatch('{}'), isFalse);
+    });
+  });
+
+  group('getPhysicalDevices', () {
+    late MemoryFileSystem fileSystem;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+    });
+
+    // devicectl writes its JSON to a temp file rather than stdout.
+    FakeCommand devicectlWriting(String json) => FakeCommand(
+      // The temp path carries a timestamp, so match it loosely.
+      command: <Pattern>['xcrun', 'devicectl', 'list', 'devices', '--json-output', RegExp('.*')],
+      onRun: (List<String> command) {
+        fileSystem.file(command.last)
+          ..createSync(recursive: true)
+          ..writeAsStringSync(json);
+      },
+    );
+
+    testUsingContext(
+      'waits out a watch whose tunnel is still coming up when given a timeout',
+      () async {
+        processManager.addCommand(devicectlWriting(_offlineWatchJson));
+        processManager.addCommand(devicectlWriting(_connectedWatchJson));
+
+        final List<WatchosDevice> devices = await WatchosEmulator.getPhysicalDevices(
+          logger,
+          processUtils: processUtils,
+          timeout: const Duration(seconds: 30),
+          retryInterval: Duration.zero,
+        );
+
+        expect(devices, hasLength(1));
+        expect(devices.first.name, 'My Watch');
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'gives up at the timeout instead of retrying forever',
+      () async {
+        processManager.addCommand(devicectlWriting(_offlineWatchJson));
+
+        final List<WatchosDevice> devices = await WatchosEmulator.getPhysicalDevices(
+          logger,
+          processUtils: processUtils,
+          // Smaller than one retry interval, so a single query is all we get.
+          timeout: const Duration(milliseconds: 1),
+        );
+
+        expect(devices, isEmpty);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'does not wait when no timeout was given',
+      () async {
+        processManager.addCommand(devicectlWriting(_offlineWatchJson));
+
+        final List<WatchosDevice> devices = await WatchosEmulator.getPhysicalDevices(
+          logger,
+          processUtils: processUtils,
+          retryInterval: Duration.zero,
+        );
+
+        expect(devices, isEmpty);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'returns a reachable watch on the first query',
+      () async {
+        processManager.addCommand(devicectlWriting(_connectedWatchJson));
+
+        final List<WatchosDevice> devices = await WatchosEmulator.getPhysicalDevices(
+          logger,
+          processUtils: processUtils,
+          timeout: const Duration(seconds: 30),
+          retryInterval: Duration.zero,
+        );
+
+        expect(devices, hasLength(1));
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
 }
+
+const _connectedWatchJson = '''
+{"result":{"devices":[{
+  "identifier":"00008301-001234567890ABCD",
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"My Watch","osVersionNumber":"11.0"},
+  "connectionProperties":{"tunnelState":"connected"}
+}]}}''';
+
+const _offlineWatchJson = '''
+{"result":{"devices":[{
+  "identifier":"00008301-001234567890ABCD",
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"My Watch"},
+  "connectionProperties":{"tunnelState":"unavailable"}
+}]}}''';

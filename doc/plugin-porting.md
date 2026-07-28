@@ -72,6 +72,34 @@ block above the generated class.
 | `--force` | Overwrite an existing output directory. |
 | `--dry-run` | Print what would be written, write nothing. |
 | `--no-report` | Skip `PORTING_REPORT.md`. |
+| `--include-example` | Also port the app-facing plugin's `example/` app to watchOS (see below). |
+
+## Porting the example (`--include-example`)
+
+With `--include-example`, the porter also brings over the app-facing plugin's
+**example app** — its `lib/` demo UI and its official `integration_test/` —
+and renders a watchOS Xcode runner on top, so the generated package ships a
+runnable example you can drive on the simulator:
+
+```sh
+cd <plugin>_watchos/example
+flutter-watchos drive \
+  --driver=test_driver/integration_test.dart \
+  --target=integration_test/<plugin>_test.dart -d <watch-sim>
+```
+
+The example is taken from the **app-facing** package (e.g. `geolocator`), not
+the platform implementation you ported (`geolocator_apple`) — the porter
+fetches it from pub when needed. The example `pubspec.yaml` is rewritten to
+depend on the app-facing plugin from pub plus the generated `*_watchos`
+package by path; extra *hosted* dependencies the upstream example declared are
+carried over, while its monorepo-relative path/git deps are dropped.
+
+> **Official tests encode mobile expectations.** An upstream integration test
+> may assert things that are legitimately different on watchOS (e.g.
+> `network_info_plus`'s test expects a non-null Wi-Fi SSID, which the watch
+> does not expose). A failure there is a real platform difference, not a bug —
+> adjust the assertion for watchOS (with a comment) or treat it as expected.
 
 ## Reading the report
 
