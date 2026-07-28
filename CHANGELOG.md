@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.4 (closed beta)
+
+Ships new engine artifacts (`v0.1.2`). Run `flutter-watchos precache` after
+upgrading — the embedder fix below is in the engine, not the CLI.
 
 - **`run`/`attach`/`drive` on a physical watch**: fixed
   `Bad state: Invalid argument(s): serviceUri 'http://127.0.0.1:0' is not an
