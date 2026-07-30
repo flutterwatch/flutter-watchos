@@ -105,6 +105,7 @@ void main() {
         objectOutputPath: '/f/.host_build/FlutterWatchOS_arm64.o',
         cModuleSearchPath: '/f',
         sources: <String>['/cli/host/FlutterRunner.swift'],
+        enableVmBridge: true,
       );
       expect(args, containsAllInOrder(<String>['xcrun', '-sdk', 'watchos', 'swiftc']));
       expect(args, contains('-target'));
@@ -118,6 +119,40 @@ void main() {
       expect(args.last, '/cli/host/FlutterRunner.swift');
     });
 
+    // A release app must not carry the VM Service bridge's networking code at
+    // all. The define is the only thing standing between a shipping binary and
+    // ~600 lines of URLSession/socket/compression code, so pin it both ways.
+    testWithoutContext('defines the VM bridge condition for debug and profile', () {
+      final List<String> args = hostModuleSwiftcArgs(
+        sdkName: 'watchos',
+        simulator: false,
+        arch: 'arm64',
+        deploymentTarget: '26.0',
+        moduleOutputPath: '/f/m.swiftmodule',
+        objectOutputPath: '/f/o.o',
+        cModuleSearchPath: '/f',
+        sources: <String>['/s.swift'],
+        enableVmBridge: true,
+      );
+      expect(args, containsAllInOrder(<String>['-D', kVmBridgeSwiftDefine]));
+    });
+
+    testWithoutContext('omits the VM bridge condition for release', () {
+      final List<String> args = hostModuleSwiftcArgs(
+        sdkName: 'watchos',
+        simulator: false,
+        arch: 'arm64',
+        deploymentTarget: '26.0',
+        moduleOutputPath: '/f/m.swiftmodule',
+        objectOutputPath: '/f/o.o',
+        cModuleSearchPath: '/f',
+        sources: <String>['/s.swift'],
+        enableVmBridge: false,
+      );
+      expect(args, isNot(contains(kVmBridgeSwiftDefine)));
+      expect(args, isNot(contains('-D')));
+    });
+
     testWithoutContext('simulator triple carries the -simulator suffix', () {
       final List<String> args = hostModuleSwiftcArgs(
         sdkName: 'watchsimulator',
@@ -128,6 +163,7 @@ void main() {
         objectOutputPath: '/f/o.o',
         cModuleSearchPath: '/f',
         sources: <String>['/s.swift'],
+        enableVmBridge: true,
       );
       expect(args, contains('arm64-apple-watchos26.0-simulator'));
     });

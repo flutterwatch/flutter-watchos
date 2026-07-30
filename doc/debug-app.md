@@ -67,6 +67,12 @@ What works, measured on an Apple Watch Series 10 (watchOS 26.5):
   and raster times in-process, and is the lightest way to measure a specific
   interaction.
 
+**None of this reaches a release build.** The bridge is compiled only for debug
+and profile — a release binary contains a no-op stub and links no networking
+code for it — and a release app is never launched with VM Service flags. So
+`--release` and your App Store archive are byte-for-byte unaffected by anything
+on this page.
+
 Current limits:
 
 - **Connection setup sometimes fails — expect to retry.** In testing, two

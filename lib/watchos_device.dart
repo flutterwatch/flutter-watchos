@@ -31,6 +31,41 @@ import 'watchos_builder.dart';
 import 'watchos_dds.dart';
 import 'watchos_vm_relay.dart';
 
+/// Arguments forwarded to the Flutter app's `main()` on a device launch.
+///
+/// The engine passes `NSProcessInfo`'s arguments into
+/// `FlutterProjectArgs.command_line_argv`, so everything here reaches the Dart
+/// VM (fixed in engine `v0.1.2`; before that these were silently inert).
+///
+/// [enableVmService] must be false for release. A release engine has no Dart
+/// VM Service, so the flags are inert there — but `--disable-service-auth-codes`
+/// is not something to hand a shipping build on the assumption that nothing is
+/// listening.
+///
+/// [relaying] picks the bind address. With the relay the only consumer is the
+/// in-process bridge, so IPv4 loopback is both tighter and avoids a real trap:
+/// `::0` leaves the service on `[::]`, which a bridge dialling `127.0.0.1`
+/// cannot reach, and the symptom is an endless "Could not connect to the
+/// server" against a service that is plainly listening. Without the relay the
+/// dual-stack wildcard is right — nothing off-device can reach it either way
+/// (docs/watchos-vm-service-transport.md), but a wirelessly-paired watch is
+/// often reachable only over IPv6.
+@visibleForTesting
+List<String> appLaunchArguments({
+  required bool enableVmService,
+  required bool relaying,
+  List<String> extraLaunchArguments = const <String>[],
+}) {
+  return <String>[
+    if (enableVmService) ...<String>[
+      '--enable-dart-profiling',
+      '--disable-service-auth-codes',
+      if (relaying) '--vm-service-host=127.0.0.1' else '--vm-service-host=::0',
+    ],
+    ...extraLaunchArguments,
+  ];
+}
+
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   /// Creates a log reader for a physical watchOS device.
@@ -89,6 +124,7 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
     bool startStopped = false,
     List<String> extraLaunchArguments = const <String>[],
     Map<String, String> environment = const <String, String>{},
+    bool enableVmService = true,
   }) async {
     // Wrap in `script -t 0 /dev/null` to convince devicectl it has a TTY and
     // forward child stdout. `--console` blocks until the app exits.
@@ -105,30 +141,11 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       jsonEncode(<String, String>{'OS_ACTIVITY_DT_MODE': 'enable', ...environment}),
       if (startStopped) '--start-stopped',
       bundleId,
-      // Launch arguments forwarded to the Flutter app's main(): bind the Dart
-      // VM on every interface so the Mac can reach it over the wireless tunnel,
-      // enable profiling, and drop the auth token so a host:port from mDNS is
-      // enough.
-      '--enable-dart-profiling',
-      '--disable-service-auth-codes',
-      // These take effect: the engine forwards NSProcessInfo's arguments into
-      // FlutterProjectArgs.command_line_argv, so the VM applies them.
-      //
-      // When the relay is in play the only consumer is the in-process bridge,
-      // so bind IPv4 loopback: tighter, and it sidesteps a real trap — `::0`
-      // leaves the service on `[::]`, which a bridge dialling `127.0.0.1`
-      // cannot reach, and the symptom is an endless "Could not connect to the
-      // server" with the service plainly listening.
-      //
-      // Without the relay, keep the dual-stack wildcard: nothing off-device can
-      // reach it either way (docs/watchos-vm-service-transport.md), but a
-      // wirelessly-paired watch is often reachable only over IPv6.
-      if (environment.containsKey('FLUTTER_WATCHOS_VM_PORT'))
-        '--vm-service-host=127.0.0.1'
-      else
-        '--vm-service-host=::0',
-      // Dart VM timeline recorder flags, when the trace path is known.
-      ...extraLaunchArguments,
+      ...appLaunchArguments(
+        enableVmService: enableVmService,
+        relaying: environment.containsKey('FLUTTER_WATCHOS_VM_PORT'),
+        extraLaunchArguments: extraLaunchArguments,
+      ),
     ];
     _log.printTrace('launching: ${cmd.join(' ')}');
     _logProcess = await globals.processManager.start(cmd);
@@ -779,6 +796,9 @@ class WatchosDevice extends Device {
         if (relayEnvironment.isNotEmpty) '--vm-service-port=$_deviceVmServicePort',
       ],
       environment: relayEnvironment,
+      // A release engine has no Dart VM Service, and a release app should not
+      // be launched asking for one.
+      enableVmService: debuggingOptions.buildInfo.mode != BuildMode.release,
     );
 
     if (needsDebugger) {

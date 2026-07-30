@@ -1,3 +1,11 @@
+// FLUTTER_WATCHOS_VM_BRIDGE is defined by the CLI for debug and profile builds
+// only (see kVmBridgeSwiftDefine in lib/build_targets/watchos_host_module.dart).
+// A release build compiles the stub at the bottom of this file instead, so a
+// shipping app contains none of the networking below — dormant code in an App
+// Store binary is still code that has to be justified, and the release engine
+// has no Dart VM Service for it to bridge to anyway.
+#if FLUTTER_WATCHOS_VM_BRIDGE
+
 import Compression
 import Foundation
 
@@ -628,3 +636,18 @@ private final class VmSocket {
         return fd
     }
 }
+
+#else
+
+import Foundation
+
+/// Release stub. The real bridge is compiled only for debug and profile.
+///
+/// `FlutterRunner` calls `startIfConfigured()` unconditionally, so the symbol
+/// has to exist in every configuration — but in a shipping app it does
+/// nothing, and no URLSession, socket or compression code is linked in.
+@objc public final class FlutterWatchOSVmBridge: NSObject {
+    @objc public static func startIfConfigured() {}
+}
+
+#endif
