@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_watchos/watchos_vm_relay.dart';
 
@@ -158,6 +159,123 @@ void main() {
       expect(relay.vmServiceUri.host, '127.0.0.1');
       expect(relay.vmServiceUri.port, relay.tunnelPort);
       expect(relay.tunnelPort, isNot(relay.port));
+    });
+  });
+
+  // The link is the binding constraint on this transport (38-80 KB/s measured
+  // on device), so the watch compresses what it sends. These pin the contract
+  // the Swift side encodes against — a mismatch here corrupts the byte stream
+  // rather than failing loudly, so it is worth testing both directions.
+  group('WatchosVmRelay compression', () {
+    late WatchosVmRelay relay;
+    final traces = <String>[];
+
+    setUp(() async {
+      traces.clear();
+      relay = await WatchosVmRelay.start(logTrace: traces.add);
+    });
+
+    tearDown(() async {
+      await relay.dispose();
+    });
+
+    testWithoutContext('inflates a raw-deflate push body', () async {
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      // Long enough that the watch would really have compressed it.
+      final Uint8List payload = utf8.encode('x' * 4096);
+      final String frame = TunnelFrame(1, TunnelFrameKind.data, payload).encode();
+      await _pushBytes(
+        relay.port,
+        ZLibCodec(raw: true).encode(utf8.encode(frame)),
+        contentEncoding: kRawDeflateEncoding,
+      );
+
+      await _until(() => received.length >= payload.length);
+      expect(received, payload);
+    });
+
+    testWithoutContext('still accepts an uncompressed push body', () async {
+      // The watch sends plain when compression would not help, so the
+      // uncompressed path has to keep working.
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      final Uint8List payload = utf8.encode('hello');
+      await _pushRaw(relay.port, TunnelFrame(1, TunnelFrameKind.data, payload).encode());
+
+      await _until(() => received.length >= payload.length);
+      expect(received, payload);
+    });
+
+    testWithoutContext('drops a corrupt compressed body without killing the relay', () async {
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      // Claims to be deflate but is not. Half-decoding this would corrupt the
+      // VM Service stream silently, so it must be dropped whole.
+      await _pushBytes(
+        relay.port,
+        utf8.encode('definitely not deflate'),
+        contentEncoding: kRawDeflateEncoding,
+      );
+      expect(traces.join('\n'), contains('could not inflate'));
+
+      // The relay must still be serving afterwards.
+      final Uint8List payload = utf8.encode('still here');
+      await _pushRaw(relay.port, TunnelFrame(1, TunnelFrameKind.data, payload).encode());
+      await _until(() => received.length >= payload.length);
+      expect(received, payload);
+    });
+
+    testWithoutContext('gzips a poll response when the caller accepts it', () async {
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      // Well past kMinCompressBytes, and repetitive so it really shrinks.
+      client.add(utf8.encode('y' * 8192));
+      await client.flush();
+
+      final http = HttpClient()..autoUncompress = false;
+      addTearDown(() => http.close(force: true));
+      final HttpClientRequest request = await http.getUrl(
+        Uri.parse('http://127.0.0.1:${relay.port}${RelayPaths.bridgePoll}'),
+      );
+      request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
+      final HttpClientResponse response = await request.close();
+      final List<int> body = await response.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+
+      expect(response.headers.value(HttpHeaders.contentEncodingHeader), 'gzip');
+      // Decodable, and genuinely smaller than what it stands for.
+      final String decoded = utf8.decode(gzip.decode(body));
+      expect(decoded, contains('frames'));
+      expect(body.length, lessThan(decoded.length));
+    });
+
+    testWithoutContext('leaves a poll response plain when gzip is not accepted', () async {
+      // Queue a frame first: an empty queue holds the poll open for
+      // kBridgePollTimeout, which would add 20s to the suite for no coverage.
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      client.add(utf8.encode('z' * 1024));
+      await client.flush();
+
+      final http = HttpClient()..autoUncompress = false;
+      addTearDown(() => http.close(force: true));
+      final HttpClientRequest request = await http.getUrl(
+        Uri.parse('http://127.0.0.1:${relay.port}${RelayPaths.bridgePoll}'),
+      );
+      request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+      final HttpClientResponse response = await request.close();
+      await response.drain<void>();
+
+      expect(response.headers.value(HttpHeaders.contentEncodingHeader), isNull);
     });
   });
 
@@ -445,6 +563,41 @@ Future<void> _pushRaw(int port, String frame) async {
     await response.drain<void>();
   } finally {
     client.close();
+  }
+}
+
+/// Posts a raw body to the push endpoint, optionally claiming an encoding.
+Future<void> _pushBytes(int port, List<int> body, {String? contentEncoding}) async {
+  final client = HttpClient();
+  try {
+    final HttpClientRequest request = await client.postUrl(
+      Uri.parse('http://127.0.0.1:$port${RelayPaths.bridgePush}'),
+    );
+    if (contentEncoding != null) {
+      request.headers.set(HttpHeaders.contentEncodingHeader, contentEncoding);
+    }
+    request.add(body);
+    final HttpClientResponse response = await request.close();
+    await response.drain<void>();
+  } finally {
+    client.close();
+  }
+}
+
+/// Polls [condition] until it holds, or fails the test after [timeout].
+///
+/// The tunnel is asynchronous end to end, so an assertion straight after a
+/// push races the delivery it is checking.
+Future<void> _until(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final DateTime deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('condition not met within ${timeout.inSeconds}s');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
   }
 }
 

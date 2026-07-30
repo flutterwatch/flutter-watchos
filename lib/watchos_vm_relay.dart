@@ -56,6 +56,19 @@ int pickDeviceVmServicePort({math.Random? random}) {
 /// intermediary's idle timeout.
 const Duration kBridgePollTimeout = Duration(seconds: 20);
 
+/// `Content-Encoding` the bridge uses for a compressed push body.
+///
+/// Deliberately not `deflate`: that token means zlib-wrapped data (RFC 1950)
+/// to most HTTP stacks, and watchOS's `COMPRESSION_ZLIB` emits bare RFC 1951.
+/// Must match `rawDeflateEncoding` in host/FlutterWatchOSVmBridge.swift.
+const String kRawDeflateEncoding = 'x-raw-deflate';
+
+/// Below this, framing overhead outweighs any saving, so send it plain.
+const int kMinCompressBytes = 256;
+
+/// Raw DEFLATE (RFC 1951), matching what the watch produces.
+final ZLibCodec _rawInflate = ZLibCodec(raw: true);
+
 /// What a tunnel frame does to the connection it names.
 enum TunnelFrameKind {
   /// Mac→watch only: flutter_tools opened a connection; dial the VM Service.
@@ -284,6 +297,15 @@ class WatchosVmRelay {
   int _lastReportedFromWatch = 0;
   Timer? _throughputTimer;
 
+  /// Bytes actually carried over HTTP from the watch, before inflating.
+  ///
+  /// Tracked separately from [_bytesFromWatch] (which counts VM Service
+  /// payload) so the log can show what compression is buying. The link is the
+  /// binding constraint on this transport, so the ratio is the number worth
+  /// watching when it regresses.
+  int _wireBytesFromWatch = 0;
+  int _lastReportedWireFromWatch = 0;
+
   /// How often to report throughput while a connection is open.
   static const Duration _throughputInterval = Duration(seconds: 10);
 
@@ -295,8 +317,10 @@ class WatchosVmRelay {
       }
       final int up = _bytesToWatch - _lastReportedToWatch;
       final int down = _bytesFromWatch - _lastReportedFromWatch;
+      final int wireDown = _wireBytesFromWatch - _lastReportedWireFromWatch;
       _lastReportedToWatch = _bytesToWatch;
       _lastReportedFromWatch = _bytesFromWatch;
+      _lastReportedWireFromWatch = _wireBytesFromWatch;
       final int seconds = _throughputInterval.inSeconds;
       if (up == 0 && down == 0) {
         _logTrace(
@@ -304,9 +328,16 @@ class WatchosVmRelay {
           '${seconds}s — the tunnel is stalled, not merely slow',
         );
       } else {
+        // Two rates on purpose: the payload rate is what DevTools experiences,
+        // the wire rate is what the link is actually spending.
+        final ratio = (wireDown > 0 && down > 0)
+            ? ', ${(down / wireDown).toStringAsFixed(1)}x compression'
+            : '';
         _logTrace(
           'relay: ${(up / seconds / 1024).toStringAsFixed(1)} KB/s to watch, '
           '${(down / seconds / 1024).toStringAsFixed(1)} KB/s from watch '
+          '(${(wireDown / seconds / 1024).toStringAsFixed(1)} KB/s on the wire'
+          '$ratio) '
           '(${_connections.length} connection(s))',
         );
       }
@@ -475,7 +506,7 @@ class WatchosVmRelay {
   }
 
   Future<void> _handleBridgePush(HttpRequest request) async {
-    final String body = await utf8.decodeStream(request);
+    final String body = await _readPushBody(request);
     for (final String line in splitPushBody(body)) {
       final TunnelFrame? frame = TunnelFrame.decode(line);
       if (frame == null) {
@@ -512,6 +543,32 @@ class WatchosVmRelay {
     }
   }
 
+  /// Reads a push body, inflating it when the bridge compressed it.
+  ///
+  /// Returns an empty string if the body cannot be inflated. That drops the
+  /// batch, which breaks the connection it belonged to — but a half-decoded
+  /// byte stream would corrupt the VM Service protocol silently, and a dead
+  /// connection at least announces itself.
+  Future<String> _readPushBody(HttpRequest request) async {
+    final builder = BytesBuilder(copy: false);
+    await request.forEach(builder.add);
+    final Uint8List raw = builder.takeBytes();
+    _wireBytesFromWatch += raw.length;
+    final String? encoding = request.headers
+        .value(HttpHeaders.contentEncodingHeader)
+        ?.trim()
+        .toLowerCase();
+    if (encoding != kRawDeflateEncoding) {
+      return utf8.decode(raw, allowMalformed: true);
+    }
+    try {
+      return utf8.decode(_rawInflate.decode(raw), allowMalformed: true);
+    } on Object catch (e) {
+      _logTrace('relay: could not inflate a ${raw.length}-byte push body ($e)');
+      return '';
+    }
+  }
+
   /// The bridge batches frames into one POST, newline delimited. Frames are
   /// base64 payloads with a numeric header, so a bare `\n` split is
   /// unambiguous.
@@ -525,10 +582,29 @@ class WatchosVmRelay {
   }
 
   Future<void> _respondJson(HttpRequest request, Map<String, Object?> payload) async {
+    final Uint8List body = utf8.encode(jsonEncode(payload));
     request.response
       ..statusCode = HttpStatus.ok
-      ..headers.contentType = ContentType.json
-      ..write(jsonEncode(payload));
+      ..headers.contentType = ContentType.json;
+
+    // `URLSession` advertises gzip and inflates it transparently, so the watch
+    // side needs no code for this direction — it just sees a smaller response.
+    // Mac→watch is the quieter direction, but a poll response carrying a bulk
+    // write is exactly when it is worth having.
+    final bool acceptsGzip =
+        request.headers.value(HttpHeaders.acceptEncodingHeader)?.toLowerCase().contains('gzip') ??
+        false;
+    if (acceptsGzip && body.length >= kMinCompressBytes) {
+      final List<int> compressed = gzip.encode(body);
+      // Compression can inflate incompressible input; never send the larger one.
+      if (compressed.length < body.length) {
+        request.response.headers.set(HttpHeaders.contentEncodingHeader, 'gzip');
+        request.response.add(compressed);
+        await request.response.close();
+        return;
+      }
+    }
+    request.response.add(body);
     await request.response.close();
   }
 

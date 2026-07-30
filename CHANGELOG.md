@@ -37,9 +37,12 @@
     table and zero samples — the Dart sampling profiler needs Mach thread APIs
     the watchOS device SDK removes, the same reason there is no JIT on device.
     The timeline is unaffected.
-  - **The link runs at roughly 75–145 KB/s.** DevTools is fully usable, but a
-    bulk timeline fetch is megabytes, so the Performance page can take a minute
-    or more to fill.
+  - **The link is slow, so bulk views take time.** Tunnel traffic is
+    compressed, which buys about 5x on live traffic and 10x on bulk timeline
+    data: the wire sits at its ~65 KB/s ceiling while carrying 580–700 KB/s of
+    payload. DevTools connects in ~20s even against an app rendering at 60fps.
+    The Performance page is still slow on a busy app, because it fetches the
+    entire timeline.
 
   Both devices must share a network: a watch reaches your Mac through its
   paired iPhone, so the iPhone needs to be unlocked, nearby, and on the same
