@@ -50,6 +50,16 @@
   distinguishes "the VM Service never started" from "it started but the app
   could not reach this Mac".
 
+- **Release builds carry none of the above.** The VM Service bridge is compiled
+  only for debug and profile: a release build gets a no-op stub and links no
+  `URLSession`, socket or compression code for it (verified by symbol count —
+  127 bridge symbols and 3 networking references in profile, 22 stub symbols
+  and 0 networking references in release). Release launches also no longer pass
+  `--enable-dart-profiling`, `--disable-service-auth-codes` or
+  `--vm-service-host`. A release engine has no Dart VM Service, so those were
+  already inert — but they are not flags to hand a shipping build on the
+  assumption that nothing is listening.
+
 - **`run` on a physical watch takes over a stale instance.** Launches now pass
   `--terminate-existing`. An earlier run that ended without a clean stop used to
   leave an instance holding the VM Service port, after which every later run
