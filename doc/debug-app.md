@@ -82,9 +82,22 @@ Current limits:
   The Dart sampling profiler needs Mach thread APIs the watchOS device SDK
   removes — the same reason there is no JIT on device. Use the timeline to find
   *where* time goes; it cannot tell you which Dart functions are hot.
-- **The link is slow** — roughly 75–145 KB/s. DevTools works, but a bulk
-  timeline fetch is megabytes, so the Performance page can take a minute or
-  more to fill. It is loading, not hung.
+- **The link is slow, and how slow depends on how much your app renders.**
+  Measured at 38–80 KB/s. Everything in DevTools renders correctly, but pages
+  that fetch bulk data are painful, and the cost scales with your frame rate —
+  every frame posts a `Flutter.Frame` event that competes for the same link:
+
+  | App | Connects | Performance page |
+  |---|---|---|
+  | Idle (renders once) | ~20 s | ~2.5 min |
+  | ~10 fps | yes | still loading at 4 min |
+  | 60 fps continuously | **never** (gave up at 3 min, twice) | — |
+
+  So profile a screen that is mostly idle, and drive the interaction you care
+  about only once DevTools is up. For a continuously-animating screen, DevTools
+  is currently not usable on device — use `FrameTiming` instead
+  (`SchedulerBinding.addTimingsCallback`), which runs in-process and costs
+  nothing on the wire.
 - **Hot reload is Simulator-only** (AOT on device, as above).
 
 ## Attaching
