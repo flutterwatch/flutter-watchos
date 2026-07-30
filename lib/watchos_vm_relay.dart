@@ -9,8 +9,7 @@
 // ENETDOWN). What it does allow is `URLSession`, brokered through a system
 // daemon, and that path reaches the Mac — proxied via the paired iPhone.
 // `URLSessionWebSocketTask` does *not* survive that path, so the watch↔Mac hop
-// has to be plain HTTP request/response. Measurements:
-// docs/watchos-vm-service-transport.md.
+// has to be plain HTTP request/response.
 //
 //   flutter_tools ──TCP──▶ this relay ──HTTP long-poll──▶ bridge ──TCP──▶ VM Service
 //

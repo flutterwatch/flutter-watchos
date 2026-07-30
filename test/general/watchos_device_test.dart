@@ -12,9 +12,8 @@ import 'package:flutter_watchos/watchos_device.dart';
 import '../src/common.dart';
 
 void main() {
-  // These arguments reach the Dart VM for real (engine v0.1.2 forwards
-  // NSProcessInfo argv), so a release app must not be launched asking for a VM
-  // Service at all.
+  // These arguments reach the Dart VM for real as of engine v0.1.2, so a
+  // release app must not be launched asking for a VM Service at all.
   group('appLaunchArguments', () {
     testWithoutContext('release asks for no VM Service', () {
       expect(
