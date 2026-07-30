@@ -84,6 +84,26 @@ const String kPushEpochHeader = 'x-relay-epoch';
 /// Raw DEFLATE (RFC 1951), matching what the watch produces.
 final ZLibCodec _rawInflate = ZLibCodec(raw: true);
 
+/// Generates the secret path prefix guarding the bridge endpoints.
+///
+/// The bridge endpoints have to listen on every interface — the watch reaches
+/// the Mac by LAN address, so loopback would be unreachable — which puts an
+/// unauthenticated door into a live debug session on the local network. Anyone
+/// who could reach it could POST frames straight into flutter_tools, or drain
+/// the poll queue and starve the real bridge. Worse, the app is launched with
+/// `--disable-service-auth-codes`, so this would be strictly weaker than the
+/// stock VM Service posture it stands in for.
+///
+/// 128 bits from a cryptographic source, minted per run and never written to
+/// disk. It travels to the watch inside `FLUTTER_WATCHOS_RELAY_URL`, so the
+/// bridge needs no code for it — it simply dials the URL it was handed.
+String generateRelayToken({math.Random? random}) {
+  final math.Random source = random ?? math.Random.secure();
+  return List<int>.generate(16, (_) => source.nextInt(256))
+      .map((int byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join();
+}
+
 /// What a tunnel frame does to the connection it names.
 enum TunnelFrameKind {
   /// Mac→watch only: flutter_tools opened a connection; dial the VM Service.
@@ -235,15 +255,19 @@ class RelayQueue {
     }
     final waiter = Completer<void>();
     _waiter = waiter;
-    Timer? timer = Timer(timeout, () {
+    final timer = Timer(timeout, () {
       if (!waiter.isCompleted) {
-        _waiter = null;
+        // Only clear the slot if it is still ours. A later waiter may have
+        // taken it, and unregistering that one would leave `add` with nobody
+        // to wake — the frames would then sit until its own timeout fired.
+        if (identical(_waiter, waiter)) {
+          _waiter = null;
+        }
         waiter.complete();
       }
     });
     await waiter.future;
     timer.cancel();
-    timer = null;
     return drain();
   }
 
@@ -260,6 +284,9 @@ class RelayQueue {
 
 /// Relay endpoints, kept in one place so the Swift bridge and the tests cannot
 /// drift apart silently.
+///
+/// These are suffixes: every request is served under the run's secret token
+/// prefix (see [generateRelayToken]), which [WatchosVmRelay.pathFor] applies.
 class RelayPaths {
   /// Bridge long-polls here for frames headed to the watch.
   static const String bridgePoll = '/bridge/poll';
@@ -278,7 +305,10 @@ class WatchosVmRelay {
     this._bridgeServer,
     this._tunnelServer, {
     required void Function(String) logTrace,
+    required this.token,
+    required Duration pushGapTimeout,
   }) : _logTrace = logTrace,
+       _pushGapTimeout = pushGapTimeout,
        port = _bridgeServer.port,
        tunnelPort = _tunnelServer.port;
 
@@ -286,8 +316,13 @@ class WatchosVmRelay {
   final ServerSocket _tunnelServer;
   final void Function(String) _logTrace;
 
+  /// Secret prefix every bridge request must carry. See [generateRelayToken]
+  /// for why the endpoints cannot simply be bound to loopback instead.
+  final String token;
+
   /// Port the bridge endpoints listen on, on every interface — the watch
   /// reaches the Mac by LAN address, so loopback-only would be unreachable.
+  /// Unauthenticated callers get a 404 and change no state; see [token].
   final int port;
 
   /// Port flutter_tools connects to. Loopback only: nothing off this Mac has
@@ -379,6 +414,8 @@ class WatchosVmRelay {
     required void Function(String) logTrace,
     int port = 0,
     int tunnelPort = 0,
+    String? token,
+    Duration pushGapTimeout = _defaultPushGapTimeout,
   }) async {
     final HttpServer bridgeServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
     ServerSocket tunnelServer;
@@ -388,7 +425,13 @@ class WatchosVmRelay {
       await bridgeServer.close(force: true);
       rethrow;
     }
-    final relay = WatchosVmRelay._(bridgeServer, tunnelServer, logTrace: logTrace);
+    final relay = WatchosVmRelay._(
+      bridgeServer,
+      tunnelServer,
+      logTrace: logTrace,
+      token: token ?? generateRelayToken(),
+      pushGapTimeout: pushGapTimeout,
+    );
     unawaited(relay._serveBridge());
     relay._serveTunnel();
     return relay;
@@ -398,8 +441,14 @@ class WatchosVmRelay {
   /// Service: DDS, DevTools and `flutter attach` connect to it unchanged.
   Uri get vmServiceUri => Uri.parse('http://127.0.0.1:$tunnelPort/');
 
+  /// The served path for one of [RelayPaths], under this run's token.
+  String pathFor(String endpoint) => '/$token$endpoint';
+
   /// The URI the watch bridge dials, reachable from the device.
-  Uri bridgeUri(String macAddress) => Uri.parse('http://$macAddress:$port');
+  ///
+  /// The token rides in the path, so the bridge appends its endpoint to this
+  /// and needs no notion of authentication at all.
+  Uri bridgeUri(String macAddress) => Uri.parse('http://$macAddress:$port/$token');
 
   // MARK: - flutter_tools side (raw TCP)
 
@@ -465,13 +514,23 @@ class WatchosVmRelay {
   // MARK: - watch side (HTTP)
 
   Future<void> _serveBridge() async {
-    await for (final HttpRequest request in _bridgeServer) {
-      // Deliberately not awaited. A poll is held open for up to
-      // `kBridgePollTimeout`, so handling requests one at a time would make a
-      // push wait behind the very poll it is racing — every VM Service reply
-      // would be delayed until the poll timed out, and the tunnel would appear
-      // to work only at 20-second granularity.
-      unawaited(_handleGuarded(request));
+    // Nothing awaits this future, so an error escaping here would reach the
+    // root zone and take the whole `run` down — the same way an unhandled
+    // `Socket.add` failure did. A dead listener is bad; killing the tool
+    // because of one is worse.
+    try {
+      await for (final HttpRequest request in _bridgeServer) {
+        // Deliberately not awaited. A poll is held open for up to
+        // `kBridgePollTimeout`, so handling requests one at a time would make a
+        // push wait behind the very poll it is racing — every VM Service reply
+        // would be delayed until the poll timed out, and the tunnel would appear
+        // to work only at 20-second granularity.
+        unawaited(_handleGuarded(request));
+      }
+    } on Object catch (e) {
+      if (!_disposed) {
+        _logTrace('relay: bridge listener stopped: $e');
+      }
     }
   }
 
@@ -490,7 +549,16 @@ class WatchosVmRelay {
   }
 
   Future<void> _handle(HttpRequest request) async {
-    switch (request.uri.path) {
+    // Authenticate before touching any state. A caller without the token must
+    // not be able to mark the bridge connected, drain the poll queue, or push
+    // a frame — all three are reachable from the LAN otherwise.
+    final prefix = '/$token';
+    final String path = request.uri.path;
+    if (!path.startsWith('$prefix/')) {
+      await _rejectUnauthenticated(request);
+      return;
+    }
+    switch (path.substring(prefix.length)) {
       case RelayPaths.bridgeHello:
         _markBridgeConnected();
         _logTrace(
@@ -505,6 +573,28 @@ class WatchosVmRelay {
         request.response.statusCode = HttpStatus.notFound;
         await request.response.close();
     }
+  }
+
+  /// Whether an unauthenticated request has already been logged.
+  ///
+  /// A scanner can generate these faster than the trace log is worth reading,
+  /// and the first one carries all the information: either the watch is dialling
+  /// a stale URL, or something else on the network found the port.
+  bool _loggedRejection = false;
+
+  Future<void> _rejectUnauthenticated(HttpRequest request) async {
+    if (!_loggedRejection) {
+      _loggedRejection = true;
+      _logTrace(
+        'relay: rejected a request without the run token from '
+        '${request.connectionInfo?.remoteAddress.address} '
+        '(further rejections are not logged)',
+      );
+    }
+    // 404 rather than 401: an unauthenticated caller learns nothing about
+    // whether anything is served here.
+    request.response.statusCode = HttpStatus.notFound;
+    await request.response.close();
   }
 
   void _markBridgeConnected() {
@@ -526,13 +616,33 @@ class WatchosVmRelay {
   int _nextPushSeq = 0;
   final Map<int, String> _pendingPushBodies = <int, String>{};
 
+  /// How long to hold later push bodies waiting for a missing one before
+  /// giving up on the stream.
+  ///
+  /// A straggler is normal — the bridge caps *concurrent* pushes, not how far
+  /// ahead the sequence may run (measured: seq 430 held 5 later bodies and
+  /// then arrived, and the session carried on unharmed). So this is generous
+  /// on purpose; it is here for the push that never arrives, which used to
+  /// wedge the relay forever while the bridge logged one line and the user saw
+  /// an indefinite hang.
+  static const Duration _defaultPushGapTimeout = Duration(seconds: 30);
+  final Duration _pushGapTimeout;
+  Timer? _pushGapTimer;
+
   Future<void> _handleBridgePush(HttpRequest request) async {
-    final String body = await _readPushBody(request);
+    final String? body = await _readPushBody(request);
     // Everything below the await is synchronous, so concurrent handlers cannot
     // interleave the reassembly bookkeeping.
+    if (body == null) {
+      // The bytes this batch stood for are gone. Continuing would splice the
+      // stream back together minus a chunk, which desynchronises the VM
+      // Service framing downstream and shows up as unexplained silence. Kill
+      // the connections instead, so flutter_tools reports a lost connection.
+      _breakTunnel('a push body could not be inflated');
+    }
     final int? seq = int.tryParse(request.headers.value(kPushSeqHeader) ?? '');
     if (seq == null) {
-      _applyPushBody(body);
+      _applyPushBody(body ?? '');
     } else {
       final String? epoch = request.headers.value(kPushEpochHeader);
       if (epoch != _pushEpoch) {
@@ -541,31 +651,71 @@ class WatchosVmRelay {
         _pendingPushBodies.clear();
       }
       if (seq < _nextPushSeq) {
-        // Already applied — a retransmit. Applying it again would replay bytes
-        // into the middle of the stream.
+        // Already applied — a retransmit, which the bridge sends when a push
+        // fails in transit. Applying it again would replay bytes into the
+        // middle of the stream, so acknowledge and drop it.
         _logTrace('relay: ignoring duplicate push seq $seq');
       } else {
-        _pendingPushBodies[seq] = body;
+        // An undecodable body still occupies its sequence slot: dropping the
+        // slot too would hold every later push forever.
+        _pendingPushBodies[seq] = body ?? '';
         while (_pendingPushBodies.containsKey(_nextPushSeq)) {
           _applyPushBody(_pendingPushBodies.remove(_nextPushSeq)!);
           _nextPushSeq++;
         }
-        if (_pendingPushBodies.length > 4) {
-          // Usually a straggler: one slow request can be overtaken by many,
-          // since the bridge caps *concurrent* pushes, not how far ahead the
-          // sequence may run (measured — seq 430 held 5 later bodies and then
-          // arrived; the session carried on unharmed). If the gap never
-          // closes, the push was lost and the bridge logs "stream is now
-          // broken".
-          _logTrace(
-            'relay: waiting for push seq $_nextPushSeq with '
-            '${_pendingPushBodies.length} later bodies held — a push is late '
-            'or lost',
-          );
-        }
+        _updatePushGapWatchdog();
       }
     }
     await _respondJson(request, <String, Object?>{'ok': true});
+  }
+
+  /// Arms or disarms the watchdog that gives up on a missing push.
+  void _updatePushGapWatchdog() {
+    if (_pendingPushBodies.isEmpty) {
+      _pushGapTimer?.cancel();
+      _pushGapTimer = null;
+      return;
+    }
+    if (_pendingPushBodies.length > 4) {
+      _logTrace(
+        'relay: waiting for push seq $_nextPushSeq with '
+        '${_pendingPushBodies.length} later bodies held — a push is late or lost',
+      );
+    }
+    // Deliberately not restarted while a gap persists: the deadline is on the
+    // missing sequence, not on the traffic still flowing past it.
+    _pushGapTimer ??= Timer(_pushGapTimeout, _abandonPushGap);
+  }
+
+  void _abandonPushGap() {
+    _pushGapTimer = null;
+    if (_pendingPushBodies.isEmpty) {
+      return;
+    }
+    final int missing = _nextPushSeq;
+    final int held = _pendingPushBodies.length;
+    // Resynchronise past the hole so the relay is usable again if the bridge
+    // keeps going, then tear the connections down — the byte stream they were
+    // carrying is missing a chunk and cannot be trusted.
+    _nextPushSeq = _pendingPushBodies.keys.reduce(math.max) + 1;
+    _pendingPushBodies.clear();
+    _breakTunnel(
+      'push seq $missing never arrived after ${_pushGapTimeout.inSeconds}s '
+      '($held later bodies discarded)',
+    );
+  }
+
+  /// Tears down every live tunnel connection, because the byte stream feeding
+  /// them has lost data and is no longer coherent.
+  void _breakTunnel(String reason) {
+    if (_connections.isEmpty) {
+      _logTrace('relay: $reason');
+      return;
+    }
+    _logTrace('relay: $reason — dropping ${_connections.length} tunnel connection(s)');
+    for (final int id in _connections.keys.toList(growable: false)) {
+      _teardownConnection(id, notifyBridge: true, reason: reason);
+    }
   }
 
   void _applyPushBody(String body) {
@@ -606,11 +756,10 @@ class WatchosVmRelay {
 
   /// Reads a push body, inflating it when the bridge compressed it.
   ///
-  /// Returns an empty string if the body cannot be inflated. That drops the
-  /// batch, which breaks the connection it belonged to — but a half-decoded
-  /// byte stream would corrupt the VM Service protocol silently, and a dead
-  /// connection at least announces itself.
-  Future<String> _readPushBody(HttpRequest request) async {
+  /// Returns null if the body cannot be inflated. The caller drops the whole
+  /// batch and kills the tunnel: a half-decoded byte stream would corrupt the
+  /// VM Service protocol silently, whereas a dead connection announces itself.
+  Future<String?> _readPushBody(HttpRequest request) async {
     final builder = BytesBuilder(copy: false);
     await request.forEach(builder.add);
     final Uint8List raw = builder.takeBytes();
@@ -626,7 +775,7 @@ class WatchosVmRelay {
       return utf8.decode(_rawInflate.decode(raw), allowMalformed: true);
     } on Object catch (e) {
       _logTrace('relay: could not inflate a ${raw.length}-byte push body ($e)');
-      return '';
+      return null;
     }
   }
 
@@ -673,6 +822,8 @@ class WatchosVmRelay {
   Future<void> dispose() async {
     _disposed = true;
     _stopThroughputReporting();
+    _pushGapTimer?.cancel();
+    _pushGapTimer = null;
     _logTrace(
       'relay: moved ${(_bytesToWatch / 1024).toStringAsFixed(1)} KB to watch, '
       '${(_bytesFromWatch / 1024).toStringAsFixed(1)} KB from watch',
@@ -686,30 +837,57 @@ class WatchosVmRelay {
   }
 }
 
+/// Whether [address] is in one of the RFC 1918 private IPv4 ranges.
+bool _isPrivateIPv4(String address) {
+  final List<int> parts = address
+      .split('.')
+      .map((String part) => int.tryParse(part) ?? -1)
+      .toList(growable: false);
+  if (parts.length != 4 || parts.any((int p) => p < 0)) {
+    return false;
+  }
+  return parts[0] == 10 ||
+      (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] == 192 && parts[1] == 168);
+}
+
 /// Picks the Mac address the watch should dial.
 ///
 /// The watch reaches the Mac over the LAN (proxied via the paired iPhone), so
-/// loopback is useless here. Prefers a private IPv4 address on an ordinary
-/// interface and skips link-local and loopback.
+/// loopback is useless here, and so is anything that only routes somewhere
+/// else. In preference order:
+///
+/// 1. A `bridge*` interface — that is what Internet Sharing hands the watch's
+///    network, so if one exists it is certainly the right side of the Mac.
+/// 2. A private (RFC 1918) address, which is what an ordinary Wi-Fi LAN looks
+///    like. Preferring it keeps a VPN tunnel's address from winning purely on
+///    `NetworkInterface.list` ordering — the watch cannot route to that, and
+///    the failure looks like the app never starting.
+/// 3. Anything else routable, as a last resort.
+///
+/// Loopback and link-local are skipped outright.
 Future<String?> resolveMacLanAddress({
   Future<List<NetworkInterface>> Function()? listInterfaces,
 }) async {
   final List<NetworkInterface> interfaces =
       await (listInterfaces?.call() ??
           NetworkInterface.list(type: InternetAddressType.IPv4));
-  String? best;
+  String? private;
+  String? routable;
   for (final interface in interfaces) {
     for (final InternetAddress address in interface.addresses) {
       if (address.isLoopback || address.isLinkLocal) {
         continue;
       }
-      // A bridge interface is what Internet Sharing hands the watch's network,
-      // so prefer it; otherwise take the first usable address.
       if (interface.name.startsWith('bridge')) {
         return address.address;
       }
-      best ??= address.address;
+      if (_isPrivateIPv4(address.address)) {
+        private ??= address.address;
+      } else {
+        routable ??= address.address;
+      }
     }
   }
-  return best;
+  return private ?? routable;
 }

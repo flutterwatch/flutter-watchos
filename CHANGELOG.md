@@ -24,6 +24,13 @@
   (`Animator::BeginFrame`, `BUILD`/`LAYOUT`/`PAINT`/`COMPOSITING`,
   `Rasterizer::*`).
 
+  The relay's endpoints have to accept connections on every interface — the
+  watch reaches the Mac by LAN address — so each run mints a 128-bit token and
+  serves only under it. Anything else on the network gets a 404 and changes no
+  state. This matters because the app is launched with
+  `--disable-service-auth-codes`: without the token the relay would be an
+  unauthenticated door into a live debug session.
+
   Limits worth knowing, all documented in
   [`doc/debug-app.md`](doc/debug-app.md):
 
@@ -33,6 +40,11 @@
     stops listening, so a dropped connection ends the session. Note the watch
     suspending the app when its display times out looks the same from the
     terminal — see [`doc/debug-app.md`](doc/debug-app.md).
+
+    A transfer that fails mid-session is retried, and if the data really is
+    lost the tunnel is closed so `run` reports a lost connection — rather than
+    holding the session open around a hole in the byte stream, which read as
+    an indefinite hang.
   - **The CPU profiler is empty.** `getCpuSamples` returns a full function
     table and zero samples — the Dart sampling profiler needs Mach thread APIs
     the watchOS device SDK removes, the same reason there is no JIT on device.

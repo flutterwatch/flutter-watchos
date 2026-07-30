@@ -41,6 +41,12 @@ on ethernet or USB tethering while the phone is on Wi-Fi will not work. If the
 app cannot reach back, `run` says so, and distinguishes "the VM Service never
 started" from "it started but the app could not reach this Mac".
 
+Because the watch dials your Mac by LAN address, the relay has to accept
+connections from the network rather than loopback. Each run mints a secret
+token and serves only under it, so nothing else on the network can read or
+write the debug session; the token lives only in memory and in the launched
+app's environment. Nothing is exposed after `run` exits.
+
 The watch must also stay **awake and unlocked** for the whole session. When the
 display times out, watchOS suspends the app and the connection drops — you will
 see `Lost connection to device` roughly half a minute in, with nothing wrong on

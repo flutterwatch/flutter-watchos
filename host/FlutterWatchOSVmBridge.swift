@@ -33,6 +33,12 @@ import Foundation
 /// The CLI activates this by launching the app with
 /// `FLUTTER_WATCHOS_RELAY_URL` and `FLUTTER_WATCHOS_VM_PORT` set. With neither
 /// present — every normal run — nothing here starts.
+///
+/// The relay URL already carries the run's secret path prefix, so every
+/// request below authenticates itself simply by being built from it. That is
+/// why there is no token handling here: the relay's endpoints must listen on
+/// every interface for the watch to reach them at all, and the prefix is what
+/// keeps the rest of the network out.
 @objc public final class FlutterWatchOSVmBridge: NSObject {
     private static let relayURLKey = "FLUTTER_WATCHOS_RELAY_URL"
     private static let vmPortKey = "FLUTTER_WATCHOS_VM_PORT"
@@ -274,7 +280,16 @@ import Foundation
         }
     }
 
-    private func push(batch: [String], seq: Int) {
+    /// How many times a push is attempted before the stream is declared lost.
+    ///
+    /// Retrying is safe — and worth doing — because the relay applies each
+    /// sequence exactly once and ignores a repeat, so a resend of the same seq
+    /// is idempotent. Without it a single blip on the phone-proxied path was
+    /// fatal, while the identical blip on a *poll* simply re-armed: the same
+    /// transient, two opposite outcomes.
+    private static let maxPushAttempts = 3
+
+    private func push(batch: [String], seq: Int, attempt: Int = 1) {
         // Newline-delimited: frames are base64 with a numeric header, so the
         // relay can split them again unambiguously.
         let body = batch.joined(separator: "\n")
@@ -298,15 +313,33 @@ import Foundation
             // keys off the header, so a plain body always stays readable.
             request.httpBody = raw
         }
-        session.dataTask(with: request) { [weak self] _, _, error in
+        session.dataTask(with: request) { [weak self] _, response, error in
             guard let self else { return }
-            if let error {
-                // The frames are gone, which leaves a hole at this seq: the
-                // relay will hold every later push and the stream is dead.
-                // Unrecoverable, so say so plainly rather than look like a
-                // hang.
-                NSLog("[flutter-watchos] vm bridge push %d failed, stream is now broken: %@",
-                      seq, error.localizedDescription)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            // A transport error or a 5xx is the kind of thing that clears on
+            // its own. A 4xx is not: it means the relay rejected the request
+            // outright — a stale run token, most likely — and resending the
+            // same bytes would only repeat the rejection.
+            let retriable = error != nil || (500...599).contains(status)
+            if retriable, attempt < Self.maxPushAttempts, self.running {
+                NSLog("[flutter-watchos] vm bridge push %d attempt %d failed, retrying: %@",
+                      seq, attempt, error?.localizedDescription ?? "HTTP \(status)")
+                // The in-flight slot is deliberately still held: it stands for
+                // an outstanding range of the byte stream, not for one request.
+                let backoff = 0.25 * Double(attempt)
+                DispatchQueue.global().asyncAfter(deadline: .now() + backoff) { [weak self] in
+                    self?.push(batch: batch, seq: seq, attempt: attempt + 1)
+                }
+                return
+            }
+            if error != nil || !(200...299).contains(status) {
+                // Out of attempts. The frames are gone, which leaves a hole at
+                // this seq: the relay holds later pushes until its gap
+                // watchdog fires, then drops the connections. Say so plainly
+                // rather than let it look like a hang.
+                NSLog("[flutter-watchos] vm bridge push %d failed after %d attempt(s), "
+                      + "stream is now broken: %@",
+                      seq, attempt, error?.localizedDescription ?? "HTTP \(status)")
             }
             self.pendingLock.lock()
             self.pushesInFlight -= 1
@@ -427,6 +460,10 @@ private final class VmSocket {
     private let queue: DispatchQueue
     private var fd: Int32 = -1
     private var closed = false
+    /// Threads currently inside a syscall on [fd]; see `acquireFd`.
+    private var fdUsers = 0
+    /// Set by `close()`; the descriptor is handed back once `fdUsers` hits 0.
+    private var closeRequested = false
     private let stateLock = NSLock()
     /// One-shot markers: enough to prove each leg moved bytes, without logging
     /// every frame of a megabyte transfer.
@@ -520,11 +557,16 @@ private final class VmSocket {
         setsockopt(handle, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
 
         stateLock.lock()
-        fd = handle
         let alreadyClosed = closed
+        // Only publish the descriptor if it can still be used. Storing one the
+        // caller is about to close would leave a dangling number behind.
+        fd = alreadyClosed ? -1 : handle
         stateLock.unlock()
 
         if alreadyClosed {
+            // close() already ran and found nothing to release, so this
+            // connect's descriptor is ours to hand back. No one can be inside
+            // a syscall on it — it has never been published.
             Darwin.close(handle)
             return false
         }
@@ -539,9 +581,10 @@ private final class VmSocket {
             guard let self else { return }
             var buffer = [UInt8](repeating: 0, count: 32 * 1024)
             while !self.isClosed() {
-                let handle = self.currentFd()
+                let handle = self.acquireFd()
                 guard handle >= 0 else { break }
                 let count = read(handle, &buffer, buffer.count)
+                self.releaseFd()
                 if count > 0 {
                     if !self.loggedFirstRead {
                         self.loggedFirstRead = true
@@ -567,11 +610,12 @@ private final class VmSocket {
         guard !data.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
-            let handle = self.currentFd()
+            let handle = self.acquireFd()
             guard handle >= 0 else {
                 NSLog("[flutter-watchos] vm bridge connection %d: dropping write, not connected", self.id)
                 return
             }
+            defer { self.releaseFd() }
             var sent = 0
             // Captured rather than read after the fact: `errno` is per-thread
             // but any call below (including NSLog) can clobber it, and without
@@ -613,15 +657,25 @@ private final class VmSocket {
 
     func close() {
         stateLock.lock()
-        let alreadyClosed = closed
+        if closed {
+            stateLock.unlock()
+            return
+        }
         closed = true
+        closeRequested = true
         let handle = fd
-        fd = -1
+        let idle = fdUsers == 0
+        if idle {
+            fd = -1
+        }
         stateLock.unlock()
-        guard !alreadyClosed, handle >= 0 else { return }
-        // Wakes the blocked read so the loop can notice and exit.
+        guard handle >= 0 else { return }
+        // Wakes anyone blocked in read() or send() so they can let go.
         shutdown(handle, SHUT_RDWR)
-        Darwin.close(handle)
+        if idle {
+            Darwin.close(handle)
+        }
+        // Otherwise the last releaseFd() closes it — see acquireFd().
     }
 
     private func isClosed() -> Bool {
@@ -630,10 +684,35 @@ private final class VmSocket {
         return closed
     }
 
-    private func currentFd() -> Int32 {
+    /// Borrows the descriptor, or returns -1 if there is none to borrow.
+    /// Every non-negative result must be balanced with [releaseFd].
+    ///
+    /// Handing the number to the kernel while another thread sits inside
+    /// `read()` or `send()` on it is the bug this exists to prevent: the
+    /// descriptor can be reused immediately by the next `socket()` or by
+    /// URLSession, and the blocked call then operates on a completely
+    /// unrelated connection. `shutdown()` normally wakes the reader first, but
+    /// nothing orders the two, so the close has to wait for the last user.
+    private func acquireFd() -> Int32 {
         stateLock.lock()
         defer { stateLock.unlock() }
+        guard !closed, fd >= 0 else { return -1 }
+        fdUsers += 1
         return fd
+    }
+
+    private func releaseFd() {
+        stateLock.lock()
+        fdUsers -= 1
+        let handle = fd
+        let shouldClose = closeRequested && fdUsers == 0 && handle >= 0
+        if shouldClose {
+            fd = -1
+        }
+        stateLock.unlock()
+        if shouldClose {
+            Darwin.close(handle)
+        }
     }
 }
 
