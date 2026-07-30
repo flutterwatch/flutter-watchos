@@ -82,15 +82,14 @@ Current limits:
   The Dart sampling profiler needs Mach thread APIs the watchOS device SDK
   removes — the same reason there is no JIT on device. Use the timeline to find
   *where* time goes; it cannot tell you which Dart functions are hot.
-- **The link is slow, so bulk views take time.** The watch compresses what it
-  sends, which buys roughly 5x on live traffic and 10x on bulk timeline data —
-  the wire runs at its ceiling of ~65 KB/s while carrying 580–700 KB/s of
-  payload. DevTools connects in about 20 seconds even against an app rendering
-  at 60fps (before compression that case never connected at all).
-
-  The Performance page is still the expensive one, because it fetches the whole
-  timeline and a 60fps app produces an enormous amount of it. If you only need
-  build and raster times for a specific interaction, `FrameTiming`
+- **The link is slow, so bulk views take a moment.** The watch compresses what
+  it sends (~5x live, ~9–10x on bulk timeline data) and keeps several transfers
+  in flight to hide the phone-proxied path's round-trip time; together the
+  tunnel carries 800–900 KB/s of payload over a ~90 KB/s wire. In practice:
+  DevTools connects in ~20 seconds, and the Performance page — the most
+  expensive view — loads in about a minute against an app rendering at 60fps,
+  then stays live, frames chart included. (Before this, that app never managed
+  to connect at all.) For a quick number without DevTools, `FrameTiming`
   (`SchedulerBinding.addTimingsCallback`) runs in-process and costs nothing on
   the wire.
 - **Hot reload is Simulator-only** (AOT on device, as above).
