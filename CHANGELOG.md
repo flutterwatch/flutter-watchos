@@ -24,9 +24,13 @@
   (`Animator::BeginFrame`, `BUILD`/`LAYOUT`/`PAINT`/`COMPOSITING`,
   `Rasterizer::*`).
 
-  Two limits worth knowing, both documented in
+  Limits worth knowing, all documented in
   [`doc/debug-app.md`](doc/debug-app.md):
 
+  - **Connection setup is unreliable — expect to retry.** Roughly half of
+    launches fail to establish the connection. Once up, a session is stable.
+    A failure cannot be recovered in place: once DDS has taken control the VM
+    Service stops listening, so a dropped connection ends the session.
   - **The CPU profiler is empty.** `getCpuSamples` returns a full function
     table and zero samples — the Dart sampling profiler needs Mach thread APIs
     the watchOS device SDK removes, the same reason there is no JIT on device.
