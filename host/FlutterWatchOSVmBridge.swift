@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 
 /// Watch-side half of the VM Service tunnel.
@@ -27,6 +28,37 @@ import Foundation
 @objc public final class FlutterWatchOSVmBridge: NSObject {
     private static let relayURLKey = "FLUTTER_WATCHOS_RELAY_URL"
     private static let vmPortKey = "FLUTTER_WATCHOS_VM_PORT"
+
+    /// `Content-Encoding` for a push body compressed with [rawDeflate].
+    ///
+    /// Not `deflate`: that token means zlib-wrapped data (RFC 1950) to most
+    /// HTTP stacks, and `COMPRESSION_ZLIB` emits bare RFC 1951. An `x-` token
+    /// keeps the two from being confused if anything else ever sits in the
+    /// path. The relay's `kRawDeflateEncoding` must match this string.
+    static let rawDeflateEncoding = "x-raw-deflate"
+
+    /// Compresses [data] as raw DEFLATE, or nil if that fails or does not help.
+    ///
+    /// Returning nil is not an error — the caller falls back to sending the
+    /// body uncompressed, so a failure here costs bandwidth and nothing else.
+    static func rawDeflate(_ data: Data) -> Data? {
+        // Below roughly a packet's worth, framing overhead swamps any saving.
+        guard data.count >= 256 else { return nil }
+        // compression_encode_buffer needs somewhere to write. It returns 0 if
+        // the result would not fit, which for already-compressed input can
+        // exceed the source, so give it the source size and treat 0 as "do not
+        // bother" rather than growing the buffer and sending something larger.
+        let capacity = data.count
+        let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+        defer { destination.deallocate() }
+        let written = data.withUnsafeBytes { (source: UnsafeRawBufferPointer) -> Int in
+            guard let base = source.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            return compression_encode_buffer(
+                destination, capacity, base, data.count, nil, COMPRESSION_ZLIB)
+        }
+        guard written > 0 else { return nil }
+        return Data(bytes: destination, count: written)
+    }
 
     /// Starts the bridge if the CLI asked for it. Safe to call unconditionally.
     @objc public static func startIfConfigured() {
@@ -220,8 +252,23 @@ import Foundation
         // relay can split them again unambiguously.
         let body = batch.joined(separator: "\n")
         var request = relayRequest(path: "bridge/push", method: "POST")
-        request.httpBody = body.data(using: .utf8)
         request.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+
+        // This is the direction that matters. The VM Service answers in JSON,
+        // which we then base64 (+33%), and the link runs at 38-80 KB/s -- slow
+        // enough that DevTools' Performance page took minutes, and a 60fps app
+        // never finished connecting at all. JSON-under-base64 compresses several
+        // fold, so trading a little watch CPU for bytes on the wire is heavily
+        // in our favour here.
+        let raw = Data(body.utf8)
+        if let deflated = Self.rawDeflate(raw), deflated.count < raw.count {
+            request.httpBody = deflated
+            request.setValue(Self.rawDeflateEncoding, forHTTPHeaderField: "Content-Encoding")
+        } else {
+            // Incompressible or too small to bother: send it as-is. The relay
+            // keys off the header, so a plain body always stays readable.
+            request.httpBody = raw
+        }
         session.dataTask(with: request) { [weak self] _, _, error in
             guard let self else { return }
             if let error {
