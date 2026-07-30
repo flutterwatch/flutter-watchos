@@ -33,9 +33,8 @@ import 'watchos_vm_relay.dart';
 
 /// Arguments forwarded to the Flutter app's `main()` on a device launch.
 ///
-/// The engine passes `NSProcessInfo`'s arguments into
-/// `FlutterProjectArgs.command_line_argv`, so everything here reaches the Dart
-/// VM (fixed in engine `v0.1.2`; before that these were silently inert).
+/// These reach the Dart VM as of engine `v0.1.2`; against older artifacts they
+/// are accepted and silently ignored.
 ///
 /// [enableVmService] must be false for release. A release engine has no Dart
 /// VM Service, so the flags are inert there — but `--disable-service-auth-codes`
@@ -48,8 +47,7 @@ import 'watchos_vm_relay.dart';
 /// cannot reach, and the symptom is an endless "Could not connect to the
 /// server" against a service that is plainly listening. Without the relay the
 /// dual-stack wildcard is right — nothing off-device can reach it either way
-/// (docs/watchos-vm-service-transport.md), but a wirelessly-paired watch is
-/// often reachable only over IPv6.
+/// — but a wirelessly-paired watch is often reachable only over IPv6.
 @visibleForTesting
 List<String> appLaunchArguments({
   required bool enableVmService,

@@ -28,7 +28,7 @@ import Foundation
 /// leg. That was the previous design and it could not connect to the app's own
 /// VM Service — ~200 consecutive "Could not connect to the server" against an
 /// endpoint that was demonstrably listening and that a raw socket reaches
-/// first try. See docs/watchos-vm-service-transport.md.
+/// first try.
 ///
 /// The CLI activates this by launching the app with
 /// `FLUTTER_WATCHOS_RELAY_URL` and `FLUTTER_WATCHOS_VM_PORT` set. With neither
