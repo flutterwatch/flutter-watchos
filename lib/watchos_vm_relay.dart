@@ -66,6 +66,22 @@ const String kRawDeflateEncoding = 'x-raw-deflate';
 /// Below this, framing overhead outweighs any saving, so send it plain.
 const int kMinCompressBytes = 256;
 
+/// Header carrying a push body's position in the bridge's byte stream.
+///
+/// The bridge keeps several pushes in flight to hide the phone-proxied path's
+/// round-trip time, and `URLSession` gives no ordering guarantee between
+/// concurrent tasks — so the relay reassembles bodies in sequence order
+/// instead of arrival order. Absent header means an unpipelined sender (the
+/// bridge before this protocol, or a test); those bodies apply immediately.
+const String kPushSeqHeader = 'x-relay-seq';
+
+/// Header naming the bridge instance a push's sequence belongs to.
+///
+/// A relaunched app restarts its counter at 0; without this, its first push
+/// would look like a duplicate of a sequence the relay has already applied and
+/// the new stream would stall forever.
+const String kPushEpochHeader = 'x-relay-epoch';
+
 /// Raw DEFLATE (RFC 1951), matching what the watch produces.
 final ZLibCodec _rawInflate = ZLibCodec(raw: true);
 
@@ -505,8 +521,55 @@ class WatchosVmRelay {
     await _respondJson(request, <String, Object?>{'frames': frames});
   }
 
+  /// Sequence-reassembly state for pipelined pushes. Epoch-scoped: a new
+  /// bridge instance restarts both.
+  String? _pushEpoch;
+  int _nextPushSeq = 0;
+  final Map<int, String> _pendingPushBodies = <int, String>{};
+
   Future<void> _handleBridgePush(HttpRequest request) async {
     final String body = await _readPushBody(request);
+    // Everything below the await is synchronous, so concurrent handlers cannot
+    // interleave the reassembly bookkeeping.
+    final int? seq = int.tryParse(request.headers.value(kPushSeqHeader) ?? '');
+    if (seq == null) {
+      _applyPushBody(body);
+    } else {
+      final String? epoch = request.headers.value(kPushEpochHeader);
+      if (epoch != _pushEpoch) {
+        _pushEpoch = epoch;
+        _nextPushSeq = 0;
+        _pendingPushBodies.clear();
+      }
+      if (seq < _nextPushSeq) {
+        // Already applied — a retransmit. Applying it again would replay bytes
+        // into the middle of the stream.
+        _logTrace('relay: ignoring duplicate push seq $seq');
+      } else {
+        _pendingPushBodies[seq] = body;
+        while (_pendingPushBodies.containsKey(_nextPushSeq)) {
+          _applyPushBody(_pendingPushBodies.remove(_nextPushSeq)!);
+          _nextPushSeq++;
+        }
+        if (_pendingPushBodies.length > 4) {
+          // Usually a straggler: one slow request can be overtaken by many,
+          // since the bridge caps *concurrent* pushes, not how far ahead the
+          // sequence may run (measured — seq 430 held 5 later bodies and then
+          // arrived; the session carried on unharmed). If the gap never
+          // closes, the push was lost and the bridge logs "stream is now
+          // broken".
+          _logTrace(
+            'relay: waiting for push seq $_nextPushSeq with '
+            '${_pendingPushBodies.length} later bodies held — a push is late '
+            'or lost',
+          );
+        }
+      }
+    }
+    await _respondJson(request, <String, Object?>{'ok': true});
+  }
+
+  void _applyPushBody(String body) {
     for (final String line in splitPushBody(body)) {
       final TunnelFrame? frame = TunnelFrame.decode(line);
       if (frame == null) {
@@ -515,7 +578,6 @@ class WatchosVmRelay {
       }
       _applyFrameFromWatch(frame);
     }
-    await _respondJson(request, <String, Object?>{'ok': true});
   }
 
   void _applyFrameFromWatch(TunnelFrame frame) {

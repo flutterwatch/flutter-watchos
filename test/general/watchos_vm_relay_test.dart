@@ -235,6 +235,85 @@ void main() {
       expect(received, payload);
     });
 
+    testWithoutContext('applies pipelined pushes in sequence order, not arrival order', () async {
+      // The bridge keeps several pushes in flight and URLSession may deliver
+      // them in any order; the relay must restore byte order or the VM Service
+      // protocol is silently corrupted.
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      final Uint8List first = utf8.encode('FIRST');
+      final Uint8List second = utf8.encode('SECOND');
+      // Deliver seq 1 before seq 0: nothing may reach the client yet.
+      await _pushBytes(
+        relay.port,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, second).encode()),
+        seq: 1,
+        epoch: 'e1',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(received, isEmpty, reason: 'seq 1 must wait for seq 0');
+
+      await _pushBytes(
+        relay.port,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, first).encode()),
+        seq: 0,
+        epoch: 'e1',
+      );
+      await _until(() => received.length >= first.length + second.length);
+      expect(utf8.decode(received), 'FIRSTSECOND');
+    });
+
+    testWithoutContext('a new epoch resets the sequence', () async {
+      // A relaunched app restarts its counter at 0. Keying on the old epoch
+      // would make its first push look like a duplicate and stall the new
+      // stream forever.
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      await _pushBytes(
+        relay.port,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('old')).encode()),
+        seq: 0,
+        epoch: 'e1',
+      );
+      await _until(() => utf8.decode(received) == 'old');
+
+      await _pushBytes(
+        relay.port,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('new')).encode()),
+        seq: 0,
+        epoch: 'e2',
+      );
+      await _until(() => utf8.decode(received) == 'oldnew');
+    });
+
+    testWithoutContext('ignores a retransmitted sequence rather than replaying it', () async {
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      final List<int> body = utf8.encode(
+        TunnelFrame(1, TunnelFrameKind.data, utf8.encode('once')).encode(),
+      );
+      await _pushBytes(relay.port, body, seq: 0, epoch: 'e1');
+      await _pushBytes(relay.port, body, seq: 0, epoch: 'e1');
+      // A later frame proves the duplicate was skipped, not merely delayed.
+      await _pushBytes(
+        relay.port,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('!')).encode()),
+        seq: 1,
+        epoch: 'e1',
+      );
+      await _until(() => utf8.decode(received).endsWith('!'));
+      expect(utf8.decode(received), 'once!');
+    });
+
     testWithoutContext('gzips a poll response when the caller accepts it', () async {
       final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
       addTearDown(client.destroy);
@@ -522,7 +601,11 @@ class _FakeBridge {
     }
   }
 
+  int _pushSeq = 0;
+
   /// Serialised: frames must reach the relay in the order they were produced.
+  /// Carries the pipeline headers the Swift bridge sends, so the relay's
+  /// reassembly path is what these tests exercise.
   void _push(String frame) {
     _pushChain = _pushChain.then((_) async {
       if (!_running) {
@@ -532,6 +615,8 @@ class _FakeBridge {
         final HttpClientRequest request = await _client.postUrl(
           Uri.parse('http://127.0.0.1:$relayPort${RelayPaths.bridgePush}'),
         );
+        request.headers.set(kPushSeqHeader, '${_pushSeq++}');
+        request.headers.set(kPushEpochHeader, 'fake-bridge');
         request.write(frame);
         final HttpClientResponse response = await request.close();
         await response.drain<void>();
@@ -566,8 +651,15 @@ Future<void> _pushRaw(int port, String frame) async {
   }
 }
 
-/// Posts a raw body to the push endpoint, optionally claiming an encoding.
-Future<void> _pushBytes(int port, List<int> body, {String? contentEncoding}) async {
+/// Posts a raw body to the push endpoint, optionally claiming an encoding
+/// and/or a pipeline position.
+Future<void> _pushBytes(
+  int port,
+  List<int> body, {
+  String? contentEncoding,
+  int? seq,
+  String? epoch,
+}) async {
   final client = HttpClient();
   try {
     final HttpClientRequest request = await client.postUrl(
@@ -575,6 +667,12 @@ Future<void> _pushBytes(int port, List<int> body, {String? contentEncoding}) asy
     );
     if (contentEncoding != null) {
       request.headers.set(HttpHeaders.contentEncodingHeader, contentEncoding);
+    }
+    if (seq != null) {
+      request.headers.set(kPushSeqHeader, '$seq');
+    }
+    if (epoch != null) {
+      request.headers.set(kPushEpochHeader, epoch);
     }
     request.add(body);
     final HttpClientResponse response = await request.close();

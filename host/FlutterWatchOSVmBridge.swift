@@ -93,8 +93,16 @@ import Foundation
     /// rather than one per event.
     private let pendingLock = NSLock()
     private var pending: [String] = []
-    /// Exactly one push may be in flight at a time — see `flushToRelay`.
-    private var flushInFlight = false
+
+    /// Position of the next push in this bridge's byte stream — see
+    /// `flushToRelay` for why pushes are sequence-numbered.
+    private var nextPushSeq = 0
+    /// Pushes currently in flight, bounded by [maxPushesInFlight].
+    private var pushesInFlight = 0
+    /// Identifies this bridge instance to the relay, so a relaunched app
+    /// (whose sequence counter restarts at 0) is not mistaken for a wildly
+    /// out-of-order push from the previous instance.
+    private let pushEpoch = UUID().uuidString
 
     init(relayURL: URL, vmServicePort: UInt16) {
         self.relayURL = relayURL
@@ -206,53 +214,66 @@ import Foundation
     /// read, small enough that a single request stays bounded.
     private static let maxPushBytes = 512 * 1024
 
+    /// How many pushes may be in flight at once.
+    ///
+    /// One-in-flight made every batch pay a full round trip through the
+    /// phone-proxied path before the next could start, and that RTT — not
+    /// bandwidth — was the wire's ~65 KB/s ceiling. Three keeps the pipe busy
+    /// across the RTT while bounding watch-side buffering to
+    /// 3 × [maxPushBytes].
+    private static let maxPushesInFlight = 3
+
     /// Queues a frame for the Mac.
     private func enqueueForRelay(_ frame: String) {
         pendingLock.lock()
         pending.append(frame)
-        let shouldStart = !flushInFlight
-        if shouldStart {
-            flushInFlight = true
-        }
         pendingLock.unlock()
+        flushToRelay()
+    }
 
-        if shouldStart {
-            flushToRelay()
+    /// Posts queued frames, keeping up to [maxPushesInFlight] requests going.
+    ///
+    /// This is a byte stream, so order is not negotiable — and `URLSession`
+    /// gives no ordering guarantee between concurrent tasks. Overlapping
+    /// pushes are safe anyway because each carries its position in the stream
+    /// (`X-Relay-Seq`, plus `X-Relay-Epoch` naming this bridge instance) and
+    /// the relay reassembles them in order. The sequence is assigned under the
+    /// same lock that drains the queue, so seq order always matches byte
+    /// order.
+    ///
+    /// Batching still self-tunes: everything the VM Service produces while
+    /// requests are in flight coalesces into the next batch, so a bulk reply
+    /// becomes a few large POSTs rather than hundreds of small ones.
+    private func flushToRelay() {
+        while true {
+            pendingLock.lock()
+            guard pushesInFlight < Self.maxPushesInFlight, !pending.isEmpty else {
+                pendingLock.unlock()
+                return
+            }
+            var batch: [String] = []
+            var bytes = 0
+            while !pending.isEmpty, bytes < Self.maxPushBytes {
+                let frame = pending.removeFirst()
+                bytes += frame.utf8.count + 1
+                batch.append(frame)
+            }
+            let seq = nextPushSeq
+            nextPushSeq += 1
+            pushesInFlight += 1
+            pendingLock.unlock()
+            push(batch: batch, seq: seq)
         }
     }
 
-    /// Posts the queued frames, then re-posts whatever accumulated meanwhile.
-    ///
-    /// Strictly one request in flight at a time. This is a byte stream, so
-    /// order is not negotiable, and `URLSession` gives no ordering guarantee
-    /// between concurrent tasks — two overlapping pushes could be delivered
-    /// back to front and silently corrupt the stream.
-    ///
-    /// Serialising also fixes throughput rather than costing it: everything the
-    /// VM Service produces while a request is in flight coalesces into the next
-    /// one, so a bulk reply self-tunes into a few large POSTs instead of
-    /// hundreds of small ones over a phone-proxied link.
-    private func flushToRelay() {
-        pendingLock.lock()
-        var batch: [String] = []
-        var bytes = 0
-        while !pending.isEmpty, bytes < Self.maxPushBytes {
-            let frame = pending.removeFirst()
-            bytes += frame.utf8.count + 1
-            batch.append(frame)
-        }
-        if batch.isEmpty {
-            flushInFlight = false
-            pendingLock.unlock()
-            return
-        }
-        pendingLock.unlock()
-
+    private func push(batch: [String], seq: Int) {
         // Newline-delimited: frames are base64 with a numeric header, so the
         // relay can split them again unambiguously.
         let body = batch.joined(separator: "\n")
         var request = relayRequest(path: "bridge/push", method: "POST")
         request.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+        request.setValue(String(seq), forHTTPHeaderField: "X-Relay-Seq")
+        request.setValue(pushEpoch, forHTTPHeaderField: "X-Relay-Epoch")
 
         // This is the direction that matters. The VM Service answers in JSON,
         // which we then base64 (+33%), and the link runs at 38-80 KB/s -- slow
@@ -272,12 +293,16 @@ import Foundation
         session.dataTask(with: request) { [weak self] _, _, error in
             guard let self else { return }
             if let error {
-                // The frames are gone. Losing bytes mid-stream is unrecoverable
-                // for the connection, so say so plainly rather than let it look
-                // like a hang.
-                NSLog("[flutter-watchos] vm bridge push failed, stream is now broken: %@",
-                      error.localizedDescription)
+                // The frames are gone, which leaves a hole at this seq: the
+                // relay will hold every later push and the stream is dead.
+                // Unrecoverable, so say so plainly rather than look like a
+                // hang.
+                NSLog("[flutter-watchos] vm bridge push %d failed, stream is now broken: %@",
+                      seq, error.localizedDescription)
             }
+            self.pendingLock.lock()
+            self.pushesInFlight -= 1
+            self.pendingLock.unlock()
             guard self.running else { return }
             self.flushToRelay()
         }.resume()
@@ -418,15 +443,30 @@ private final class VmSocket {
     /// the bridge starts before `FlutterWatchOSHostRun()`. Retry briefly rather
     /// than losing the session to a startup race.
     private func connectWithRetry() {
-        let deadline = Date().addingTimeInterval(15)
+        // 45s, not a quick 15: giving up here is fatal to the whole `run` —
+        // flutter_tools treats the resulting closure as unrecoverable — and a
+        // measured failure (2026-07-30) had loopback connects refused for 15s+
+        // while the VM Service claimed to be listening and the app was
+        // demonstrably rendering. A slow success beats a fast abort.
+        let deadline = Date().addingTimeInterval(45)
         var attempt = 0
+        var lastFailure: Int32 = 0
+        var loggedFailure: Int32 = -1
         while !isClosed() {
             attempt += 1
-            if connectOnce() {
+            if connectOnce(failure: &lastFailure) {
                 NSLog("[flutter-watchos] vm bridge connection %d attached to VM Service (attempt %d)",
                       id, attempt)
                 startReadLoop()
                 return
+            }
+            // Log the first failure and any change of reason, never the whole
+            // retry storm. ECONNREFUSED means nothing is listening on the
+            // port; anything else points at the sandbox or the stack.
+            if lastFailure != loggedFailure {
+                loggedFailure = lastFailure
+                NSLog("[flutter-watchos] vm bridge connection %d cannot reach the VM Service yet: errno=%d (%@)",
+                      id, lastFailure, String(cString: strerror(lastFailure)))
             }
             if Date() >= deadline {
                 break
@@ -434,15 +474,18 @@ private final class VmSocket {
             Thread.sleep(forTimeInterval: 0.25)
         }
         if !isClosed() {
-            NSLog("[flutter-watchos] vm bridge connection %d could not reach the VM Service on port %d",
-                  id, Int(port))
+            NSLog("[flutter-watchos] vm bridge connection %d could not reach the VM Service on port %d (last errno=%d)",
+                  id, Int(port), Int(lastFailure))
             onClosed()
         }
     }
 
-    private func connectOnce() -> Bool {
+    private func connectOnce(failure: inout Int32) -> Bool {
         let handle = socket(AF_INET, SOCK_STREAM, 0)
-        guard handle >= 0 else { return false }
+        guard handle >= 0 else {
+            failure = errno
+            return false
+        }
 
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
@@ -455,6 +498,7 @@ private final class VmSocket {
             }
         }
         guard result == 0 else {
+            failure = errno
             Darwin.close(handle)
             return false
         }
