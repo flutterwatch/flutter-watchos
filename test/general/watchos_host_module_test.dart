@@ -149,8 +149,10 @@ void main() {
         sources: <String>['/s.swift'],
         enableVmBridge: false,
       );
+      // Only the bridge define is the contract here. Asserting release emits
+      // no `-D` at all would fail the day an unrelated one is added, which
+      // says nothing about whether a shipping app carries the bridge.
       expect(args, isNot(contains(kVmBridgeSwiftDefine)));
-      expect(args, isNot(contains('-D')));
     });
 
     testWithoutContext('simulator triple carries the -simulator suffix', () {
