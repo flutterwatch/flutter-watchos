@@ -27,10 +27,12 @@
   Limits worth knowing, all documented in
   [`doc/debug-app.md`](doc/debug-app.md):
 
-  - **Connection setup is unreliable — expect to retry.** Roughly half of
-    launches fail to establish the connection. Once up, a session is stable.
-    A failure cannot be recovered in place: once DDS has taken control the VM
-    Service stops listening, so a dropped connection ends the session.
+  - **Connection setup sometimes fails — expect to retry.** Two launches in
+    five did not connect in testing. Once up, a session is stable. A failure
+    cannot be recovered in place: once DDS has taken control the VM Service
+    stops listening, so a dropped connection ends the session. Note the watch
+    suspending the app when its display times out looks the same from the
+    terminal — see [`doc/debug-app.md`](doc/debug-app.md).
   - **The CPU profiler is empty.** `getCpuSamples` returns a full function
     table and zero samples — the Dart sampling profiler needs Mach thread APIs
     the watchOS device SDK removes, the same reason there is no JIT on device.
