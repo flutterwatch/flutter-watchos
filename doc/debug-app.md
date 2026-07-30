@@ -75,14 +75,25 @@ on this page.
 
 Current limits:
 
-- **Connection setup sometimes fails — expect to retry.** In testing, two
-  launches in five never brought the connection up: the app reported the VM
-  Service closing, and every reconnect then failed outright. That last part is
-  by design and is why it cannot be recovered in place — once DDS has taken
+- **Connection setup sometimes fails.** Roughly half of launches report the VM
+  Service closing, after which every reconnect fails outright — once DDS takes
   control the VM Service stops listening, so one lost connection ends the
-  session. Quit and re-run. Once a session is established it is stable
-  (measured: 94 seconds and 2.9 MB uninterrupted). Under `-v` a healthy tunnel
-  logs `vm bridge connection N: first write ok` then `first read ok`.
+  session and it cannot be recovered in place. Re-running usually works.
+
+  To avoid it entirely, disable DDS and attach DevTools yourself:
+
+  ```sh
+  flutter-watchos run --profile --no-dds -d <watch-id>
+  ```
+
+  then point a standalone DevTools at the VM Service URI that prints:
+
+  ```sh
+  dart devtools http://127.0.0.1:<port>/
+  ```
+
+  Once established, a session is stable either way. Under `-v` a healthy
+  tunnel logs `vm bridge connection N: first write ok` then `first read ok`.
 - **The CPU profiler is empty.** `getCpuSamples` returns a populated function
   table but zero samples, so DevTools' CPU Profiler page has nothing to draw.
   The Dart sampling profiler needs Mach thread APIs the watchOS device SDK
