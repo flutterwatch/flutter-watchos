@@ -121,6 +121,52 @@ void main() {
       );
       expect(address, isNull);
     });
+
+    testWithoutContext('prefers a private LAN address over a VPN tunnel', () async {
+      // A VPN's utun address is routable but the watch cannot reach it, and
+      // the failure looks exactly like the app never starting. Interface order
+      // from the OS is not something to rely on either way.
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('utun4', <String>['100.83.2.7']),
+          _FakeInterface('en0', <String>['192.168.1.24']),
+        ],
+      );
+      expect(address, '192.168.1.24');
+    });
+
+    testWithoutContext('recognises all three private ranges', () async {
+      for (final candidate in <String>['10.0.0.5', '172.16.4.1', '172.31.9.9']) {
+        expect(
+          await resolveMacLanAddress(
+            listInterfaces: () async => <NetworkInterface>[
+              _FakeInterface('utun4', <String>['100.83.2.7']),
+              _FakeInterface('en0', <String>[candidate]),
+            ],
+          ),
+          candidate,
+        );
+      }
+      // 172.32 is outside the RFC 1918 block, so it must not outrank the VPN.
+      expect(
+        await resolveMacLanAddress(
+          listInterfaces: () async => <NetworkInterface>[
+            _FakeInterface('utun4', <String>['100.83.2.7']),
+            _FakeInterface('en0', <String>['172.32.0.1']),
+          ],
+        ),
+        '100.83.2.7',
+      );
+    });
+
+    testWithoutContext('still returns a public address when that is all there is', () async {
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en0', <String>['203.0.113.9']),
+        ],
+      );
+      expect(address, '203.0.113.9');
+    });
   });
 
   group('WatchosVmRelay bridge endpoints', () {
@@ -136,20 +182,20 @@ void main() {
 
     testWithoutContext('bridgeReady completes when the bridge says hello', () async {
       expect(relay.bridgeConnected, isFalse);
-      final HttpClientResponse response = await _get(relay.port, RelayPaths.bridgeHello);
+      final HttpClientResponse response = await _get(relay.port, relay.pathFor(RelayPaths.bridgeHello));
       expect(response.statusCode, 200);
       await relay.bridgeReady;
       expect(relay.bridgeConnected, isTrue);
     });
 
     testWithoutContext('a poll also counts as the bridge checking in', () async {
-      unawaited(_get(relay.port, RelayPaths.bridgePoll));
+      unawaited(_get(relay.port, relay.pathFor(RelayPaths.bridgePoll)));
       await relay.bridgeReady;
       expect(relay.bridgeConnected, isTrue);
     });
 
     testWithoutContext('an unknown path 404s rather than hanging the bridge', () async {
-      final HttpClientResponse response = await _get(relay.port, '/nope');
+      final HttpClientResponse response = await _get(relay.port, relay.pathFor('/nope'));
       expect(response.statusCode, 404);
     });
 
@@ -159,6 +205,71 @@ void main() {
       expect(relay.vmServiceUri.host, '127.0.0.1');
       expect(relay.vmServiceUri.port, relay.tunnelPort);
       expect(relay.tunnelPort, isNot(relay.port));
+    });
+
+    // The bridge endpoints *cannot* be loopback-only — the watch dials the
+    // Mac's LAN address — so the token is the only thing between a live debug
+    // session and the local network. The app is launched with
+    // `--disable-service-auth-codes`, so without this the relay would be
+    // strictly weaker than the VM Service posture it stands in for.
+    testWithoutContext('rejects a request with no token', () async {
+      expect(
+        (await _get(relay.port, RelayPaths.bridgeHello)).statusCode,
+        404,
+      );
+      expect(
+        (await _get(relay.port, RelayPaths.bridgePoll)).statusCode,
+        404,
+      );
+    });
+
+    testWithoutContext('rejects a request with the wrong token', () async {
+      final HttpClientResponse response = await _get(
+        relay.port,
+        '/${'0' * 32}${RelayPaths.bridgeHello}',
+      );
+      expect(response.statusCode, 404);
+    });
+
+    testWithoutContext('an unauthenticated caller cannot mark the bridge connected', () async {
+      // Not merely a 404: reaching `_markBridgeConnected` would make `run`
+      // hand out a VM Service URI with nothing behind it.
+      await _get(relay.port, RelayPaths.bridgeHello);
+      await _get(relay.port, RelayPaths.bridgePoll);
+      expect(relay.bridgeConnected, isFalse);
+    });
+
+    testWithoutContext('an unauthenticated caller cannot inject a frame', () async {
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      final client2 = HttpClient();
+      addTearDown(() => client2.close(force: true));
+      final HttpClientRequest request = await client2.postUrl(
+        Uri.parse('http://127.0.0.1:${relay.port}${RelayPaths.bridgePush}'),
+      );
+      request.write(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('spoofed')).encode());
+      final HttpClientResponse response = await request.close();
+      await response.drain<void>();
+
+      expect(response.statusCode, 404);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(received, isEmpty);
+    });
+
+    testWithoutContext('the bridge URI carries the token, so the watch needs no auth code', () async {
+      final Uri uri = relay.bridgeUri('192.168.2.1');
+      expect(uri.path, '/${relay.token}');
+      // The Swift bridge appends its endpoint to this; the result must be what
+      // the relay serves.
+      expect('${uri.path}${RelayPaths.bridgePoll}', relay.pathFor(RelayPaths.bridgePoll));
+    });
+
+    testWithoutContext('mints a fresh token per run', () async {
+      expect(relay.token, hasLength(32));
+      expect(generateRelayToken(), isNot(generateRelayToken()));
     });
   });
 
@@ -189,7 +300,7 @@ void main() {
       final Uint8List payload = utf8.encode('x' * 4096);
       final String frame = TunnelFrame(1, TunnelFrameKind.data, payload).encode();
       await _pushBytes(
-        relay.port,
+        relay,
         ZLibCodec(raw: true).encode(utf8.encode(frame)),
         contentEncoding: kRawDeflateEncoding,
       );
@@ -207,30 +318,53 @@ void main() {
       client.listen(received.addAll);
 
       final Uint8List payload = utf8.encode('hello');
-      await _pushRaw(relay.port, TunnelFrame(1, TunnelFrameKind.data, payload).encode());
+      await _pushRaw(relay, TunnelFrame(1, TunnelFrameKind.data, payload).encode());
 
       await _until(() => received.length >= payload.length);
       expect(received, payload);
     });
 
-    testWithoutContext('drops a corrupt compressed body without killing the relay', () async {
+    testWithoutContext('a corrupt compressed body kills the connection it belonged to', () async {
+      // Claims to be deflate but is not. Half-decoding it would corrupt the VM
+      // Service stream silently, so the batch is dropped whole — and because
+      // those bytes are simply gone, carrying on would splice the stream back
+      // together minus a chunk. The connection has to die so flutter_tools
+      // reports a lost connection instead of unexplained silence.
+      final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(client.destroy);
+      final done = Completer<void>();
+      client.listen((_) {}, onDone: done.complete, onError: (Object _) => done.complete());
+
+      await _pushBytes(
+        relay,
+        utf8.encode('definitely not deflate'),
+        contentEncoding: kRawDeflateEncoding,
+      );
+
+      await done.future.timeout(const Duration(seconds: 5));
+      expect(traces.join('\n'), contains('could not inflate'));
+      expect(traces.join('\n'), contains('dropping 1 tunnel connection'));
+    });
+
+    testWithoutContext('the relay keeps serving after a corrupt body', () async {
+      final Socket doomed = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
+      addTearDown(doomed.destroy);
+      doomed.listen((_) {}, onError: (Object _) {});
+      await _pushBytes(
+        relay,
+        utf8.encode('definitely not deflate'),
+        contentEncoding: kRawDeflateEncoding,
+      );
+      await _until(() => traces.join('\n').contains('could not inflate'));
+
+      // A fresh connection gets a new id and must work normally.
       final Socket client = await Socket.connect(InternetAddress.loopbackIPv4, relay.tunnelPort);
       addTearDown(client.destroy);
       final received = <int>[];
       client.listen(received.addAll);
 
-      // Claims to be deflate but is not. Half-decoding this would corrupt the
-      // VM Service stream silently, so it must be dropped whole.
-      await _pushBytes(
-        relay.port,
-        utf8.encode('definitely not deflate'),
-        contentEncoding: kRawDeflateEncoding,
-      );
-      expect(traces.join('\n'), contains('could not inflate'));
-
-      // The relay must still be serving afterwards.
       final Uint8List payload = utf8.encode('still here');
-      await _pushRaw(relay.port, TunnelFrame(1, TunnelFrameKind.data, payload).encode());
+      await _pushRaw(relay, TunnelFrame(2, TunnelFrameKind.data, payload).encode());
       await _until(() => received.length >= payload.length);
       expect(received, payload);
     });
@@ -248,7 +382,7 @@ void main() {
       final Uint8List second = utf8.encode('SECOND');
       // Deliver seq 1 before seq 0: nothing may reach the client yet.
       await _pushBytes(
-        relay.port,
+        relay,
         utf8.encode(TunnelFrame(1, TunnelFrameKind.data, second).encode()),
         seq: 1,
         epoch: 'e1',
@@ -257,7 +391,7 @@ void main() {
       expect(received, isEmpty, reason: 'seq 1 must wait for seq 0');
 
       await _pushBytes(
-        relay.port,
+        relay,
         utf8.encode(TunnelFrame(1, TunnelFrameKind.data, first).encode()),
         seq: 0,
         epoch: 'e1',
@@ -276,7 +410,7 @@ void main() {
       client.listen(received.addAll);
 
       await _pushBytes(
-        relay.port,
+        relay,
         utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('old')).encode()),
         seq: 0,
         epoch: 'e1',
@@ -284,7 +418,7 @@ void main() {
       await _until(() => utf8.decode(received) == 'old');
 
       await _pushBytes(
-        relay.port,
+        relay,
         utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('new')).encode()),
         seq: 0,
         epoch: 'e2',
@@ -301,17 +435,94 @@ void main() {
       final List<int> body = utf8.encode(
         TunnelFrame(1, TunnelFrameKind.data, utf8.encode('once')).encode(),
       );
-      await _pushBytes(relay.port, body, seq: 0, epoch: 'e1');
-      await _pushBytes(relay.port, body, seq: 0, epoch: 'e1');
+      await _pushBytes(relay, body, seq: 0, epoch: 'e1');
+      await _pushBytes(relay, body, seq: 0, epoch: 'e1');
       // A later frame proves the duplicate was skipped, not merely delayed.
       await _pushBytes(
-        relay.port,
+        relay,
         utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('!')).encode()),
         seq: 1,
         epoch: 'e1',
       );
       await _until(() => utf8.decode(received).endsWith('!'));
       expect(utf8.decode(received), 'once!');
+    });
+
+    testWithoutContext('gives up on a push that never arrives instead of wedging', () async {
+      // A push that fails past the bridge's retries leaves a permanent hole in
+      // the sequence. Holding later bodies forever means the relay accumulates
+      // them at wire rate while the user sees an indefinite hang; the watchdog
+      // turns that into a reported lost connection.
+      final WatchosVmRelay gapRelay = await WatchosVmRelay.start(
+        logTrace: traces.add,
+        pushGapTimeout: const Duration(milliseconds: 200),
+      );
+      addTearDown(gapRelay.dispose);
+
+      final Socket client = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        gapRelay.tunnelPort,
+      );
+      addTearDown(client.destroy);
+      final done = Completer<void>();
+      client.listen((_) {}, onDone: done.complete, onError: (Object _) => done.complete());
+
+      // seq 0 never comes.
+      await _pushBytes(
+        gapRelay,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('later')).encode()),
+        seq: 1,
+        epoch: 'e1',
+      );
+
+      await done.future.timeout(const Duration(seconds: 5));
+      expect(traces.join('\n'), contains('push seq 0 never arrived'));
+
+      // And the relay resynchronises past the hole rather than staying stuck:
+      // a new connection with a following sequence still works.
+      final Socket fresh = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        gapRelay.tunnelPort,
+      );
+      addTearDown(fresh.destroy);
+      final received = <int>[];
+      fresh.listen(received.addAll);
+      await _pushBytes(
+        gapRelay,
+        utf8.encode(TunnelFrame(2, TunnelFrameKind.data, utf8.encode('ok')).encode()),
+        seq: 2,
+        epoch: 'e1',
+      );
+      await _until(() => utf8.decode(received) == 'ok');
+    });
+
+    testWithoutContext('a straggler that arrives in time does not trip the watchdog', () async {
+      // Default gap timeout: the straggler must land well inside it.
+      final WatchosVmRelay gapRelay = await WatchosVmRelay.start(logTrace: traces.add);
+      addTearDown(gapRelay.dispose);
+
+      final Socket client = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        gapRelay.tunnelPort,
+      );
+      addTearDown(client.destroy);
+      final received = <int>[];
+      client.listen(received.addAll);
+
+      await _pushBytes(
+        gapRelay,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('B')).encode()),
+        seq: 1,
+        epoch: 'e1',
+      );
+      await _pushBytes(
+        gapRelay,
+        utf8.encode(TunnelFrame(1, TunnelFrameKind.data, utf8.encode('A')).encode()),
+        seq: 0,
+        epoch: 'e1',
+      );
+      await _until(() => utf8.decode(received) == 'AB');
+      expect(traces.join('\n'), isNot(contains('never arrived')));
     });
 
     testWithoutContext('gzips a poll response when the caller accepts it', () async {
@@ -324,7 +535,7 @@ void main() {
       final http = HttpClient()..autoUncompress = false;
       addTearDown(() => http.close(force: true));
       final HttpClientRequest request = await http.getUrl(
-        Uri.parse('http://127.0.0.1:${relay.port}${RelayPaths.bridgePoll}'),
+        Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePoll)}'),
       );
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
       final HttpClientResponse response = await request.close();
@@ -348,7 +559,7 @@ void main() {
       final http = HttpClient()..autoUncompress = false;
       addTearDown(() => http.close(force: true));
       final HttpClientRequest request = await http.getUrl(
-        Uri.parse('http://127.0.0.1:${relay.port}${RelayPaths.bridgePoll}'),
+        Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePoll)}'),
       );
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       final HttpClientResponse response = await request.close();
@@ -373,7 +584,7 @@ void main() {
       traces.clear();
       vmService = await _FakeVmService.start();
       relay = await WatchosVmRelay.start(logTrace: traces.add);
-      bridge = _FakeBridge(relayPort: relay.port, vmPort: vmService.port)..start();
+      bridge = _FakeBridge(relay: relay, vmPort: vmService.port)..start();
       await relay.bridgeReady;
     });
 
@@ -452,7 +663,7 @@ void main() {
       raw.destroy();
       await client.close();
       for (var i = 0; i < 50; i++) {
-        await _pushRaw(relay.port, TunnelFrame(1, TunnelFrameKind.data, List<int>.filled(64 * 1024, 65)).encode());
+        await _pushRaw(relay, TunnelFrame(1, TunnelFrameKind.data, List<int>.filled(64 * 1024, 65)).encode());
       }
 
       // The relay must still be serving: a fresh connection has to work.
@@ -540,9 +751,9 @@ class _FakeVmService {
 /// A second implementation of the wire format is the point: it keeps the
 /// relay's half of the contract honest without a device in the loop.
 class _FakeBridge {
-  _FakeBridge({required this.relayPort, required this.vmPort});
+  _FakeBridge({required this.relay, required this.vmPort});
 
-  final int relayPort;
+  final WatchosVmRelay relay;
   final int vmPort;
 
   final HttpClient _client = HttpClient();
@@ -558,7 +769,7 @@ class _FakeBridge {
     while (_running) {
       try {
         final HttpClientRequest request = await _client.getUrl(
-          Uri.parse('http://127.0.0.1:$relayPort${RelayPaths.bridgePoll}'),
+          Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePoll)}'),
         );
         final HttpClientResponse response = await request.close();
         final body = jsonDecode(await utf8.decodeStream(response)) as Map<String, Object?>;
@@ -613,7 +824,7 @@ class _FakeBridge {
       }
       try {
         final HttpClientRequest request = await _client.postUrl(
-          Uri.parse('http://127.0.0.1:$relayPort${RelayPaths.bridgePush}'),
+          Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePush)}'),
         );
         request.headers.set(kPushSeqHeader, '${_pushSeq++}');
         request.headers.set(kPushEpochHeader, 'fake-bridge');
@@ -637,11 +848,11 @@ class _FakeBridge {
 }
 
 /// Posts one frame to the relay as the bridge would.
-Future<void> _pushRaw(int port, String frame) async {
+Future<void> _pushRaw(WatchosVmRelay relay, String frame) async {
   final client = HttpClient();
   try {
     final HttpClientRequest request = await client.postUrl(
-      Uri.parse('http://127.0.0.1:$port${RelayPaths.bridgePush}'),
+      Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePush)}'),
     );
     request.write(frame);
     final HttpClientResponse response = await request.close();
@@ -654,7 +865,7 @@ Future<void> _pushRaw(int port, String frame) async {
 /// Posts a raw body to the push endpoint, optionally claiming an encoding
 /// and/or a pipeline position.
 Future<void> _pushBytes(
-  int port,
+  WatchosVmRelay relay,
   List<int> body, {
   String? contentEncoding,
   int? seq,
@@ -663,7 +874,7 @@ Future<void> _pushBytes(
   final client = HttpClient();
   try {
     final HttpClientRequest request = await client.postUrl(
-      Uri.parse('http://127.0.0.1:$port${RelayPaths.bridgePush}'),
+      Uri.parse('http://127.0.0.1:${relay.port}${relay.pathFor(RelayPaths.bridgePush)}'),
     );
     if (contentEncoding != null) {
       request.headers.set(HttpHeaders.contentEncodingHeader, contentEncoding);
