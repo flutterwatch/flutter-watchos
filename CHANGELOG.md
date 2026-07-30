@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+- **Live DevTools on a physical watch.** `run --profile -d <watch>` now brings
+  up a working Dart VM Service connection, so DevTools and the IDE debuggers
+  attach to a real watch the way they do to any other device. No flag: profile
+  runs on a watch set it up automatically. This closes the remaining half of
+  [#2] — beta.4 fixed the crash, but the connection itself still could not be
+  made.
+
+  A watch will not accept an inbound socket: third-party apps are denied
+  direct socket APIs (`dart:io` and `NWConnection` both fail with `ENETDOWN`),
+  which is why every previous attempt to dial *into* the VM Service failed.
+  `URLSession` does work, so the app dials *out* instead — the CLI runs a relay
+  on the Mac, the app long-polls it over HTTP, and VM Service bytes are tunnelled
+  between the two. The relay never parses the protocol, so anything the VM
+  Service can say passes through unchanged.
+
+  Verified on an Apple Watch Series 10 (watchOS 26.5): DevTools attaches, the
+  Flutter Frames chart populates with per-frame build/raster/vsync timings at a
+  sustained 59.4 frames per second, and an 8-second timeline capture of an
+  animating app returned ~30,000 events including the whole frame pipeline
+  (`Animator::BeginFrame`, `BUILD`/`LAYOUT`/`PAINT`/`COMPOSITING`,
+  `Rasterizer::*`).
+
+  Two limits worth knowing, both documented in
+  [`doc/debug-app.md`](doc/debug-app.md):
+
+  - **The CPU profiler is empty.** `getCpuSamples` returns a full function
+    table and zero samples — the Dart sampling profiler needs Mach thread APIs
+    the watchOS device SDK removes, the same reason there is no JIT on device.
+    The timeline is unaffected.
+  - **The link runs at roughly 75–145 KB/s.** DevTools is fully usable, but a
+    bulk timeline fetch is megabytes, so the Performance page can take a minute
+    or more to fill.
+
+  Both devices must share a network: a watch reaches your Mac through its
+  paired iPhone, so the iPhone needs to be unlocked, nearby, and on the same
+  Wi-Fi as the Mac. When the app cannot reach back, `run` now says so — and
+  distinguishes "the VM Service never started" from "it started but the app
+  could not reach this Mac".
+
+- **`run` on a physical watch takes over a stale instance.** Launches now pass
+  `--terminate-existing`. An earlier run that ended without a clean stop used to
+  leave an instance holding the VM Service port, after which every later run
+  silently came up with no VM Service at all.
+
 ## 0.1.0-beta.4 (closed beta)
 
 Ships new engine artifacts (`v0.1.2`). Run `flutter-watchos precache` after
