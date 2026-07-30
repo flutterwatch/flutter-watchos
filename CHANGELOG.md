@@ -50,6 +50,11 @@
   distinguishes "the VM Service never started" from "it started but the app
   could not reach this Mac".
 
+  **Apps created before the host module cannot use this.** A project that still
+  has `watchos/Runner/FlutterRunner.swift` builds in legacy mode, which skips
+  the host module the bridge lives in. Migrate to the current template
+  (`App.swift` importing `FlutterWatchOS`) to attach DevTools.
+
 - **Release builds carry none of the above.** The VM Service bridge is compiled
   only for debug and profile: a release build gets a no-op stub and links no
   `URLSession`, socket or compression code for it (verified by symbol count —
