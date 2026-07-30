@@ -41,8 +41,17 @@ on ethernet or USB tethering while the phone is on Wi-Fi will not work. If the
 app cannot reach back, `run` says so, and distinguishes "the VM Service never
 started" from "it started but the app could not reach this Mac".
 
-The watch must also stay **awake and unlocked** for the whole session. A locked
-watch suspends the app and drops the connection.
+The watch must also stay **awake and unlocked** for the whole session. When the
+display times out, watchOS suspends the app and the connection drops — you will
+see `Lost connection to device` roughly half a minute in, with nothing wrong on
+either side. Two things make a session survivable:
+
+- Settings → Display & Brightness → **Wake Duration → 70 Seconds**.
+- Keep it on the charger, which stops it sleeping while you work in DevTools.
+
+To tell this apart from a real failure, check whether frames were still being
+produced when the connection dropped. If the app went quiet at the same moment,
+the watch slept; if it kept rendering, the transport failed.
 
 What works, measured on an Apple Watch Series 10 (watchOS 26.5):
 
@@ -60,15 +69,14 @@ What works, measured on an Apple Watch Series 10 (watchOS 26.5):
 
 Current limits:
 
-- **Connection setup is unreliable — expect to retry.** Roughly half of
-  launches fail to bring the connection up, reporting either that the app
-  never reached this Mac or that the VM Service closed. Once a session is
-  established it is stable (measured: 94 seconds and 2.9 MB with no
-  interruption). A failure is not recoverable in place — quit and re-run,
-  because once DDS has taken control the VM Service stops listening and
-  nothing can reconnect to it. This is being worked on; `-v` shows
-  `vm bridge connection N: first write ok` / `first read ok` when the tunnel
-  is healthy.
+- **Connection setup sometimes fails — expect to retry.** In testing, two
+  launches in five never brought the connection up: the app reported the VM
+  Service closing, and every reconnect then failed outright. That last part is
+  by design and is why it cannot be recovered in place — once DDS has taken
+  control the VM Service stops listening, so one lost connection ends the
+  session. Quit and re-run. Once a session is established it is stable
+  (measured: 94 seconds and 2.9 MB uninterrupted). Under `-v` a healthy tunnel
+  logs `vm bridge connection N: first write ok` then `first read ok`.
 - **The CPU profiler is empty.** `getCpuSamples` returns a populated function
   table but zero samples, so DevTools' CPU Profiler page has nothing to draw.
   The Dart sampling profiler needs Mach thread APIs the watchOS device SDK
