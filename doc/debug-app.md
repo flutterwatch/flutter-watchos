@@ -60,6 +60,15 @@ What works, measured on an Apple Watch Series 10 (watchOS 26.5):
 
 Current limits:
 
+- **Connection setup is unreliable — expect to retry.** Roughly half of
+  launches fail to bring the connection up, reporting either that the app
+  never reached this Mac or that the VM Service closed. Once a session is
+  established it is stable (measured: 94 seconds and 2.9 MB with no
+  interruption). A failure is not recoverable in place — quit and re-run,
+  because once DDS has taken control the VM Service stops listening and
+  nothing can reconnect to it. This is being worked on; `-v` shows
+  `vm bridge connection N: first write ok` / `first read ok` when the tunnel
+  is healthy.
 - **The CPU profiler is empty.** `getCpuSamples` returns a populated function
   table but zero samples, so DevTools' CPU Profiler page has nothing to draw.
   The Dart sampling profiler needs Mach thread APIs the watchOS device SDK

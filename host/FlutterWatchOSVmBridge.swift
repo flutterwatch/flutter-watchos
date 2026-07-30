@@ -155,7 +155,15 @@ import Foundation
         case .open:
             openConnection(id: frame.connectionId)
         case .data:
-            connection(for: frame.connectionId)?.write(frame.payload)
+            guard let socket = connection(for: frame.connectionId) else {
+                // Silently dropping a frame here corrupts the byte stream, and
+                // the symptom (a VM Service that never answers) looks nothing
+                // like the cause. Benign only when it races a close.
+                NSLog("[flutter-watchos] vm bridge no connection %d for %d-byte data frame",
+                      frame.connectionId, frame.payload.count)
+                return
+            }
+            socket.write(frame.payload)
         case .close:
             closeConnection(id: frame.connectionId, notifyRelay: false)
         }
@@ -340,6 +348,10 @@ private final class VmSocket {
     private var fd: Int32 = -1
     private var closed = false
     private let stateLock = NSLock()
+    /// One-shot markers: enough to prove each leg moved bytes, without logging
+    /// every frame of a megabyte transfer.
+    private var loggedFirstWrite = false
+    private var loggedFirstRead = false
 
     init(id: Int, port: UInt16, onBytes: @escaping (Data) -> Void, onClosed: @escaping () -> Void) {
         self.id = id
@@ -432,6 +444,11 @@ private final class VmSocket {
                 guard handle >= 0 else { break }
                 let count = read(handle, &buffer, buffer.count)
                 if count > 0 {
+                    if !self.loggedFirstRead {
+                        self.loggedFirstRead = true
+                        NSLog("[flutter-watchos] vm bridge connection %d: first read ok (%d bytes)",
+                              self.id, count)
+                    }
                     self.onBytes(Data(buffer[0..<count]))
                     continue
                 }
@@ -457,6 +474,11 @@ private final class VmSocket {
                 return
             }
             var sent = 0
+            // Captured rather than read after the fact: `errno` is per-thread
+            // but any call below (including NSLog) can clobber it, and without
+            // the cause a short write is undiagnosable — "short write (0/367)"
+            // says nothing about whether the peer hung up or the buffer filled.
+            var failure: Int32 = 0
             data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
                 guard let base = raw.baseAddress else { return }
                 while sent < data.count {
@@ -468,13 +490,24 @@ private final class VmSocket {
                     if written < 0 && errno == EINTR {
                         continue
                     }
+                    // No EAGAIN case on purpose: the socket is blocking with no
+                    // SO_SNDTIMEO, so send() cannot return it. Retrying on it
+                    // would spin if anyone ever adds a send timeout.
+                    failure = written < 0 ? errno : 0
                     break
                 }
             }
             if sent < data.count {
-                NSLog("[flutter-watchos] vm bridge connection %d: short write (%d/%d)",
-                      self.id, sent, data.count)
+                let reason = failure == 0 ? "peer closed" : String(cString: strerror(failure))
+                NSLog("[flutter-watchos] vm bridge connection %d: short write (%d/%d), errno=%d (%@)",
+                      self.id, sent, data.count, failure, reason)
                 self.onClosed()
+                return
+            }
+            if !self.loggedFirstWrite {
+                self.loggedFirstWrite = true
+                NSLog("[flutter-watchos] vm bridge connection %d: first write ok (%d bytes)",
+                      self.id, sent)
             }
         }
     }
