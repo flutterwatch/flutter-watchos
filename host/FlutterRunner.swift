@@ -301,6 +301,10 @@ final class FlutterRunner: ObservableObject {
         guard !started else { return }
         started = true
 
+        // Bridge the Dart VM Service out to the CLI's relay, when the CLI asked
+        // for it at launch. No-op otherwise, so ordinary runs are unaffected.
+        FlutterWatchOSVmBridge.startIfConfigured()
+
         // Keep the plugin-view registration entry point alive under
         // -dead_strip: plugin code reaches it only via dlsym at runtime, which
         // the linker cannot see, so it needs one visible reference.

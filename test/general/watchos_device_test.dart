@@ -12,6 +12,51 @@ import 'package:flutter_watchos/watchos_device.dart';
 import '../src/common.dart';
 
 void main() {
+  group('WatchosPhysicalDeviceLogReader', () {
+    testWithoutContext('records the VM Service line and still passes it through', () async {
+      // The relay path has no ProtocolDiscovery subscribed at launch, so this
+      // line used to vanish — and its absence looks identical to the VM Service
+      // never starting. Capturing it is what makes the two distinguishable.
+      final reader = WatchosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
+      final lines = <String>[];
+      reader.logLines.listen(lines.add);
+
+      reader.processLogLine(
+        '2026-07-29 16:35:56.101220+0200 Runner[4140:1863467] '
+        'flutter: The Dart VM service is listening on http://127.0.0.1:45651/',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reader.deviceVmServiceUri, 'http://127.0.0.1:45651/');
+      // ProtocolDiscovery still needs the line on the non-relay path.
+      expect(lines, hasLength(1));
+
+      reader.dispose();
+    });
+
+    testWithoutContext('reports no VM Service URI until the VM announces one', () async {
+      final reader = WatchosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
+      reader.processLogLine('[flutter:flutter] starting up');
+
+      expect(reader.deviceVmServiceUri, isNull);
+
+      reader.dispose();
+    });
+
+    testWithoutContext('leaves ordinary app output alone', () async {
+      final reader = WatchosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
+      final lines = <String>[];
+      reader.logLines.listen(lines.add);
+
+      reader.processLogLine('[flutter:flutter] Hello from Dart!');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lines, hasLength(1));
+
+      reader.dispose();
+    });
+  });
+
   group('WatchosSimulatorLogReader', () {
     testWithoutContext('rewrites a [flutter:<tag>] eventMessage to `<tag>: msg`', () async {
       // The embedder NSLog-bridges engine/Dart logs as `[flutter:<tag>] ...`;

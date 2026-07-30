@@ -29,6 +29,7 @@ import 'watchos_application_package.dart';
 import 'watchos_build_info.dart';
 import 'watchos_builder.dart';
 import 'watchos_dds.dart';
+import 'watchos_vm_relay.dart';
 
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
@@ -86,6 +87,8 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
     String deviceId,
     String bundleId, {
     bool startStopped = false,
+    List<String> extraLaunchArguments = const <String>[],
+    Map<String, String> environment = const <String, String>{},
   }) async {
     // Wrap in `script -t 0 /dev/null` to convince devicectl it has a TTY and
     // forward child stdout. `--console` blocks until the app exits.
@@ -94,7 +97,12 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       'xcrun', 'devicectl', 'device', 'process', 'launch',
       '--device', deviceId,
       '--console',
-      '--environment-variables', '{"OS_ACTIVITY_DT_MODE": "enable"}',
+      // Stale instances survive a `run` that ends without a clean stop, and
+      // they keep holding the pinned VM Service port — the next launch then
+      // starts with no VM Service at all. Always take over the old one.
+      '--terminate-existing',
+      '--environment-variables',
+      jsonEncode(<String, String>{'OS_ACTIVITY_DT_MODE': 'enable', ...environment}),
       if (startStopped) '--start-stopped',
       bundleId,
       // Launch arguments forwarded to the Flutter app's main(): bind the Dart
@@ -103,16 +111,26 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       // enough.
       '--enable-dart-profiling',
       '--disable-service-auth-codes',
-      // `::0` binds dual-stack (Dart does not set IPV6_V6ONLY), so the service
-      // is reachable over both families. `0.0.0.0` would listen on IPv4 only,
-      // and a wirelessly-paired watch is often reachable only over IPv6.
+      // These take effect: the engine forwards NSProcessInfo's arguments into
+      // FlutterProjectArgs.command_line_argv, so the VM applies them.
       //
-      // NOTE: inert today. These arguments do not reach the app's Dart VM —
-      // it binds loopback with an auth code, i.e. the VM defaults, so nothing
-      // off-device can connect. Forwarding them is an engine-side change; the
-      // values here are what we want the moment that lands.
-      '--vm-service-host=::0',
+      // When the relay is in play the only consumer is the in-process bridge,
+      // so bind IPv4 loopback: tighter, and it sidesteps a real trap — `::0`
+      // leaves the service on `[::]`, which a bridge dialling `127.0.0.1`
+      // cannot reach, and the symptom is an endless "Could not connect to the
+      // server" with the service plainly listening.
+      //
+      // Without the relay, keep the dual-stack wildcard: nothing off-device can
+      // reach it either way (docs/watchos-vm-service-transport.md), but a
+      // wirelessly-paired watch is often reachable only over IPv6.
+      if (environment.containsKey('FLUTTER_WATCHOS_VM_PORT'))
+        '--vm-service-host=127.0.0.1'
+      else
+        '--vm-service-host=::0',
+      // Dart VM timeline recorder flags, when the trace path is known.
+      ...extraLaunchArguments,
     ];
+    _log.printTrace('launching: ${cmd.join(' ')}');
     _logProcess = await globals.processManager.start(cmd);
 
     _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
@@ -187,12 +205,36 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
     if (_linesController.isClosed) {
       return;
     }
+    // Always trace the VM's own "listening on" line, even though it is passed
+    // through to ProtocolDiscovery below.
+    //
+    // On the relay path nothing subscribes to this stream at launch time, so
+    // the line was silently dropped — and its absence from the console reads
+    // exactly like the VM Service failing to start. It cost a session's worth
+    // of chasing a bug that was not there. Recording it here makes `-v` answer
+    // the question directly.
+    final Match? listening = _vmServiceListening.firstMatch(line);
+    if (listening != null) {
+      _deviceVmServiceUri = listening.group(1);
+      _log.printTrace('Device VM Service is up: $_deviceVmServiceUri');
+    }
     if (_isNoise(line)) {
       _log.printTrace(line);
       return;
     }
     _linesController.add(line);
   }
+
+  /// Matches the line the Dart VM prints once its service is bound.
+  static final RegExp _vmServiceListening = RegExp(
+    r'VM [Ss]ervice is listening on (\S+)',
+  );
+
+  /// The device-local VM Service URI, once the VM has announced it. Not
+  /// reachable from the Mac — it exists to tell "never started" apart from
+  /// "started but unreachable".
+  String? get deviceVmServiceUri => _deviceVmServiceUri;
+  String? _deviceVmServiceUri;
 
   /// Processes a single line for testing.
   @visibleForTesting
@@ -363,7 +405,14 @@ class WatchosDevice extends Device {
   DeviceLogReader? _logReader;
   LLDB? _lldb;
   LLDBLogForwarder? _lldbLogForwarder;
+
   XcodeDebug? _xcodeDebug;
+
+  /// Mac half of the VM Service relay for a profile run on a physical watch.
+  WatchosVmRelay? _vmRelay;
+
+  /// Port the VM Service is pinned to on the watch for this run.
+  int _deviceVmServicePort = 0;
 
   /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
   /// tunnel before giving up. Apple Watch has no USB data port, so the lldb
@@ -710,7 +759,27 @@ class WatchosDevice extends Device {
     logger.printTrace('Launching $bundleId on Apple Watch...');
     final logReader =
         (_logReader ??= WatchosPhysicalDeviceLogReader(name)) as WatchosPhysicalDeviceLogReader;
-    await logReader.startLogStreamForBundle(id, bundleId, startStopped: needsDebugger);
+
+    // Live DevTools on a physical watch rides the relay: the app cannot be
+    // dialled into, but it can dial out over URLSession. Start the Mac half
+    // first so the bridge has something to reach the moment the app launches.
+    final wantsRelay = debuggingOptions.buildInfo.mode == BuildMode.profile;
+    var relayEnvironment = <String, String>{};
+    if (wantsRelay) {
+      relayEnvironment = await _startVmRelay();
+    }
+
+    await logReader.startLogStreamForBundle(
+      id,
+      bundleId,
+      startStopped: needsDebugger,
+      extraLaunchArguments: <String>[
+        // Pin the port so the in-app bridge knows where the VM Service is
+        // without having to discover it.
+        if (relayEnvironment.isNotEmpty) '--vm-service-port=$_deviceVmServicePort',
+      ],
+      environment: relayEnvironment,
+    );
 
     if (needsDebugger) {
       // Path 1: lldb (fast when it works). Over a wireless tunnel the attach
@@ -812,6 +881,35 @@ class WatchosDevice extends Device {
         );
         return LaunchResult.succeeded();
       }
+    }
+
+    // With the relay up, the Mac-reachable VM Service *is* the relay: it speaks
+    // the protocol transparently, so DDS and DevTools connect to it unchanged.
+    // Wait for the in-app bridge to check in first, so we do not hand out a URI
+    // with nothing behind it.
+    final WatchosVmRelay? relay = _vmRelay;
+    if (relay != null) {
+      final bool ready = await relay.bridgeReady
+          .timeout(const Duration(seconds: 45))
+          .then((_) => true, onError: (Object _) => false);
+      if (ready) {
+        logger.printTrace('VM Service relay bridged; serving at ${relay.vmServiceUri}');
+        return LaunchResult.succeeded(vmServiceUri: relay.vmServiceUri);
+      }
+      // Which half failed matters: the app not reaching the Mac is a network
+      // problem, the VM Service never coming up is not.
+      final cause = logReader.deviceVmServiceUri == null
+          ? 'The Dart VM Service did not start on the watch.'
+          : 'The Dart VM Service started on the watch '
+                '(${logReader.deviceVmServiceUri}) but the app did not reach '
+                'this Mac.';
+      logger.printWarning(
+        'The app did not connect back to the DevTools relay within 45s, so '
+        'DevTools will be unavailable. $cause The watch reaches the Mac '
+        'through its paired iPhone — check the iPhone is nearby, unlocked, and '
+        'on the same network as this Mac.',
+      );
+      return LaunchResult.succeeded();
     }
 
     // Discover the Mac-reachable VM service URI: scrape the console for the
@@ -1428,6 +1526,36 @@ class WatchosDevice extends Device {
     // Physical device: the log reader dispose() above already terminates the
     // launch console session (which unlocks the app).
     return true;
+  }
+
+  /// Brings up the Mac half of the VM Service relay.
+  ///
+  /// Returns the environment the app needs to find it, or an empty map if the
+  /// relay could not be started — in which case the run continues without live
+  /// DevTools rather than failing outright.
+  Future<Map<String, String>> _startVmRelay() async {
+    try {
+      final String? macAddress = await resolveMacLanAddress();
+      if (macAddress == null) {
+        logger.printTrace('No routable Mac address; skipping the VM Service relay.');
+        return const <String, String>{};
+      }
+      _deviceVmServicePort = pickDeviceVmServicePort();
+      final WatchosVmRelay relay = await WatchosVmRelay.start(logTrace: logger.printTrace);
+      _vmRelay = relay;
+      globals.shutdownHooks.addShutdownHook(relay.dispose);
+      logger.printTrace(
+        'VM Service relay listening on ${relay.port}; watch will dial '
+        '${relay.bridgeUri(macAddress)}',
+      );
+      return <String, String>{
+        'FLUTTER_WATCHOS_RELAY_URL': relay.bridgeUri(macAddress).toString(),
+        'FLUTTER_WATCHOS_VM_PORT': '$_deviceVmServicePort',
+      };
+    } on Object catch (e) {
+      logger.printTrace('Could not start the VM Service relay: $e');
+      return const <String, String>{};
+    }
   }
 
   @override

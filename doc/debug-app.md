@@ -8,7 +8,8 @@ Dart JIT VM cannot run on a physical watch (see
 
 1. Iterate on the Simulator in debug mode with hot reload.
 2. Periodically verify on a physical watch with `--profile` (AOT, real
-   performance, DevTools still attachable).
+   performance, live DevTools — see
+   [Profiling on a physical watch](#profiling-on-a-physical-watch)).
 3. Ship `--release`.
 
 ## Running with hot reload
@@ -20,6 +21,54 @@ flutter-watchos run -d <simulator-id>
 
 Terminal keys: `r` hot reload, `R` hot restart, `q` quit. The VM Service URI
 printed at startup works with Dart DevTools and the IDE debuggers.
+
+## Profiling on a physical watch
+
+`run --profile` on a real watch gives you a live Dart VM Service, so DevTools
+and the IDE debuggers attach exactly as they do on any other device:
+
+```sh
+flutter-watchos run --profile -d <watch-id>
+```
+
+The DevTools link is printed at startup. No flag, no setup — profile runs on a
+watch bring up the connection automatically.
+
+**Both devices must be on the same network as this Mac.** A watch has no
+network path of its own; it reaches your Mac through its paired iPhone. So the
+iPhone needs to be nearby, unlocked, and on the same Wi-Fi as the Mac — a Mac
+on ethernet or USB tethering while the phone is on Wi-Fi will not work. If the
+app cannot reach back, `run` says so, and distinguishes "the VM Service never
+started" from "it started but the app could not reach this Mac".
+
+The watch must also stay **awake and unlocked** for the whole session. A locked
+watch suspends the app and drops the connection.
+
+What works, measured on an Apple Watch Series 10 (watchOS 26.5):
+
+- **Live DevTools** — attaches, inspects isolates, evaluates expressions.
+- **The Flutter Frames chart** — the framework's `Flutter.Frame` events reach
+  DevTools with per-frame build, raster and vsync-overhead timings. Measured at
+  a sustained 59.4 frames/second on a Series 10.
+- **Timeline / Performance** — the full frame pipeline is instrumented:
+  `Animator::BeginFrame`, `BUILD`/`LAYOUT`/`PAINT`/`COMPOSITING`,
+  `Rasterizer::*`, `LayerTree::Preroll`. An 8-second capture of an animating
+  app yielded ~30,000 events.
+- **`FrameTiming`** — `SchedulerBinding.addTimingsCallback` reports real build
+  and raster times in-process, and is the lightest way to measure a specific
+  interaction.
+
+Current limits:
+
+- **The CPU profiler is empty.** `getCpuSamples` returns a populated function
+  table but zero samples, so DevTools' CPU Profiler page has nothing to draw.
+  The Dart sampling profiler needs Mach thread APIs the watchOS device SDK
+  removes — the same reason there is no JIT on device. Use the timeline to find
+  *where* time goes; it cannot tell you which Dart functions are hot.
+- **The link is slow** — roughly 75–145 KB/s. DevTools works, but a bulk
+  timeline fetch is megabytes, so the Performance page can take a minute or
+  more to fill. It is loading, not hung.
+- **Hot reload is Simulator-only** (AOT on device, as above).
 
 ## Attaching
 
