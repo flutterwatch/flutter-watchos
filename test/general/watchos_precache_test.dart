@@ -112,6 +112,51 @@ void main() {
     });
   });
 
+  group('engine version stamp', () {
+    // Without this an engine bump never reached an existing install: the
+    // download target is reused whenever it holds `watchos_*` directories, so
+    // `precache` after an upgrade was a no-op and the user silently kept the
+    // previous engine.
+    late MemoryFileSystem fs;
+    late Directory artifactDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      artifactDir = fs.directory('engine_artifacts')..createSync();
+    });
+
+    testWithoutContext('round-trips the tag', () {
+      writeEngineVersionStamp(artifactDir, 'v0.1.3-flutter3.44.4');
+      expect(readEngineVersionStamp(artifactDir), 'v0.1.3-flutter3.44.4');
+    });
+
+    testWithoutContext('reads null when unstamped', () {
+      expect(readEngineVersionStamp(artifactDir), isNull);
+    });
+
+    testWithoutContext('reads null when the stamp is blank', () {
+      artifactDir.childFile(kWatchosEngineVersionFileName).writeAsStringSync('  \n');
+      expect(readEngineVersionStamp(artifactDir), isNull);
+    });
+
+    testWithoutContext('a matching stamp is reusable', () {
+      writeEngineVersionStamp(artifactDir, 'v0.1.3-flutter3.44.4');
+      expect(engineArtifactsMatchTag(artifactDir, 'v0.1.3-flutter3.44.4'), isTrue);
+    });
+
+    testWithoutContext('a stale stamp is NOT reusable — this is the upgrade path', () {
+      writeEngineVersionStamp(artifactDir, 'v0.1.2-flutter3.44.4');
+      expect(engineArtifactsMatchTag(artifactDir, 'v0.1.3-flutter3.44.4'), isFalse);
+    });
+
+    testWithoutContext('an unstamped directory stays reusable', () {
+      // A hand-built engine (WATCHOS_ENGINE_ARTIFACTS, or a workspace-root
+      // engine_artifacts/) carries no tag to compare against. Treating it as
+      // stale would delete a local engine build and re-download over it.
+      expect(engineArtifactsMatchTag(artifactDir, 'v0.1.3-flutter3.44.4'), isTrue);
+    });
+  });
+
   group('apiGateErrorCode', () {
     // The download loop uses this to decide whether an artifact-API gate is
     // fatal (auth problems) or skippable (release zips during the beta).
