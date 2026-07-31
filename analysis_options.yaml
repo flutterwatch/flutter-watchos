@@ -23,6 +23,11 @@ analyzer:
     # checkout its deps aren't resolved, so `expect`/`test`/widget types read
     # as undefined and fail CI. It is analysed on its own, from its own dir.
     - "packages/**"
+    # `tool/benchmarks/` is app-side sample code meant to be copied into a
+    # watch app's `lib/`, so it imports `package:flutter/...` — which the CLI's
+    # own package does not depend on. Same reasoning as `packages/` above: it
+    # is not part of the CLI and must not be resolved against it.
+    - "tool/benchmarks/**"
 
 linter:
   rules:
