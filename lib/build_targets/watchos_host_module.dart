@@ -73,6 +73,14 @@ List<String> collectHostModuleSources(Directory hostDir) {
   return sources;
 }
 
+/// Compilation condition that admits the Dart VM Service bridge.
+///
+/// Defined for debug and profile, never for release: a shipping app must not
+/// carry the bridge's networking code at all, dormant or not. See
+/// `host/FlutterWatchOSVmBridge.swift`, which compiles to an empty stub
+/// without it.
+const String kVmBridgeSwiftDefine = 'FLUTTER_WATCHOS_VM_BRIDGE';
+
 /// The `swiftc` command line that compiles the host module for one
 /// architecture: emits the `.swiftmodule` (what `import FlutterWatchOS`
 /// resolves) and the object file that becomes the linked archive.
@@ -85,6 +93,7 @@ List<String> hostModuleSwiftcArgs({
   required String objectOutputPath,
   required String cModuleSearchPath,
   required List<String> sources,
+  required bool enableVmBridge,
 }) {
   final suffix = simulator ? '-simulator' : '';
   return <String>[
@@ -107,6 +116,7 @@ List<String> hostModuleSwiftcArgs({
     // flutter_watchos_host.h, staged into Flutter/ before this runs).
     '-I',
     cModuleSearchPath,
+    if (enableVmBridge) ...<String>['-D', kVmBridgeSwiftDefine],
     ...sources,
   ];
 }

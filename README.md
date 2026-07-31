@@ -143,6 +143,7 @@ Text input (the system keyboard), Digital Crown scrolling and haptics, and app-l
 - [Getting started](doc/get-started.md)
 - [Supported commands](doc/commands.md)
 - [Debugging apps](doc/debug-app.md)
+- [Measuring performance on a watch](doc/benchmarking.md)
 - [Fragment shaders](doc/shaders.md)
 - [Publishing to the App Store](doc/publish-app.md)
 - [Accounts & engine artifacts](doc/accounts.md)

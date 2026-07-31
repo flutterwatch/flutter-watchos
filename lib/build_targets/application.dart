@@ -1108,6 +1108,10 @@ class NativeWatchosBundle extends Target {
           objectOutputPath: object,
           cModuleSearchPath: flutterDir.path,
           sources: sources,
+          // A shipping app must not carry the VM Service bridge's networking
+          // code at all — not merely leave it dormant. Without this define the
+          // bridge compiles to an empty stub.
+          enableVmBridge: buildInfo.buildInfo.mode != BuildMode.release,
         ),
       );
       if (r.exitCode != 0) {
