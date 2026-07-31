@@ -2,8 +2,20 @@
 
 ## 0.1.0-beta.5 (closed beta)
 
-Ships new engine artifacts (`v0.1.3`). Run `flutter-watchos precache` after
-upgrading.
+Ships new engine artifacts (`v0.1.3`). **Upgrading from an earlier beta? You
+need `--force`:**
+
+```sh
+flutter-watchos precache --watchos --force
+```
+
+A plain `precache` will not pick up a new engine on an install that already has
+one. The extracted artifacts are reused without being compared against
+`bin/internal/engine.version`, so the old engine silently stays in place —
+which means this affected earlier releases too, not just this one. `--force`
+clears the directory first and downloads cleanly. A fresh install needs
+nothing special. Fixing the invalidation itself is the first thing queued for
+the next release.
 
 - **The Simulator engine is now built optimised.** It was shipping as an
   unoptimised build, which made every app feel far heavier there than on a
