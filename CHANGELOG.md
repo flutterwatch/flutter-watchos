@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.5 (closed beta)
+
+Ships new engine artifacts (`v0.1.3`). Run `flutter-watchos precache` after
+upgrading.
+
+- **The Simulator engine is now built optimised.** It was shipping as an
+  unoptimised build, which made every app feel far heavier there than on a
+  watch: a shader-heavy screen ran at 13fps on the Simulator and 56fps on an
+  Apple Watch Series 10. The same screen now runs at 60fps, and the engine
+  download is 24 MB instead of 40 MB. Dart still runs JIT, so **hot reload is
+  unaffected** (measured at 263–463 ms).
+
+  This makes the Simulator a better place to *develop* and no better a place to
+  *measure*. It runs the same work roughly 3–4x faster than a watch — on the
+  app above it reported two thirds of the frame idle while the watch was
+  saturated and dropping frames. A/B comparisons still rank correctly; absolute
+  timings do not transfer. See
+  [Measuring performance on a watch](doc/benchmarking.md).
+
+- **New: [Measuring performance on a watch](doc/benchmarking.md)** and a
+  drop-in probe, `tool/benchmarks/frame_bench.dart`. Reports build and raster
+  percentiles per window plus a duty cycle — what fraction of each frame was
+  actually spent working, which is what tells a comfortable 60fps from a
+  saturated one. It discards windows collected while the display was dimmed by
+  Always-On, so a run only has to catch a few seconds of real rendering
+  rather than being clean end to end.
+
+- **[Fragment shaders](doc/shaders.md)** gains two techniques measured on real
+  hardware, worth 56.5fps → 60.0fps on a shader-bound app: hoisting
+  frame-constant math out of the shader body (a value derived only from
+  uniforms is otherwise recomputed once per covered pixel), and shading through
+  an offscreen at reduced resolution — documented as the quality trade it is,
+  with the sizes that help and the one that makes things dramatically worse.
 
 - **Live DevTools on a physical watch.** `run --profile -d <watch>` now brings
   up a working Dart VM Service connection, so DevTools and the IDE debuggers
