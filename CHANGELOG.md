@@ -1,5 +1,119 @@
 # Changelog
 
+## 0.1.0-beta.5 (closed beta)
+
+Ships new engine artifacts (`v0.1.3`). Run `flutter-watchos precache` after
+upgrading.
+
+- **The Simulator engine is now built optimised.** It was shipping as an
+  unoptimised build, which made every app feel far heavier there than on a
+  watch: a shader-heavy screen ran at 13fps on the Simulator and 56fps on an
+  Apple Watch Series 10. The same screen now runs at 60fps, and the engine
+  download is 24 MB instead of 40 MB. Dart still runs JIT, so **hot reload is
+  unaffected** (measured at 263–463 ms).
+
+  This makes the Simulator a better place to *develop* and no better a place to
+  *measure*. It runs the same work roughly 3–4x faster than a watch — on the
+  app above it reported two thirds of the frame idle while the watch was
+  saturated and dropping frames. A/B comparisons still rank correctly; absolute
+  timings do not transfer. See
+  [Measuring performance on a watch](doc/benchmarking.md).
+
+- **New: [Measuring performance on a watch](doc/benchmarking.md)** and a
+  drop-in probe, `tool/benchmarks/frame_bench.dart`. Reports build and raster
+  percentiles per window plus a duty cycle — what fraction of each frame was
+  actually spent working, which is what tells a comfortable 60fps from a
+  saturated one. It discards windows collected while the display was dimmed by
+  Always-On, so a run only has to catch a few seconds of real rendering
+  rather than being clean end to end.
+
+- **[Fragment shaders](doc/shaders.md)** gains two techniques measured on real
+  hardware, worth 56.5fps → 60.0fps on a shader-bound app: hoisting
+  frame-constant math out of the shader body (a value derived only from
+  uniforms is otherwise recomputed once per covered pixel), and shading through
+  an offscreen at reduced resolution — documented as the quality trade it is,
+  with the sizes that help and the one that makes things dramatically worse.
+
+- **Live DevTools on a physical watch.** `run --profile -d <watch>` now brings
+  up a working Dart VM Service connection, so DevTools and the IDE debuggers
+  attach to a real watch the way they do to any other device. No flag: profile
+  runs on a watch set it up automatically. This closes the remaining half of
+  [#2] — beta.4 fixed the crash, but the connection itself still could not be
+  made.
+
+  A watch will not accept an inbound socket: third-party apps are denied
+  direct socket APIs (`dart:io` and `NWConnection` both fail with `ENETDOWN`),
+  which is why every previous attempt to dial *into* the VM Service failed.
+  `URLSession` does work, so the app dials *out* instead — the CLI runs a relay
+  on the Mac, the app long-polls it over HTTP, and VM Service bytes are tunnelled
+  between the two. The relay never parses the protocol, so anything the VM
+  Service can say passes through unchanged.
+
+  Verified on an Apple Watch Series 10 (watchOS 26.5): DevTools attaches, the
+  Flutter Frames chart populates with per-frame build/raster/vsync timings at a
+  sustained 59.4 frames per second, and an 8-second timeline capture of an
+  animating app returned ~30,000 events including the whole frame pipeline
+  (`Animator::BeginFrame`, `BUILD`/`LAYOUT`/`PAINT`/`COMPOSITING`,
+  `Rasterizer::*`).
+
+  The relay's endpoints have to accept connections on every interface — the
+  watch reaches the Mac by LAN address — so each run mints a 128-bit token and
+  serves only under it. Anything else on the network gets a 404 and changes no
+  state. This matters because the app is launched with
+  `--disable-service-auth-codes`: without the token the relay would be an
+  unauthenticated door into a live debug session.
+
+  Limits worth knowing, all documented in
+  [`doc/debug-app.md`](doc/debug-app.md):
+
+  - **Connection setup sometimes fails — expect to retry.** Two launches in
+    five did not connect in testing. Once up, a session is stable. A failure
+    cannot be recovered in place: once DDS has taken control the VM Service
+    stops listening, so a dropped connection ends the session. Note the watch
+    suspending the app when its display times out looks the same from the
+    terminal — see [`doc/debug-app.md`](doc/debug-app.md).
+
+    A transfer that fails mid-session is retried, and if the data really is
+    lost the tunnel is closed so `run` reports a lost connection — rather than
+    holding the session open around a hole in the byte stream, which read as
+    an indefinite hang.
+  - **The CPU profiler is empty.** `getCpuSamples` returns a full function
+    table and zero samples — the Dart sampling profiler needs Mach thread APIs
+    the watchOS device SDK removes, the same reason there is no JIT on device.
+    The timeline is unaffected.
+  - **The link is slow, so bulk views take a moment.** Tunnel traffic is
+    compressed (~5x live, ~9–10x bulk) and pipelined to hide the phone-proxied
+    path's round-trip time: 800–900 KB/s of payload over a ~90 KB/s wire.
+    DevTools connects in ~20s, and the Performance page loads in about a
+    minute against an app rendering at 60fps, then stays live — frames chart
+    included.
+
+  Both devices must share a network: a watch reaches your Mac through its
+  paired iPhone, so the iPhone needs to be unlocked, nearby, and on the same
+  Wi-Fi as the Mac. When the app cannot reach back, `run` now says so — and
+  distinguishes "the VM Service never started" from "it started but the app
+  could not reach this Mac".
+
+  **Apps created before the host module cannot use this.** A project that still
+  has `watchos/Runner/FlutterRunner.swift` builds in legacy mode, which skips
+  the host module the bridge lives in. Migrate to the current template
+  (`App.swift` importing `FlutterWatchOS`) to attach DevTools.
+
+- **Release builds carry none of the above.** The VM Service bridge is compiled
+  only for debug and profile: a release build gets a no-op stub and links no
+  `URLSession`, socket or compression code for it (verified by symbol count —
+  127 bridge symbols and 3 networking references in profile, 22 stub symbols
+  and 0 networking references in release). Release launches also no longer pass
+  `--enable-dart-profiling`, `--disable-service-auth-codes` or
+  `--vm-service-host`. A release engine has no Dart VM Service, so those were
+  already inert — but they are not flags to hand a shipping build on the
+  assumption that nothing is listening.
+
+- **`run` on a physical watch takes over a stale instance.** Launches now pass
+  `--terminate-existing`. An earlier run that ended without a clean stop used to
+  leave an instance holding the VM Service port, after which every later run
+  silently came up with no VM Service at all.
+
 ## 0.1.0-beta.4 (closed beta)
 
 Ships new engine artifacts (`v0.1.2`). Run `flutter-watchos precache` after

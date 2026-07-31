@@ -77,6 +77,91 @@ SchedulerBinding.instance.addTimingsCallback((List<FrameTiming> timings) {
 Watch the mean and the peak, not just the mean: an effect that averages
 comfortably but spikes past the budget will read as intermittent jank.
 
+For a ready-made version of this — percentiles, pooled totals, and a gate that
+discards windows collected while the display was dimmed — drop
+[`tool/benchmarks/frame_bench.dart`](../tool/benchmarks/frame_bench.dart) into
+your app. See [Measuring performance on a watch](benchmarking.md), which also
+covers why a Simulator number is not a device number.
+
+## Two changes that bought a real app 60fps
+
+Both come from a game whose animated border shader was essentially the whole
+frame — with the effect switched off, raster fell from 17.7ms to 3.2ms. On an
+Apple Watch Series 10 it could not hold the frame rate: **56.5fps with the
+frame fully saturated**. After both changes it holds **60.0fps with 39% of the
+frame idle**.
+
+### Compute per-frame values in Dart, not per pixel
+
+A shader body runs once for every pixel it covers. Anything in it that depends
+only on uniforms is the same value for all of them, so it is being recomputed
+thousands of times a frame for one answer. Transcendentals are worth hunting
+first:
+
+```glsl
+// Before — a sin per pixel, for a value that changes once per frame.
+uniform float uTime;
+float breathe = 0.85 + 0.15 * sin(uTime * 2.2);
+```
+
+```dart
+// After — a sin per frame, in the painter.
+final double breathe = 0.85 + 0.15 * math.sin(t * 2.2);
+shader.setFloat(6, breathe);
+```
+
+Anything derived purely from state — a colour that depends on a game variable,
+`time * rate` phases, a `max()` of two uniforms — moves the same way. In the
+app above this was worth about 9% of the shader's cost on its own. On a GPU it
+would be close to free; here it is not.
+
+### Shade at reduced resolution through an offscreen
+
+Rasterise the effect into a `ui.Picture`, turn that into an image at a smaller
+size than the area it will fill, and let the blit scale it up:
+
+```dart
+@override
+void paint(Canvas canvas, Size size) {
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final Canvas offscreen = Canvas(recorder);
+  paintEffect(offscreen, size);            // your existing shader painting
+  final ui.Picture picture = recorder.endRecording();
+  // toImageSync takes PIXELS while Size is logical, so this shades at half
+  // resolution on a 2x screen. That is the point — and the cost.
+  final ui.Image image =
+      picture.toImageSync(size.width.ceil(), size.height.ceil());
+  picture.dispose();
+  canvas.drawImageRect(
+    image,
+    Rect.fromLTWH(0, 0, size.width, size.height),
+    Offset.zero & size,
+    Paint()..filterQuality = FilterQuality.low,
+  );
+  image.dispose();
+}
+```
+
+This was the larger half of the win, and it is **a quality trade, not a free
+structural change**: fewer pixels get shaded and the result is scaled up, so
+the effect is softer. Soft glows tolerate it well; sharp-edged effects and
+anything with fine high-frequency detail will not. Judge it on a watch, at
+full size — a simulator screenshot comes back at logical resolution and cannot
+show a 2x upscale.
+
+Two results worth knowing before you tune the size:
+
+- Shading at 0.5, 0.7, 0.85 and 1.0 of logical size all cost the same, so
+  there is no reason to go below 1.0 and blur it further.
+- Passing a size in *device* pixels — i.e. actually shading at full
+  resolution — was **much worse than not doing this at all**, so the technique
+  only pays while it is also downscaling.
+
+Sanity-check any result here against frames per second rather than
+`rasterDuration` alone. In the full-resolution case above, frames were 72ms
+apart with only 11ms of build and raster reported in them; a large part of the
+cost of this path does not show up in `FrameTiming` at all.
+
 ## Two mistakes that cost more than the shader
 
 Both of these show up as "the shader is slow" when it isn't:
