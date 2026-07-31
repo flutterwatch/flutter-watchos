@@ -77,6 +77,12 @@ SchedulerBinding.instance.addTimingsCallback((List<FrameTiming> timings) {
 Watch the mean and the peak, not just the mean: an effect that averages
 comfortably but spikes past the budget will read as intermittent jank.
 
+For a ready-made version of this — percentiles, pooled totals, and a gate that
+discards windows collected while the display was dimmed — drop
+[`tool/benchmarks/frame_bench.dart`](../tool/benchmarks/frame_bench.dart) into
+your app. See [Measuring performance on a watch](benchmarking.md), which also
+covers why a Simulator number is not a device number.
+
 ## Two changes that bought a real app 60fps
 
 Both come from a game whose animated border shader was essentially the whole
