@@ -42,6 +42,49 @@ const List<String> kWatchosEngineZipNames = <String>[
 /// up with a plain `precache`, no cache-nuking required.
 const String kWatchosPendingDownloadsFileName = '.pending_downloads';
 
+/// Marker file recording the engine tag a *downloaded* artifact directory was
+/// extracted from.
+///
+/// Without it an upgrade is silent: the download target is reused whenever it
+/// merely contains `watchos_*` directories, so a user who already had the
+/// previous engine kept it after bumping `bin/internal/engine.version`, and
+/// the "run `precache` after upgrading" instruction did nothing.
+///
+/// Only written by the downloader. A hand-built engine — `WATCHOS_ENGINE_ARTIFACTS`
+/// or a workspace-root `engine_artifacts/` — has no stamp and must never be
+/// treated as stale, because there is no tag it could be compared against.
+const String kWatchosEngineVersionFileName = '.engine_version';
+
+/// The engine tag [artifactDir] was downloaded from, or null when unstamped.
+String? readEngineVersionStamp(Directory artifactDir) {
+  final File stamp = artifactDir.childFile(kWatchosEngineVersionFileName);
+  if (!stamp.existsSync()) {
+    return null;
+  }
+  try {
+    final String tag = stamp.readAsStringSync().trim();
+    return tag.isEmpty ? null : tag;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// Records that [artifactDir] holds the artifacts for [tag].
+void writeEngineVersionStamp(Directory artifactDir, String tag) {
+  artifactDir.childFile(kWatchosEngineVersionFileName).writeAsStringSync('$tag\n');
+}
+
+/// Whether [artifactDir] can be reused for [tag].
+///
+/// Unstamped directories are reusable: they are local engines, not downloads
+/// (see [kWatchosEngineVersionFileName]). A stamped one is reusable only when
+/// it matches, which is what makes an engine bump actually reach an existing
+/// install.
+bool engineArtifactsMatchTag(Directory artifactDir, String tag) {
+  final String? stamped = readEngineVersionStamp(artifactDir);
+  return stamped == null || stamped == tag;
+}
+
 /// The zips still owed to this artifact directory, newline-separated in the
 /// marker file. Unknown names are ignored so a stale or hand-edited marker
 /// can never make the tool fetch arbitrary URLs.
@@ -312,7 +355,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         location
             .listSync()
             .whereType<Directory>()
-            .any((Directory d) => fileSystem.path.basename(d.path).startsWith('watchos_'))) {
+            .any((Directory d) => fileSystem.path.basename(d.path).startsWith('watchos_')) &&
+        engineArtifactsMatchTag(location, releaseTag)) {
       final List<String> pending = readPendingEngineZips(location);
       if (pending.isNotEmpty && watchosArtifactApiBase(_platform) != null) {
         await _fetchPendingZips(pending, fileSystem, operatingSystemUtils);
@@ -431,6 +475,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     }
 
     writePendingEngineZips(location, skippedZips);
+    // Stamp last: only a download that got this far is the tag it claims.
+    writeEngineVersionStamp(location, tag);
 
     final Directory macOsMetaDir = location.childDirectory('__MACOSX');
     if (macOsMetaDir.existsSync()) {
