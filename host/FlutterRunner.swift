@@ -336,6 +336,7 @@ final class FlutterRunner: ObservableObject {
         }
         WatchTextInput.shared.start()
         WatchPlatformViews.shared.start()
+        WatchAccessibility.startMirroring()
     }
 
     /// Forward one touch sample (SwiftUI points → engine logical points).
