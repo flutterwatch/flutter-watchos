@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.6 (closed beta)
+
+Ships new engine artifacts (`v0.1.4`). **Upgrading from an earlier beta? You
+still need `--force`:**
+
+```sh
+flutter-watchos precache --watchos --force
+```
+
+Accessibility needs the matching engine — the host module links its symbols
+directly, so an app built against an older engine fails to link rather than
+silently losing the feature.
 
 - **Accessibility.** VoiceOver now reads and drives Flutter watch apps. You
   annotate your app the way you would anywhere else — `Semantics`,
@@ -33,6 +44,15 @@
   DOES define `darkTheme` (and leaves `themeMode` at its `ThemeMode.system`
   default) will now use it on the watch, which matches every native watch app.
   Pin the old look with `themeMode: ThemeMode.light` if you need it.
+
+- **Downloaded engine artifacts are stamped with their tag** and are no longer
+  reused when the stamp does not match `bin/internal/engine.version`. This is a
+  partial fix for an install keeping its old engine across a version bump, and
+  it is why `--force` is still the instruction above: the stamp is not yet
+  proven to take effect on a live upgrade. A local engine
+  (`WATCHOS_ENGINE_ARTIFACTS`, or a workspace-root `engine_artifacts/`) carries
+  no stamp and stays reusable on purpose, so a hand-built engine is never
+  deleted and downloaded over.
 
 ## 0.1.0-beta.5 (closed beta)
 
