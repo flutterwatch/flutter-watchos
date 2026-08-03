@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- **Accessibility.** VoiceOver now reads and drives Flutter watch apps. You
+  annotate your app the way you would anywhere else — `Semantics`,
+  `MergeSemantics`, `ExcludeSemantics`, and the semantics every Material and
+  Cupertino widget already carries — and the whole tree comes through: labels,
+  values, hints, traits, reading order, activate, adjustable swipes, the
+  actions rotor, custom actions, and scrolling past the last visible item in a
+  list. Text fields read as named fields rather than anonymous ones. Requires
+  the matching engine artifacts.
+
+  The watch's own settings reach `MediaQuery` too: VoiceOver →
+  `accessibleNavigation`, Reduce Motion → `disableAnimations`, and Text Size →
+  `textScaler`, so an app that respects `MediaQuery.textScaler` now grows with
+  the system setting.
+
+  It is not VoiceOver-only: Switch Control, AssistiveTouch, Xcode's
+  Accessibility Inspector and XCUITest read the same tree, so it is always
+  live. `Semantics(identifier: ...)` becomes the accessibility identifier an
+  XCUITest query matches on.
+
+  Two gaps, both for want of a watchOS API: `SemanticsService.announce()` does
+  nothing (there is no way to make a watch screen reader speak an arbitrary
+  string), and Bold Text / Increase Contrast / Invert Colours are not reported.
+  See [Accessibility](doc/accessibility.md).
+
+- **`MediaQuery.platformBrightness` is now `dark`.** It has to be: the same
+  system-settings message that carries the text scale is discarded outright
+  without it, and watchOS has no light mode. Most apps see no change —
+  `MaterialApp` falls back to `theme` when `darkTheme` is null. An app that
+  DOES define `darkTheme` (and leaves `themeMode` at its `ThemeMode.system`
+  default) will now use it on the watch, which matches every native watch app.
+  Pin the old look with `themeMode: ThemeMode.light` if you need it.
+
 ## 0.1.0-beta.5 (closed beta)
 
 Ships new engine artifacts (`v0.1.3`). **Upgrading from an earlier beta? You

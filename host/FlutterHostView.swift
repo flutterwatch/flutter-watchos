@@ -17,6 +17,8 @@ public struct FlutterHostView: View {
     @ObservedObject var textInput = WatchTextInput.shared
     // Likewise for platform-view slots (rects + view types).
     @ObservedObject var platformViews = WatchPlatformViews.shared
+    // And for the accessibility elements.
+    @ObservedObject var accessibility = WatchAccessibility.shared
     // Always-On: true while the wrist is down and watchOS is showing the app
     // dimmed. Readable only here — it is a SwiftUI environment value, with no
     // WatchKit equivalent — so the host forwards it to Dart (WatchAlwaysOn).
@@ -177,7 +179,38 @@ public struct FlutterHostView: View {
                         .frame(width: field.rect.width, height: field.rect.height)
                         .contentShape(Rectangle())
                         .position(x: field.rect.midX, y: field.rect.midY)
+                        // VoiceOver already handles the proxy natively — it is
+                        // a real TextField — but it was created with an empty
+                        // label, so it would read as an anonymous "text field".
+                        // Name it from the Flutter node's own semantics; the
+                        // accessibility overlay below deliberately does NOT
+                        // synthesize an element for text fields, so this is the
+                        // one thing VoiceOver finds there.
+                        .modifier(A11yTextFieldSemantics(
+                            element: accessibility.element(for: field.id)))
                 }
+            }
+            // Accessibility. One invisible element per Flutter
+            // semantics node, at the rect the engine publishes — the whole
+            // reason assistive technology can read a Flutter watch app at all,
+            // since the UI itself reaches the screen as a single decorative
+            // image.
+            // Above the platform views (their native content is accessible on
+            // its own and the engine publishes no element over it) and above
+            // the proxy fields, so element order matches what is drawn.
+            //
+            // Placed whenever semantics are on, not only under VoiceOver —
+            // Switch Control, the Accessibility Inspector and XCUITest read the
+            // same tree, and watchOS cannot report that they are running.
+            .overlay {
+                ForEach(accessibility.placedElements) { element in
+                    WatchA11yElementView(element: element)
+                }
+                // These views exist only to carry semantics — VoiceOver
+                // reaches them through the accessibility tree, never through
+                // hit testing. Without this they would cover the whole screen
+                // and swallow direct touches meant for the Flutter frame.
+                .allowsHitTesting(false)
             }
             .onChange(of: focusedField) { _, newValue in
                 if let id = newValue {

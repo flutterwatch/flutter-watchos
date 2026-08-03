@@ -99,4 +99,85 @@ const char* FlutterWatchOSPlatformViewGetParams(int64_t view_id);
 // transparent hole for it); false: classic overlay above the frame.
 bool FlutterWatchOSPlatformViewGetBelowFrame(int64_t view_id);
 
+// -----------------------------------------------------------------------------
+// watchOS accessibility (the VoiceOver bridge). The engine turns the semantics
+// tree into a flat list of elements — rect in logical points, label/value/hint,
+// traits, the actions the node offers — and the host places an invisible
+// SwiftUI view per element carrying the accessibility modifiers (see
+// WatchAccessibility in WatchAccessibility.swift). Same mirror contract as the
+// two overlays above.
+// -----------------------------------------------------------------------------
+
+// Traits of an element; the host maps them onto SwiftUI AccessibilityTraits.
+enum {
+  kFlutterWatchOSA11yTraitButton = 1 << 0,
+  kFlutterWatchOSA11yTraitHeader = 1 << 1,
+  kFlutterWatchOSA11yTraitLink = 1 << 2,
+  kFlutterWatchOSA11yTraitImage = 1 << 3,
+  kFlutterWatchOSA11yTraitSelected = 1 << 4,
+  kFlutterWatchOSA11yTraitStaticText = 1 << 5,
+  kFlutterWatchOSA11yTraitUpdatesFrequently = 1 << 6,
+  kFlutterWatchOSA11yTraitNotEnabled = 1 << 7,
+  kFlutterWatchOSA11yTraitAdjustable = 1 << 8,
+  kFlutterWatchOSA11yTraitTextField = 1 << 9,
+  kFlutterWatchOSA11yTraitToggle = 1 << 10,
+  kFlutterWatchOSA11yTraitKeyboardKey = 1 << 11,
+};
+
+// Actions an element offers; the values are flutter::SemanticsAction bits,
+// which is also what PerformAction takes back.
+enum {
+  kFlutterWatchOSA11yActionTap = 1 << 0,
+  kFlutterWatchOSA11yActionLongPress = 1 << 1,
+  kFlutterWatchOSA11yActionScrollLeft = 1 << 2,
+  kFlutterWatchOSA11yActionScrollRight = 1 << 3,
+  kFlutterWatchOSA11yActionScrollUp = 1 << 4,
+  kFlutterWatchOSA11yActionScrollDown = 1 << 5,
+  kFlutterWatchOSA11yActionIncrease = 1 << 6,
+  kFlutterWatchOSA11yActionDecrease = 1 << 7,
+  kFlutterWatchOSA11yActionDismiss = 1 << 18,
+  kFlutterWatchOSA11yActionExpand = 1 << 24,
+  kFlutterWatchOSA11yActionCollapse = 1 << 25,
+};
+
+typedef struct {
+  int32_t node_id;
+  double x;       // origin x in logical points
+  double y;       // origin y in logical points
+  double width;   // points
+  double height;  // points
+  uint32_t traits;
+  int32_t actions;
+  int32_t custom_action_count;
+  double sort_priority;  // descending = VoiceOver reading order
+  // Moves only when the element's strings change; the host caches them and
+  // re-reads only when it does (rects move every frame while scrolling).
+  uint64_t content_version;
+  bool hidden;           // scrolled out; focusing scrolls it into view
+  bool enabled;          // false: the host disables the element
+} FlutterWatchOSA11yElement;
+
+typedef void (*FlutterWatchOSA11yChangeCallback)(void* context);
+
+int32_t FlutterWatchOSA11yCopyElements(FlutterWatchOSA11yElement* out,
+                                       int32_t max);
+uint64_t FlutterWatchOSA11yGeneration(void);
+void FlutterWatchOSA11ySetChangeCallback(
+    FlutterWatchOSA11yChangeCallback callback,
+    void* context);
+// Owned by the engine, valid until the next Get* call from the same thread.
+const char* FlutterWatchOSA11yGetLabel(int32_t node_id);
+const char* FlutterWatchOSA11yGetValue(int32_t node_id);
+const char* FlutterWatchOSA11yGetHint(int32_t node_id);
+const char* FlutterWatchOSA11yGetIdentifier(int32_t node_id);
+const char* FlutterWatchOSA11yGetCustomActionLabel(int32_t node_id,
+                                                   int32_t index);
+// The engine detects VoiceOver itself (WKAccessibility notifications); this is
+// the override a host or a test uses to report a reader WatchKit cannot see.
+void FlutterWatchOSA11ySetScreenReaderRunning(bool running);
+void FlutterWatchOSA11yFocusGained(int32_t node_id);
+void FlutterWatchOSA11yFocusLost(int32_t node_id);
+bool FlutterWatchOSA11yPerformAction(int32_t node_id, int32_t action);
+bool FlutterWatchOSA11yPerformCustomAction(int32_t node_id, int32_t index);
+
 #endif  // FLUTTER_WATCHOS_HOST_H_
