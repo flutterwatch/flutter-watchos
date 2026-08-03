@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.0-beta.6 (closed beta)
+
+Ships new engine artifacts (`v0.1.4`). **Upgrading from an earlier beta? You
+still need `--force`:**
+
+```sh
+flutter-watchos precache --watchos --force
+```
+
+Accessibility needs the matching engine — the host module links its symbols
+directly, so an app built against an older engine fails to link rather than
+silently losing the feature.
+
+- **Accessibility.** VoiceOver now reads and drives Flutter watch apps. You
+  annotate your app the way you would anywhere else — `Semantics`,
+  `MergeSemantics`, `ExcludeSemantics`, and the semantics every Material and
+  Cupertino widget already carries — and the whole tree comes through: labels,
+  values, hints, traits, reading order, activate, adjustable swipes, the
+  actions rotor, custom actions, and scrolling past the last visible item in a
+  list. Text fields read as named fields rather than anonymous ones. Requires
+  the matching engine artifacts.
+
+  The watch's own settings reach `MediaQuery` too: VoiceOver →
+  `accessibleNavigation`, Reduce Motion → `disableAnimations`, and Text Size →
+  `textScaler`, so an app that respects `MediaQuery.textScaler` now grows with
+  the system setting.
+
+  It is not VoiceOver-only: Switch Control, AssistiveTouch, Xcode's
+  Accessibility Inspector and XCUITest read the same tree, so it is always
+  live. `Semantics(identifier: ...)` becomes the accessibility identifier an
+  XCUITest query matches on.
+
+  Two gaps, both for want of a watchOS API: `SemanticsService.announce()` does
+  nothing (there is no way to make a watch screen reader speak an arbitrary
+  string), and Bold Text / Increase Contrast / Invert Colours are not reported.
+  See [Accessibility](doc/accessibility.md).
+
+- **`MediaQuery.platformBrightness` is now `dark`.** It has to be: the same
+  system-settings message that carries the text scale is discarded outright
+  without it, and watchOS has no light mode. Most apps see no change —
+  `MaterialApp` falls back to `theme` when `darkTheme` is null. An app that
+  DOES define `darkTheme` (and leaves `themeMode` at its `ThemeMode.system`
+  default) will now use it on the watch, which matches every native watch app.
+  Pin the old look with `themeMode: ThemeMode.light` if you need it.
+
+- **Downloaded engine artifacts are stamped with their tag** and are no longer
+  reused when the stamp does not match `bin/internal/engine.version`. This is a
+  partial fix for an install keeping its old engine across a version bump, and
+  it is why `--force` is still the instruction above: the stamp is not yet
+  proven to take effect on a live upgrade. A local engine
+  (`WATCHOS_ENGINE_ARTIFACTS`, or a workspace-root `engine_artifacts/`) carries
+  no stamp and stays reusable on purpose, so a hand-built engine is never
+  deleted and downloaded over.
+
 ## 0.1.0-beta.5 (closed beta)
 
 Ships new engine artifacts (`v0.1.3`). **Upgrading from an earlier beta? You
