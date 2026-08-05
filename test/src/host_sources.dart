@@ -4,14 +4,15 @@
 
 import 'dart:io' as io;
 
-/// Locates a file by walking up from the current directory (tests may run
-/// from the package root or a workspace root) and appending [relativePath].
-String _readFromCliRoot(String relativePath) {
+/// Locates a directory or file by walking up from the current directory (tests
+/// may run from the package root or a workspace root) and appending
+/// [relativePath].
+String cliRootPath(String relativePath) {
   io.Directory dir = io.Directory.current.absolute;
   while (true) {
-    final candidate = io.File('${dir.path}/$relativePath');
-    if (candidate.existsSync()) {
-      return candidate.readAsStringSync();
+    final path = '${dir.path}/$relativePath';
+    if (io.File(path).existsSync() || io.Directory(path).existsSync()) {
+      return path;
     }
     final io.Directory parent = dir.parent;
     if (parent.path == dir.path) {
@@ -20,6 +21,9 @@ String _readFromCliRoot(String relativePath) {
     dir = parent;
   }
 }
+
+String _readFromCliRoot(String relativePath) =>
+    io.File(cliRootPath(relativePath)).readAsStringSync();
 
 /// Reads a source of the FlutterWatchOS host module (the CLI-compiled runner
 /// glue) from the CLI's `host/` directory — e.g. `FlutterRunner.swift`,
