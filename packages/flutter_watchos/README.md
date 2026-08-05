@@ -14,6 +14,9 @@ channels, no async.
 - **Platform detection** — `FlutterWatchosPlatform.isWatch` disambiguates Apple
   Watch from iPhone/iPad. (Both report `Platform.isIOS == true`, because
   watchOS is an iOS-family OS — see the toolchain's platform-identity notes.)
+  The `FlutterWatchosPlatform` getters are safe to call from shared code on
+  every platform a Flutter app targets, Web included, where all of them are
+  `false`.
 - **Device info** — `WatchOSInfo` exposes the watchOS version, device model,
   machine id (e.g. `Watch7,18`; resolves correctly in the Simulator too),
   simulator flag, and native screen size/scale.

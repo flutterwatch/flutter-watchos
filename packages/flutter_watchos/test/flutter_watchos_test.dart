@@ -110,6 +110,23 @@ void main() {
     test('isWatch is false on the test host (not watchOS)', () {
       expect(FlutterWatchosPlatform.isWatch, isFalse);
     });
+
+    test('isIos and isAppleMobile agree with the host OS', () {
+      // The suite runs on the desktop VM (macOS/Linux), never on an
+      // iOS-family OS — so both are false, and isIos in particular must not
+      // fall back to "not watchOS means iOS".
+      expect(FlutterWatchosPlatform.isIos, isFalse);
+      expect(FlutterWatchosPlatform.isAppleMobile, isFalse);
+    });
+
+    test('isIos implies neither watchOS nor a non-Apple host', () {
+      // Invariant that holds on every platform, including the Web stub where
+      // all three are constant false: isIos is the strict iPhone/iPad case.
+      expect(
+        FlutterWatchosPlatform.isIos,
+        FlutterWatchosPlatform.isAppleMobile && !FlutterWatchosPlatform.isWatch,
+      );
+    });
   });
 
   group('WatchCrownScroll', () {
