@@ -212,12 +212,33 @@ void _reconcileCompanion(Directory projectDir, File watchPlist, Logger logger) {
   }
 
   // Apple requires the watch app's bundle id to be prefixed by its
-  // companion's (<ios-id>.<suffix>); a mismatch fails App Store validation.
+  // companion's (<ios-id>.<suffix>). This is not just an App Store validation
+  // rule: watchOS refuses to *install* a companion watch app whose id is not
+  // prefixed by the WKCompanionAppBundleIdentifier it declares, so warning and
+  // carrying on would leave the project unable to run. Reconcile it the same
+  // way the Info.plist below is reconciled — the iOS app id is the source of
+  // truth — keeping whatever suffix the watch target already uses.
   final String? watchId = watchosBundleIdentifier(projectDir);
   if (watchId != null && !watchId.startsWith('$iosId.')) {
-    logger.printWarning(
-      'Watch bundle id "$watchId" is not prefixed by the iOS app id "$iosId". '
-      'App Store validation requires e.g. "$iosId.watchkitapp".',
+    final int lastDot = watchId.lastIndexOf('.');
+    final String suffix = lastDot == -1 ? 'watchkitapp' : watchId.substring(lastDot + 1);
+    final prefixed = '$iosId.$suffix';
+    final File watchPbxproj = projectDir
+        .childDirectory('watchos')
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    // Only rewrite the watch app target's own id — the same file also carries
+    // the HostApp container's id, which is a different value.
+    // Xcode writes the value either bare or quoted, so match both forms.
+    watchPbxproj.writeAsStringSync(
+      watchPbxproj.readAsStringSync().replaceAll(
+        RegExp('PRODUCT_BUNDLE_IDENTIFIER = "?${RegExp.escape(watchId)}"?;'),
+        'PRODUCT_BUNDLE_IDENTIFIER = "$prefixed";',
+      ),
+    );
+    logger.printStatus(
+      'watchos/Runner.xcodeproj: set watch bundle id to "$prefixed" '
+      '(was "$watchId", which the iOS app id "$iosId" must prefix).',
     );
   }
 
