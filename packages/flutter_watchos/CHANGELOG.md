@@ -1,3 +1,17 @@
+## 0.1.0-beta.7
+
+* **Fix:** the package is now Web-safe. `FlutterWatchosPlatform` is the guard
+  this package tells cross-platform apps to write instead of `Platform.isIOS`,
+  but it imported `dart:io` unconditionally, so following that advice broke the
+  app's Web build — an `UnsupportedError: Platform._operatingSystem` on the
+  first `isWatch` read (a compile error on older SDKs). It now resolves through
+  a conditional import: on Web `isWatch`, `isIos`, and `isAppleMobile` are all
+  `false`.
+* **Breaking (Web only):** `extension FlutterWatchosPlatformExt on Platform` is
+  native-only API now — it extends the `dart:io` `Platform` type, which does not
+  exist on Web. Nothing changes for iOS/watchOS/Android/desktop code; Web code
+  that needs the check should use the static `FlutterWatchosPlatform` getters.
+
 ## 0.1.0-beta.6
 
 * **New:** `WatchAlwaysOn` / `WatchAlwaysOnBuilder` — react to the watchOS

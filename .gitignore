@@ -9,8 +9,10 @@ bin/cache/
 
 # Engine artifacts — distributed separately, NEVER committed (engine is
 # closed-source). The CLI consumes pre-built engine bundles from here.
-engine_artifacts/
-artifacts/
+# The wildcard is deliberate: an exact-name pattern would not cover a copy
+# kept under a suffixed name, leaving the engine untracked but stageable.
+engine_artifacts*/
+artifacts*/
 
 # Local engine source / build workspaces (closed-source, lives outside repo).
 # The watchOS engine is proprietary and must never be tracked in this repo.

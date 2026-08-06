@@ -22,8 +22,12 @@ library flutter_watchos;
 
 export 'src/watchos_info.dart';
 export 'src/watchos_ffi_bindings.dart' show WatchOSNativeBindings;
-export 'src/platform_extension.dart'
-    show FlutterWatchosPlatform, FlutterWatchosPlatformExt;
+// No `show` combinator: this export resolves to a Web or a native
+// implementation, and `FlutterWatchosPlatformExt` only exists in the native
+// one (it extends the dart:io `Platform` type). Naming it here would be an
+// undefined shown name in a Web build. Both branches declare only the API
+// meant to be public.
+export 'src/platform_extension.dart';
 export 'src/haptics.dart' show WatchHaptics, WatchHapticType;
 export 'src/status_bar.dart' show WatchStatusBar;
 export 'src/always_on.dart' show WatchAlwaysOn, WatchAlwaysOnBuilder;

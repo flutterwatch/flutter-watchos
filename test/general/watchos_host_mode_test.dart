@@ -221,17 +221,22 @@ void main() {
       );
     });
 
-    testWithoutContext('warns when the watch bundle id is not prefixed by the iOS id',
+    testWithoutContext('re-prefixes a watch bundle id that the iOS id does not prefix',
         () async {
       writeIosProject();
-      projectDir
+      final File watchPbxproj = projectDir
           .childDirectory('watchos')
           .childDirectory('Runner.xcodeproj')
           .childFile('project.pbxproj')
-          .writeAsStringSync('''
+        ..writeAsStringSync('''
 		AA0000000000000000000002 /* Debug */ = {
 			buildSettings = {
 				PRODUCT_BUNDLE_IDENTIFIER = "com.other.watchapp";
+			};
+		};
+		CC0000000000000000000002 /* Debug */ = {
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = "com.other.hostapp";
 			};
 		};
 ''');
@@ -241,7 +246,42 @@ void main() {
         mode: WatchosHostMode.companion,
         logger: logger,
       );
-      expect(logger.warningText, contains('not prefixed by the iOS app id'));
+
+      // watchOS refuses to install a companion watch app whose id the
+      // companion's id does not prefix, so this is rewritten, not just warned
+      // about. The existing suffix is kept.
+      final String rewritten = watchPbxproj.readAsStringSync();
+      expect(rewritten, contains('PRODUCT_BUNDLE_IDENTIFIER = "com.example.myapp.watchapp";'));
+      // The HostApp container's own id is a different value and is left alone.
+      expect(rewritten, contains('PRODUCT_BUNDLE_IDENTIFIER = "com.other.hostapp";'));
+      expect(logger.statusText, contains('set watch bundle id to "com.example.myapp.watchapp"'));
+    });
+
+    testWithoutContext('leaves an already-prefixed watch bundle id alone', () async {
+      writeIosProject();
+      final File watchPbxproj = projectDir
+          .childDirectory('watchos')
+          .childDirectory('Runner.xcodeproj')
+          .childFile('project.pbxproj')
+        ..writeAsStringSync('''
+		AA0000000000000000000002 /* Debug */ = {
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.myapp.watchkitapp";
+			};
+		};
+''');
+
+      await reconcileWatchosHostMode(
+        projectDir: projectDir,
+        mode: WatchosHostMode.companion,
+        logger: logger,
+      );
+
+      expect(
+        watchPbxproj.readAsStringSync(),
+        contains('PRODUCT_BUNDLE_IDENTIFIER = "com.example.myapp.watchkitapp";'),
+      );
+      expect(logger.statusText, isNot(contains('set watch bundle id')));
     });
   });
 

@@ -135,9 +135,15 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     severity: Severity.unsupported,
     note:
         'UIApplication does not exist on watchOS — the app object is '
-        'WKApplication (watchOS 7+) / WKExtension. For opening URLs, watchOS '
-        'only supports `WKExtension.shared().openSystemURL(_:)` for tel: and '
-        'sms: schemes; generic URL launching has no watchOS equivalent.',
+        'WKApplication (watchOS 7+) / WKExtension. For opening URLs, use '
+        '`openSystemURL(_:)`. It reliably handles tel: and sms:, and — '
+        'despite the documentation listing only those — it also accepts '
+        'http/https, presenting the system web sheet. Verified on a physical '
+        'watch (watchOS 26.5): for a third-party app that sheet declines to '
+        'render and shows "URL failed to load — this url can be viewed on '
+        'your iPhone", even for a trivial page. Pair it with an '
+        'NSUserActivity (NSUserActivityTypeBrowsingWeb) so the phone can '
+        'actually pick the link up — see url_launcher_watchos.',
   ),
   ApiPattern(
     name: 'UIKitViews',
@@ -200,10 +206,21 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     pattern: r'\bWKWebView\b|\bWKNavigationDelegate\b|\bWKWebViewConfiguration\b',
     severity: Severity.unsupported,
     note:
-        "WebKit is not available on watchOS (WatchKit's WK prefix is a "
-        'different framework). There is no way to render arbitrary web '
-        'content in a watchOS app; the feature must be omitted or handed '
-        'off to the paired iPhone via WatchConnectivity.',
+        "WebKit is not in the watchOS SDK (WatchKit's WK prefix is a "
+        'different framework) — no headers, no linkable stub, so `import '
+        'WebKit` cannot compile. The framework itself DOES ship in the OS '
+        '(system apps like Mail render web content with it), but there is no '
+        'public path to it for third-party apps, and two further walls stand '
+        'behind the missing SDK: WKWebView is a UIView subclass and UIView is '
+        'API_UNAVAILABLE(watchos), and watchOS SwiftUI has no '
+        'UIViewRepresentable (only WKInterfaceObjectRepresentable), so even a '
+        'runtime-obtained instance could not be hosted. watchOS DOES have a '
+        'browser — WebSheet.framework, which Weather and Mail present — but '
+        'it is a private framework: passing an https URL to '
+        '`openSystemURL(_:)` from a third-party app raises the system sheet '
+        'and it then refuses to render, pointing the user at their iPhone '
+        '(verified on hardware, watchOS 26.5). Hand web content off to the '
+        'phone instead — see url_launcher_watchos.',
     stripSwiftImports: <String>['import WebKit'],
   ),
   ApiPattern(
@@ -271,8 +288,11 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     severity: Severity.unsupported,
     note:
         'SystemConfiguration CaptiveNetwork (SSID/BSSID lookup) is not '
-        'available on watchOS — there is no Wi-Fi network-name API. The '
-        'Wi-Fi-name feature must be dropped on watchOS.',
+        'available on watchOS — the whole SystemConfiguration framework is '
+        'absent from the SDK. The feature itself need NOT be dropped: '
+        '`NEHotspotNetwork.fetchCurrent(completionHandler:)` '
+        '(NetworkExtension, watchOS 7+) returns the current SSID/BSSID and is '
+        'the supported replacement.',
   ),
   ApiPattern(
     name: 'SystemConfigurationReachability',
@@ -288,12 +308,14 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     name: 'NetworkExtensionHotspot',
     pattern: r'\bNEHotspotNetwork\b|\bNEHotspotConfiguration\b'
         r'|\bNEHotspotConfigurationManager\b',
-    severity: Severity.unsupported,
+    severity: Severity.partial,
     note:
-        'NetworkExtension hotspot APIs (NEHotspotNetwork / '
-        'NEHotspotConfiguration) are not available on watchOS. There is no '
-        'watchOS replacement; the feature has to be omitted.',
-    stripSwiftImports: <String>['import NetworkExtension'],
+        'NEHotspotNetwork and NEHotspotConfiguration ARE available on watchOS '
+        'from 7.0 (verified in the watchOS SDK headers: '
+        'API_AVAILABLE(ios(9.0), watchos(7.0)) and '
+        'API_AVAILABLE(ios(11.0), watchos(7.0))). Keep the code and gate on '
+        '`#available(watchOS 7.0, *)` if the deployment target is lower; '
+        'review call sites rather than dropping the feature.',
   ),
   ApiPattern(
     name: 'StoreKitUISurfaces',
@@ -344,11 +366,13 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     name: 'CallKit',
     pattern: r'\bCXProvider\b|\bCXCallController\b|\bCXProviderDelegate\b'
         r'|\bCXCallUpdate\b',
-    severity: Severity.unsupported,
+    severity: Severity.partial,
     note:
-        'CallKit is not available on watchOS. Call UI on the watch is '
-        'system-owned; the feature must be omitted.',
-    stripSwiftImports: <String>['import CallKit'],
+        'CallKit IS available on watchOS from 9.0 — CXProvider and '
+        'CXCallController are both API_AVAILABLE(watchos(9.0)) in the SDK. '
+        'Keep the code and gate on `#available(watchOS 9.0, *)` if the '
+        'deployment target is lower. The watch call UI is still system-owned, '
+        'so review what the plugin expects to present.',
   ),
   ApiPattern(
     name: 'CoreNFC',
@@ -424,9 +448,11 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'and the Dart side embeds them with WatchPlatformView '
         '(package:flutter_watchos). This part must be REWRITTEN by hand, not '
         'ported mechanically — see video_player_watchos for a worked '
-        'example. The underlying native view itself must also exist on '
-        'watchOS (AVKit VideoPlayer and MapKit do; WebKit does not, so '
-        'webviews stay impossible).',
+        'example. The underlying native view must also be reachable as a '
+        'SwiftUI view on watchOS (AVKit VideoPlayer and MapKit are). WebKit '
+        'is not: it ships in the OS but not in the SDK, and WKWebView is a '
+        'UIView, which watchOS SwiftUI cannot host (no UIViewRepresentable) '
+        '— so webviews stay out of reach.',
   ),
   // ---------------------------------------------------------------------
   // `partial` entries — these compile on watchOS but behave differently or
@@ -451,12 +477,14 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     pattern: r'\bLAContext\b|\bLAPolicy\b',
     severity: Severity.partial,
     note:
-        'LocalAuthentication is available on watchOS from 9.0 — but only '
-        '`.deviceOwnerAuthentication` (passcode / wrist-detection unlock); '
-        'there is no Face ID or Touch ID biometry on the watch, so '
-        '`.deviceOwnerAuthenticationWithBiometrics` policies fail. Review '
-        'each policy the plugin evaluates, and gate on `#available(watchOS '
-        '9.0, *)` if the deployment target is lower.',
+        'LocalAuthentication is available on watchOS from 3.0 (LAContext is '
+        'API_AVAILABLE(watchos(3.0))) — but only the '
+        '`.deviceOwnerAuthentication` policy (passcode / wrist-detection '
+        'unlock), which is itself watchos(3.0). There is no Face ID or Touch '
+        'ID biometry on the watch: '
+        '`.deviceOwnerAuthenticationWithBiometrics` is '
+        'API_UNAVAILABLE(watchos) and will not compile. Review each policy '
+        'the plugin evaluates.',
   ),
   ApiPattern(
     name: 'ASWebAuthenticationSession',

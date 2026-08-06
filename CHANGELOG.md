@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.1.0-beta.7 (closed beta)
+
+Ships new engine artifacts (`v0.1.5`). **Upgrading from an earlier beta? Run
+`precache` with `--force` one more time — and this should be the last time:**
+
+```sh
+flutter-watchos precache --watchos --force
+```
+
+Downloaded artifacts really are stamped with their tag now (beta.6 shipped the
+mechanism but it was never confirmed on a live download). A stamped install
+re-downloads on its own when `engine.version` moves, so no flag is needed from
+here on. Installs made at beta.6 or earlier carry no stamp, and an unstamped
+engine directory is deliberately treated as a hand-built local engine and never
+replaced — hence `--force`, once.
+
+- **`PlatformDispatcher.displays` is no longer empty on the watch** (engine
+  `v0.1.5`). The screen is published as a display at startup, so
+  `displays.first` — the ordinary way to ask about the screen when sizing a
+  layout — no longer throws `Bad state: No element` during the first build.
+  Apps that size themselves off `MediaQuery` were never affected; apps that
+  reach for the display list crashed before painting a frame.
+
+- **`flutter-watchos create .` works inside an existing project.** It took the
+  project name from the argument as written, so `.` became the project name.
+  It now resolves the path first and prefers the pubspec's `name`, which is
+  what makes adding watchOS to an app you are already in behave like stock
+  `flutter create .`.
+
+- **A companion watch app's bundle id is reconciled instead of flagged.**
+  watchOS refuses to install a watch app whose id is not prefixed by the
+  companion id it declares, so a warning left the project unable to run at all.
+  The iOS app id is the source of truth and the existing suffix is kept; the
+  HostApp container's own id is untouched.
+
+- **The plugin audit warns about the `Platform.isIOS` trap.** `Platform.isIOS`
+  is `true` on watchOS by design — it is what gives you Cupertino styling, the
+  SF font and iOS page transitions — so an app that already gates its iOS-only
+  plugins correctly still calls every one of them on the watch. The audit now
+  says so at the point you are reading it, and [Plugins](doc/plugins.md) shows
+  the guard that works.
+
+- **Six compatibility-database entries corrected** for `flutter-watchos plugin
+  port`. NetworkExtension hotspot APIs (watchOS 7+) and CallKit (watchOS 9+)
+  are available and were wrongly reported as unsupported; LocalAuthentication
+  dates from watchOS 3.0, not 9.0; a Wi-Fi-name feature can move to
+  `NEHotspotNetwork.fetchCurrent` rather than being dropped; and the WebKit and
+  platform-view notes now explain exactly why a webview is out of reach.
+
+- **`package:flutter_watchos` is Web-safe.** It imported `dart:io`
+  unconditionally, so following its own advice — guard with
+  `FlutterWatchosPlatform` instead of `Platform.isIOS` — broke the app's Web
+  build. The check now resolves through a conditional import and reports
+  `false` everywhere on Web.
+
 ## 0.1.0-beta.6 (closed beta)
 
 Ships new engine artifacts (`v0.1.4`). **Upgrading from an earlier beta? You

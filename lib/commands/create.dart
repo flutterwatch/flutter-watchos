@@ -52,8 +52,13 @@ class WatchosCreateCommand extends CreateCommand {
     // (code 2) when no output directory is given — or more than one — instead
     // of crashing on `rest.first`.
     validateOutputDirectoryArg();
-    final String projectDirPath = argResults!.rest.first;
-    final String name = stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
+    // Use CreateBase's getters rather than deriving these from `rest.first`.
+    // `projectDirPath` normalizes to an absolute path (a bare `.` would
+    // otherwise make `basename` return "."), and `projectName` prefers the
+    // pubspec's `name` — which is what makes `create .` work inside an
+    // existing project — then validates it as a Dart package name.
+    final String projectDirPath = super.projectDirPath;
+    final String name = projectName;
     final String templateType = stringArg('template') ?? 'app';
 
     // Reject plugin templates before upstream `flutter create` runs, so a
