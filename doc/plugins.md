@@ -39,6 +39,31 @@ dependencies:
   native code for other platforms but no `watchos:` implementation.
 - Those plugins compile fine — their native code just isn't bundled — and
   throw `MissingPluginException` at runtime on the watch.
+- **`Platform.isIOS` will not save you.** It is `true` on watchOS, and
+  deliberately so — it is what makes Flutter pick Cupertino styling, the SF
+  font and iOS page transitions. The practical consequence is that a
+  cross-platform app which *already gates its iOS-only plugins correctly*
+  still calls every one of them on the watch:
+
+  ```dart
+  // Looks right, runs on the watch, throws MissingPluginException:
+  final bool supported = Platform.isIOS;          // true on watchOS
+  final bool supported = defaultTargetPlatform    // TargetPlatform.iOS
+      == TargetPlatform.iOS;                      // also true
+
+  // Correct:
+  final bool supported = FlutterWatchosPlatform.isIos;
+  ```
+
+  `FlutterWatchosPlatform.isIos` is exactly `Platform.isIOS && !isWatch`, but
+  written this way the app never imports `dart:io` for the check — so the same
+  guard also compiles and runs in a Web build of the app, where all three
+  `FlutterWatchosPlatform` getters are `false`.
+
+  This is the most common way an app that "should" be safe still breaks on
+  the watch — and because plugin calls are usually `await`ed inside
+  bootstrap, the failure often surfaces as an unhandled async exception
+  during startup rather than at the call site.
 - **FFI packages behave the same way, just with a different error.** A
   package that does `DynamicLibrary.open(...)` or process-symbol lookups
   never breaks the *build* — its native library simply isn't bundled into

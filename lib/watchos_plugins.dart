@@ -435,9 +435,21 @@ List<String> auditPluginsWithoutWatchosSupport({
       'succeed, but calling them on the watch fails at runtime '
       '(MissingPluginException, or an FFI "symbol not found" error) unless '
       'the calls are guarded with FlutterWatchosPlatform.isWatch:';
+  // The isIOS trap is the single most common way these calls slip through, so
+  // it is spelled out here rather than left to the docs: a cross-platform app
+  // that already gates its iOS-only plugins correctly for iOS/Android will
+  // still call every one of them on the watch.
+  const isIosNote =
+      'NOTE: Platform.isIOS is true on watchOS (deliberately — it is what '
+      'gives you Cupertino styling, the SF font and iOS page transitions), so '
+      'an existing `if (Platform.isIOS)` or `defaultTargetPlatform == '
+      'TargetPlatform.iOS` guard will NOT keep these off the watch. Use '
+      'FlutterWatchosPlatform.isWatch (or Platform.isWatchOS) to exclude them, '
+      'e.g. `isIOS && !isWatch`.';
   return <String>[
     header,
     ...unsupported,
+    isIosNote,
     'See doc/plugins.md in the flutter-watchos repo for details.',
   ];
 }
