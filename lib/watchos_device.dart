@@ -426,6 +426,11 @@ class WatchosDevice extends Device {
   /// Mac half of the VM Service relay for a profile run on a physical watch.
   WatchosVmRelay? _vmRelay;
 
+  /// The Mac address the watch was told to dial. Worth naming when the bridge
+  /// never checks in: on a multi-homed Mac the usual cause is that this is the
+  /// wrong one of several, which is invisible otherwise.
+  String? _relayAdvertisedHost;
+
   /// Port the VM Service is pinned to on the watch for this run.
   int _deviceVmServicePort = 0;
 
@@ -925,7 +930,12 @@ class WatchosDevice extends Device {
         'The app did not connect back to the DevTools relay within 45s, so '
         'DevTools will be unavailable. $cause The watch reaches the Mac '
         'through its paired iPhone — check the iPhone is nearby, unlocked, and '
-        'on the same network as this Mac.',
+        'on the same network as this Mac.'
+        '${_relayAdvertisedHost == null ? '' : ' The watch was told to dial '
+              '$_relayAdvertisedHost; if the iPhone cannot reach that address '
+              '(a Mac on several networks at once has more than one, and only '
+              'some are reachable), set FLUTTER_WATCHOS_RELAY_HOST to the '
+              'right one.'}',
       );
       return LaunchResult.succeeded();
     }
@@ -1553,11 +1563,14 @@ class WatchosDevice extends Device {
   /// DevTools rather than failing outright.
   Future<Map<String, String>> _startVmRelay() async {
     try {
-      final String? macAddress = await resolveMacLanAddress();
+      final String? macAddress = await resolveMacLanAddress(
+        override: globals.platform.environment['FLUTTER_WATCHOS_RELAY_HOST'],
+      );
       if (macAddress == null) {
         logger.printTrace('No routable Mac address; skipping the VM Service relay.');
         return const <String, String>{};
       }
+      _relayAdvertisedHost = macAddress;
       _deviceVmServicePort = pickDeviceVmServicePort();
       final WatchosVmRelay relay = await WatchosVmRelay.start(logTrace: logger.printTrace);
       _vmRelay = relay;
