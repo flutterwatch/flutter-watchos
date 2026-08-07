@@ -837,18 +837,46 @@ class WatchosVmRelay {
   }
 }
 
+/// The four octets of a dotted-quad IPv4 address, or null if [address] is not
+/// one.
+List<int>? _parseIPv4(String address) {
+  final List<String> parts = address.split('.');
+  if (parts.length != 4) {
+    return null;
+  }
+  final octets = <int>[];
+  for (final part in parts) {
+    final int? octet = int.tryParse(part);
+    if (octet == null || octet < 0 || octet > 255) {
+      return null;
+    }
+    octets.add(octet);
+  }
+  return octets;
+}
+
 /// Whether [address] is in one of the RFC 1918 private IPv4 ranges.
 bool _isPrivateIPv4(String address) {
-  final List<int> parts = address
-      .split('.')
-      .map((String part) => int.tryParse(part) ?? -1)
-      .toList(growable: false);
-  if (parts.length != 4 || parts.any((int p) => p < 0)) {
+  final List<int>? octets = _parseIPv4(address);
+  if (octets == null) {
     return false;
   }
-  return parts[0] == 10 ||
-      (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] == 192 && parts[1] == 168);
+  return octets[0] == 10 ||
+      (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] == 192 && octets[1] == 168);
+}
+
+/// Whether [address] is on Apple's Personal Hotspot subnet, `172.20.10.0/28`,
+/// which puts the iPhone itself on `.1` and tethered clients on `.2`–`.14`.
+///
+/// An address here means this Mac is tethered to an iPhone, over USB or Wi-Fi.
+bool _isIPhoneHotspotIPv4(String address) {
+  final List<int>? octets = _parseIPv4(address);
+  return octets != null &&
+      octets[0] == 172 &&
+      octets[1] == 20 &&
+      octets[2] == 10 &&
+      octets[3] < 16;
 }
 
 /// Picks the Mac address the watch should dial.
@@ -857,21 +885,37 @@ bool _isPrivateIPv4(String address) {
 /// loopback is useless here, and so is anything that only routes somewhere
 /// else. In preference order:
 ///
-/// 1. A `bridge*` interface — that is what Internet Sharing hands the watch's
+/// 1. [override], when set — the last word for a network we cannot infer.
+/// 2. A `bridge*` interface — that is what Internet Sharing hands the watch's
 ///    network, so if one exists it is certainly the right side of the Mac.
-/// 2. A private (RFC 1918) address, which is what an ordinary Wi-Fi LAN looks
-///    like. Preferring it keeps a VPN tunnel's address from winning purely on
-///    `NetworkInterface.list` ordering — the watch cannot route to that, and
-///    the failure looks like the app never starting.
-/// 3. Anything else routable, as a last resort.
+/// 3. An iPhone Personal Hotspot address (`172.20.10.0/28`). The watch's
+///    traffic arrives *from* the paired iPhone, so that phone is the one hop
+///    that has to reach us — and while tethered it is on this subnet with us.
+///    That outranks an ordinary LAN address on purpose: a Mac that is tethered
+///    *and* on wired Ethernet has two private addresses, and the phone can
+///    only route to one of them.
+/// 4. Any other private (RFC 1918) address, which is what an ordinary Wi-Fi
+///    LAN looks like. Preferring it keeps a VPN tunnel's address from winning
+///    purely on `NetworkInterface.list` ordering — the watch cannot route to
+///    that, and the failure looks like the app never starting.
+/// 5. Anything else routable, as a last resort.
 ///
 /// Loopback and link-local are skipped outright.
+///
+/// Ordering is all this can do: there is no way to ask which of our addresses
+/// the paired iPhone can see. On a multi-homed Mac whose layout defeats the
+/// order above, [override] is the escape hatch.
 Future<String?> resolveMacLanAddress({
   Future<List<NetworkInterface>> Function()? listInterfaces,
+  String? override,
 }) async {
+  if (override != null && override.isNotEmpty) {
+    return override;
+  }
   final List<NetworkInterface> interfaces =
       await (listInterfaces?.call() ??
           NetworkInterface.list(type: InternetAddressType.IPv4));
+  String? tethered;
   String? private;
   String? routable;
   for (final interface in interfaces) {
@@ -882,12 +926,14 @@ Future<String?> resolveMacLanAddress({
       if (interface.name.startsWith('bridge')) {
         return address.address;
       }
-      if (_isPrivateIPv4(address.address)) {
+      if (_isIPhoneHotspotIPv4(address.address)) {
+        tethered ??= address.address;
+      } else if (_isPrivateIPv4(address.address)) {
         private ??= address.address;
       } else {
         routable ??= address.address;
       }
     }
   }
-  return private ?? routable;
+  return tethered ?? private ?? routable;
 }

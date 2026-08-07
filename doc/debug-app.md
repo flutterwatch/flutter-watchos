@@ -34,12 +34,29 @@ flutter-watchos run --profile -d <watch-id>
 The DevTools link is printed at startup. No flag, no setup — profile runs on a
 watch bring up the connection automatically.
 
-**Both devices must be on the same network as this Mac.** A watch has no
-network path of its own; it reaches your Mac through its paired iPhone. So the
-iPhone needs to be nearby, unlocked, and on the same Wi-Fi as the Mac — a Mac
-on ethernet or USB tethering while the phone is on Wi-Fi will not work. If the
-app cannot reach back, `run` says so, and distinguishes "the VM Service never
-started" from "it started but the app could not reach this Mac".
+**The paired iPhone must be able to reach this Mac.** A watch has no network
+path of its own; its traffic arrives at your Mac *from* the phone, so the phone
+is the one hop that has to find you. It needs to be nearby and unlocked, and on
+a network that routes here. Two layouts work:
+
+- **Same Wi-Fi** — the simple case, and the one to reach for first.
+- **Personal Hotspot over USB** — plug the phone in and turn the hotspot on.
+  The Mac lands on the phone's `172.20.10.0/28` subnet, which the phone can
+  obviously reach, so no Wi-Fi is needed at all. `run` prefers that address
+  over any other, precisely because a Mac that is tethered *and* on wired
+  ethernet has several addresses and the phone can only route to one.
+
+A Mac on wired ethernet alone will not work, however close the phone is: it has
+no route into that subnet.
+
+If the app cannot reach back, `run` says so, distinguishes "the VM Service
+never started" from "it started but the app could not reach this Mac", and
+names the address the watch was told to dial. When that address is the wrong
+one of several — a layout the ordering above cannot infer — override it:
+
+```sh
+FLUTTER_WATCHOS_RELAY_HOST=192.168.1.24 flutter-watchos run --profile -d <watch-id>
+```
 
 Because the watch dials your Mac by LAN address, the relay has to accept
 connections from the network rather than loopback. Each run mints a secret
