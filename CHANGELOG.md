@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.1.0-beta.8 (closed beta)
+
+Ships new engine artifacts (`v0.1.6`). Networking on a physical watch, and
+live DevTools, both work for the first time.
+
+- **`HttpClient` works on a physical watch** (engine `v0.1.6`). watchOS denies
+  third-party apps the BSD socket path outright — `getaddrinfo` fails with
+  `EAI_NONAME` and even a bare-IP connect returns "No route to host" — so
+  every Dart HTTP client was dead on device: `NetworkImage`, `package:http`,
+  `dio`. `dart:ui` now installs a `URLSession`-backed `HttpClient` before your
+  `main()` runs. **Apps need no import and no call**, and an app that installs
+  its own `HttpOverrides` still wins. None of this reproduces on the Simulator,
+  which is why it went unnoticed for so long: remote images simply never
+  appeared on a wrist.
+
+- **Responses stream.** The body arrives in chunks as it lands rather than in
+  one event at the end, so `close()` resolves on the response headers and
+  progress callbacks (`onBytesReceived`) fire. `followRedirects: false` is
+  honoured, `redirects` is populated, `maxRedirects` raises a
+  `RedirectException`, and `HttpClientResponse.redirect()` works.
+
+- **Launch flags reach the engine again.** `--vm-service-port` and
+  `--disable-service-auth-codes` were silently ignored, so the VM Service came
+  up on a random port with an auth code and the DevTools bridge could never
+  find it. **Live DevTools on a physical watch now connects.**
+
+- **`--watchos-disable-semantics` works again.** The switch had become inert,
+  so any measurement taken with it was measuring nothing.
+
+- **`run --profile` picks a reachable address for the DevTools relay.** The
+  watch reaches your Mac through the paired iPhone, so the Mac address it
+  dials has to be one that phone can see. A tethered iPhone's hotspot subnet
+  now outranks other addresses, and `FLUTTER_WATCHOS_RELAY_HOST` overrides the
+  choice on a Mac with several networks. The timeout message names the address
+  it advertised, so a wrong pick reads as a wrong pick.
+
+Known limits of the HTTP client, all inherent: `HttpOverrides` is per-isolate,
+so a spawned isolate still gets the socket client; TLS, proxy and credential
+callbacks are ignored because URLSession owns them; and there is no caching —
+`dart:io` does not cache on any platform, and adding it here would make
+watchOS the only one serving stale bodies. Use `cached_network_image` if you
+want a cache.
+
 ## 0.1.0-beta.7 (closed beta)
 
 Ships new engine artifacts (`v0.1.5`). **Upgrading from an earlier beta? Run

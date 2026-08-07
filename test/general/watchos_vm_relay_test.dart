@@ -159,6 +159,78 @@ void main() {
       );
     });
 
+    testWithoutContext('prefers an iPhone tether over any other LAN', () async {
+      // The watch's traffic arrives from the paired iPhone, so the phone is
+      // the hop that has to reach us. Tethered, it shares the 172.20.10.0/28
+      // hotspot subnet with this Mac; the wired LAN it has never heard of.
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en9', <String>['10.107.71.31']),
+          _FakeInterface('en8', <String>['172.20.10.2']),
+        ],
+      );
+      expect(address, '172.20.10.2');
+    });
+
+    testWithoutContext('tether preference does not depend on interface order', () async {
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en8', <String>['172.20.10.2']),
+          _FakeInterface('en9', <String>['10.107.71.31']),
+        ],
+      );
+      expect(address, '172.20.10.2');
+    });
+
+    testWithoutContext('a bridge still outranks a tether', () async {
+      // Internet Sharing means the watch's network is one this Mac hands out,
+      // which is more certain than a route through the phone.
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en8', <String>['172.20.10.2']),
+          _FakeInterface('bridge100', <String>['192.168.2.1']),
+        ],
+      );
+      expect(address, '192.168.2.1');
+    });
+
+    testWithoutContext('addresses just outside the hotspot block are ordinary', () async {
+      // 172.20.10.0/28 stops at .15; .16 is somebody's ordinary LAN and must
+      // not be mistaken for a tether.
+      final String? address = await resolveMacLanAddress(
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en9', <String>['172.20.10.16']),
+          _FakeInterface('en8', <String>['172.20.10.14']),
+        ],
+      );
+      expect(address, '172.20.10.14');
+    });
+
+    testWithoutContext('an override wins over everything, including a bridge', () async {
+      // The escape hatch for a layout the ordering cannot infer: there is no
+      // way to ask which of our addresses the paired iPhone can actually see.
+      final String? address = await resolveMacLanAddress(
+        override: '10.107.71.31',
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('bridge100', <String>['192.168.2.1']),
+          _FakeInterface('en8', <String>['172.20.10.2']),
+        ],
+      );
+      expect(address, '10.107.71.31');
+    });
+
+    testWithoutContext('an empty override is ignored rather than obeyed', () async {
+      // An unset environment variable reads as '' in some shells; that must
+      // not blank out the relay address.
+      final String? address = await resolveMacLanAddress(
+        override: '',
+        listInterfaces: () async => <NetworkInterface>[
+          _FakeInterface('en0', <String>['192.168.1.24']),
+        ],
+      );
+      expect(address, '192.168.1.24');
+    });
+
     testWithoutContext('still returns a public address when that is all there is', () async {
       final String? address = await resolveMacLanAddress(
         listInterfaces: () async => <NetworkInterface>[
