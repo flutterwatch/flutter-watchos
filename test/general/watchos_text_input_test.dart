@@ -30,6 +30,7 @@ void main() {
         'FlutterWatchOSFrameCallback',
         'FlutterWatchOSHostRun',
         'FlutterWatchOSHostTouch',
+        'FlutterWatchOSHostSetSafeAreaInsets',
         'FlutterWatchOSCrownTickCallback',
         'FlutterWatchOSCrownSetTickCallback',
         'FlutterWatchOSCrownDelta',

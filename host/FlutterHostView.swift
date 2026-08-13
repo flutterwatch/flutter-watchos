@@ -221,6 +221,32 @@ public struct FlutterHostView: View {
             }
         }
         .ignoresSafeArea()
+        // Safe area. The Flutter surface is deliberately full-bleed (above),
+        // but Dart still has to KNOW which edges the system occupies — the
+        // clock at the top and the display's own curvature all round — or
+        // `SafeArea` insets by nothing and content sits under the clock.
+        //
+        // This overlay exists only to measure. It must stay OUTSIDE the
+        // `.ignoresSafeArea()` above: a GeometryReader that ignores the safe
+        // area reports all zeros, and one inside a ScrollView reports zero
+        // top/bottom (the scroll view turns the safe area into a content
+        // inset). Both were measured on the Simulator — either mistake ships
+        // the exact bug this fixes, silently.
+        //
+        // `Color.clear` in an overlay is still hit-testable, hence
+        // `allowsHitTesting(false)`; and an overlay never affects the layout
+        // of the view it covers, so the frame image and the gesture
+        // coordinate space are untouched.
+        .overlay {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { runner.reportSafeArea(proxy.safeAreaInsets) }
+                    .onChange(of: proxy.safeAreaInsets) { _, insets in
+                        runner.reportSafeArea(insets)
+                    }
+            }
+            .allowsHitTesting(false)
+        }
         // System time visibility. Default: VISIBLE (the watchOS HIG
         // expectation). Apps opt into hiding it from Dart via
         // `WatchStatusBar.hidden = true` (package:flutter_watchos) — e.g. for

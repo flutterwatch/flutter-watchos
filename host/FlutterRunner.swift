@@ -366,6 +366,26 @@ final class FlutterRunner: ObservableObject {
         Self.setAlwaysOnFn?(active)
     }
 
+    /// Forward the watch's safe area to the engine, which turns it into
+    /// `MediaQuery.padding` — the value `SafeArea` insets by. The engine
+    /// stashes it if this lands before `start()`, so ordering does not matter.
+    ///
+    /// Divided by the content scale for the same reason touches are: the
+    /// engine runs in a logical space of `points / contentScale` and
+    /// multiplies back by `pixelRatio` (screenScale × contentScale), so an
+    /// undivided inset would be scaled twice.
+    ///
+    /// `leading`/`trailing` map to left/right, which is exact under LTR. Every
+    /// watch measured reports the two sides equal (2pt), so RTL sees the same
+    /// rectangle either way.
+    func reportSafeArea(_ insets: EdgeInsets) {
+        let scale = WatchContentScale.value
+        FlutterWatchOSHostSetSafeAreaInsets(insets.top / scale,
+                                            insets.trailing / scale,
+                                            insets.bottom / scale,
+                                            insets.leading / scale)
+    }
+
     /// Main thread: publish the frame and mirror the plugin's status-bar
     /// request alongside it (a cheap flag read; publishes only on change).
     private func publish(_ image: CGImage) {
