@@ -74,6 +74,9 @@ the state). To ship:
    the iOS build. The HostApp-container steps in the rest of this guide
    don't apply.
 
+Structuring the shared Dart and wiring up phone↔watch communication are
+covered in [companion-apps.md](companion-apps.md).
+
 Without an iOS app the project is **standalone** (watch-only), which is
 what the rest of this guide covers.
 

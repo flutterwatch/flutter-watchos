@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.1.0-beta.9 (closed beta)
+
+Ships new engine artifacts. `SafeArea` finally works on the watch, and there
+is a guide for building an iPhone + Apple Watch app from one codebase.
+
+- **`SafeArea` insets by the real safe area.** `MediaQuery.padding` was pinned
+  at zero on watchOS, so `SafeArea` inset nothing and content drew under the
+  system clock. The embedder API only carried `physical_view_inset_*`, and
+  insets are *subtracted* from padding — they can never produce one, so the
+  padding had to be added to the API rather than derived. The runner measures
+  its own safe area and reports it, which is what makes this shape-driven
+  rather than size-driven: a 45 mm round-corner display and a 45 mm flatter
+  one do not inset the same. **Needs the engine artifacts in this release** —
+  the host module calls a symbol older engines do not export.
+- **A guide to companion apps** ([doc/companion-apps.md](doc/companion-apps.md)).
+  Companion mode has worked since the `ios/`-directory shape decided it, but
+  the docs only covered submission. This covers the part before that: laying
+  out Dart two very different screens share, why two entrypoints beat one
+  `main.dart` branching at runtime, sharing a design system across devices
+  that are never seen side by side, and how the two apps actually talk —
+  including that `reachable` is asymmetric, which catches people out when they
+  try to test the queued transport.
+- **The generated watchOS runner always names itself in valid Swift.** The
+  runner's `App.swift` declares `struct <ProjectName>App: App`, and the
+  project name went into it as written — a name that is not already a Dart
+  package name emitted Swift that does not parse (`struct .App: App`,
+  "Expected identifier in struct declaration"), and the same name went on to
+  the product name and bundle display name in the Xcode project. `create .`
+  resolved its own name in beta.7; the runner template now derives the name
+  defensively for every caller instead, so `flutter-watchos plugin port`
+  (which names an example runner after the copied package) and
+  `--skip-name-checks` cannot reach it with a bad one either. Non-identifier
+  characters are folded into upper camel case (`my-app` → `MyAppApp`), a
+  leading digit is escaped (`3d_demo` → `_3dDemoApp`), and a name with
+  nothing usable left in it falls back to the project directory's own name.
+  Ordinary package names render exactly as before.
+
 ## 0.1.0-beta.8 (closed beta)
 
 Ships new engine artifacts (`v0.1.6`). Networking on a physical watch, and
