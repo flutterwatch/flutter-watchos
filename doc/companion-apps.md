@@ -116,6 +116,17 @@ then every send fails with "Companion app is not installed". A watch app
 side-loaded onto a simulator that has never had the phone app installed will not
 connect at all.
 
-Reachability on the Simulator lags reality by a few seconds, so a `reachable`
-flag can stay true briefly after the counterpart app is killed. Confirm
-timing-sensitive behaviour on hardware.
+**`reachable` is asymmetric**, which catches people out when they try to test
+the queue. The phone reports the watch reachable only while the watch app is
+actually running. The watch reports the phone reachable whether or not the
+phone app is running, because WatchConnectivity is entitled to launch the iOS
+app in the background to deliver a `sendMessage`. Two consequences:
+
+- Killing the phone app does not make the watch queue anything — it keeps
+  choosing the live tier. To exercise `transferUserInfo`, stop the *watch* app
+  and send from the phone.
+- A watch-side `sendMessage` can be accepted and still not reach a phone app
+  that is not running — on the Simulator, ours did not; the phone converged
+  from the snapshot on next launch instead. This is exactly what the debounced
+  snapshot is for, and it is why a send that returned successfully is not
+  evidence of delivery.
