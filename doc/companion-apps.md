@@ -125,8 +125,10 @@ app in the background to deliver a `sendMessage`. Two consequences:
 - Killing the phone app does not make the watch queue anything — it keeps
   choosing the live tier. To exercise `transferUserInfo`, stop the *watch* app
   and send from the phone.
-- A watch-side `sendMessage` can be accepted and still not reach a phone app
-  that is not running — on the Simulator, ours did not; the phone converged
-  from the snapshot on next launch instead. This is exactly what the debounced
-  snapshot is for, and it is why a send that returned successfully is not
-  evidence of delivery.
+- A `sendMessage` that returns successfully is not evidence of delivery, which
+  is the case the debounced snapshot exists to repair. Treat the Simulator's
+  version of this with suspicion, though: a watch-side send to a stopped phone
+  app did not arrive here at all, and the phone only caught up from the
+  snapshot on its next launch. On real hardware the background launch that
+  keeps `reachable` true is expected to deliver it, so measure this on a pair
+  before designing around it.
