@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-beta.9 (closed beta)
+
+- **The generated watchOS runner always names itself in valid Swift.** The
+  runner's `App.swift` declares `struct <ProjectName>App: App`, and the
+  project name went into it as written — a name that is not already a Dart
+  package name emitted Swift that does not parse (`struct .App: App`,
+  "Expected identifier in struct declaration"), and the same name went on to
+  the product name and bundle display name in the Xcode project. `create .`
+  resolved its own name in beta.7; the runner template now derives the name
+  defensively for every caller instead, so `flutter-watchos plugin port`
+  (which names an example runner after the copied package) and
+  `--skip-name-checks` cannot reach it with a bad one either. Non-identifier
+  characters are folded into upper camel case (`my-app` → `MyAppApp`), a
+  leading digit is escaped (`3d_demo` → `_3dDemoApp`), and a name with
+  nothing usable left in it falls back to the project directory's own name.
+  Ordinary package names render exactly as before.
+
 ## 0.1.0-beta.8 (closed beta)
 
 Ships new engine artifacts (`v0.1.6`). Networking on a physical watch, and
