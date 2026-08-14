@@ -33,6 +33,15 @@ bool FlutterWatchOSHostRun(const char* bundle_path,
 // Forward one touch sample in logical points. `ended` marks the final sample.
 void FlutterWatchOSHostTouch(double x_points, double y_points, bool ended);
 
+// Report the watch's safe area in logical points — SwiftUI's `safeAreaInsets`
+// verbatim. Reaches `MediaQuery.padding`, so it is what `SafeArea` insets by.
+// Must be measured outside `.ignoresSafeArea()` and outside a ScrollView;
+// both report zeros. Callable before or after Run.
+void FlutterWatchOSHostSetSafeAreaInsets(double top_points,
+                                         double right_points,
+                                         double bottom_points,
+                                         double left_points);
+
 // Register the detent-haptic callback (the engine cannot play WatchKit
 // haptics; the host does, in one line).
 void FlutterWatchOSCrownSetTickCallback(FlutterWatchOSCrownTickCallback callback,
