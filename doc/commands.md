@@ -143,6 +143,9 @@ where possible; watchOS-specific behaviour is called out per command.
   --release`), then archive the `ios/` project as usual — see
   [publish-app.md](publish-app.md).
 
+  For how to structure the shared Dart and how the two apps talk to each
+  other, see [companion-apps.md](companion-apps.md).
+
 - ### `login` / `logout`
 
   Connect this machine to your flutterwatch.dev account (required to
