@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.1.0-beta.10 (closed beta)
+
+Moves to Flutter 3.47.1 and gives the engine the display's own clock, which is
+the first change in a while that you can see rather than read about.
+
+- **The engine now runs on the display's clock.** watchOS has no
+  `CADisplayLink` — it is `API_UNAVAILABLE(watchos)` in the SDK — so the engine
+  had no way to know when the panel refreshes and fell back to a free-running
+  60 Hz timer whose phase was fixed at boot. That grid and the display's are
+  unrelated clocks, so finished frames were handed to the compositor at a
+  walking offset from the latch point. Measured on a Series 10: frame delivery
+  p99 of 21.4 ms against native's 17.2 ms, worst case two whole refresh
+  periods — while rasterizing needed 2.3 ms of a 16.67 ms budget. Judder with
+  13 ms of headroom, which no amount of faster rasterizing would have fixed.
+  The runner now drives the engine from `TimelineView(.animation)`, the one
+  display-synced schedule SwiftUI vends on this platform (300 consecutive
+  entries measured 16.665 ms p50 / 17.22 ms p99), and presents the finished
+  frame on the same tick. Both halves are needed: fixing only frame
+  *production* moved the app's own intervals (p99 22.2 ms → 19.1 ms) while what
+  reached the screen did not improve at all. In Always-On the schedule drops to
+  a low frequency by itself and the engine simply produces fewer frames.
+  **Needs the engine artifacts in this release** — the host module calls a
+  symbol older engines do not export.
+- **Packages that generate assets at build time now actually ship them.** The
+  watchOS pipeline skips upstream's native-asset targets, because
+  flutter_tools cannot build Dart *code* assets for this platform. Data assets
+  had been swept up in the same skip, even though they are a different thing
+  entirely — produced on the host by ordinary Dart, and what a package like
+  `flutter_scene` uses to compile its shader bundles. The result was silent:
+  such a package shipped whatever its generated directory happened to contain,
+  left over from a macOS or simulator build of the same tree, or nothing at
+  all. Neither failed the build; the app just rendered a black scene on the
+  device. Data-asset hooks now run as their own build step.
+- **`--watchos-log-to-file`.** A watch has no console to attach to, and
+  `print()` and engine logs both go to stderr, which on a device goes nowhere.
+  Launching with this flag redirects them into the app's own container, where
+  `devicectl device copy from` can pull them. Opt-in and truncated per run —
+  see [doc/debug-app.md](doc/debug-app.md).
+- **Flutter 3.47.1** (was 3.44.4). Also picks up an upstream change to how the
+  tool attaches LLDB for JIT debugging: it now shells out via `xcrun` obtained
+  from the Xcode project interpreter, so the device path falls back to the
+  Xcode route when that is unavailable rather than failing.
+
 ## 0.1.0-beta.9 (closed beta)
 
 Ships new engine artifacts. `SafeArea` finally works on the watch, and there

@@ -55,7 +55,7 @@ download automatically.
 ```
 $ flutter-watchos doctor
 Doctor summary (to see all details, run flutter-watchos doctor -v):
-[✓] Flutter (3.44.4, on macOS)
+[✓] Flutter (3.47.1, on macOS)
 [✓] Xcode - develop for iOS and watchOS
 [✓] Connected device (1 available)
 ```

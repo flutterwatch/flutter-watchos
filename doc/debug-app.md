@@ -153,6 +153,30 @@ flutter-watchos logs -d <device-id>
 For the Simulator you can also use `xcrun simctl spawn <udid> log stream`
 filtered on your bundle id; `print()`/`debugPrint()` output lands there.
 
+### Logs from a physical watch
+
+A watch has no console to attach to, and `print()` and engine logs both go to
+stderr, which on a device goes nowhere. Launch with `--watchos-log-to-file` and
+they are written into the app's own container instead:
+
+```sh
+xcrun devicectl device process launch --device <udid> --terminate-existing \
+    <bundle-id> --watchos-log-to-file
+```
+
+Then pull the file:
+
+```sh
+xcrun devicectl device copy from --device <udid> \
+    --domain-type appDataContainer --domain-identifier <bundle-id> \
+    --source Documents/engine.log --destination ./engine.log
+```
+
+The file is truncated at every launch, so it always describes the run you just
+made rather than an older one. It is strictly opt-in: without the flag nothing
+is written and nothing is redirected, which keeps crashes going to the system
+log where the crash reporter can see them.
+
 ## Physical-watch quirks
 
 Installs and launches go through `devicectl` to the **paired** watch, which
