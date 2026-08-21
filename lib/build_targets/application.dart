@@ -13,11 +13,15 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
+import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -219,7 +223,81 @@ class WatchosCopyFlutterBundle extends CopyFlutterBundle {
       manifest.parent.createSync(recursive: true);
       manifest.writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
     }
-    await super.build(environment);
+
+    final String? buildModeEnvironment = environment.defines[kBuildMode];
+    if (buildModeEnvironment == null) {
+      throw MissingDefineException(kBuildMode, name);
+    }
+    final buildMode = BuildMode.fromCliName(buildModeEnvironment);
+    environment.outputDir.createSync(recursive: true);
+
+    // Only debug ships the prebuilt runtimes and the kernel blob; AOT modes get
+    // an App.framework instead. Same rule as upstream.
+    if (buildMode == BuildMode.debug) {
+      final String vmSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.vmSnapshotData,
+        mode: BuildMode.debug,
+      );
+      final String isolateSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.isolateSnapshotData,
+        mode: BuildMode.debug,
+      );
+      environment.buildDir
+          .childFile('app.dill')
+          .copySync(environment.outputDir.childFile('kernel_blob.bin').path);
+      environment.fileSystem
+          .file(vmSnapshotData)
+          .copySync(environment.outputDir.childFile('vm_snapshot_data').path);
+      environment.fileSystem
+          .file(isolateSnapshotData)
+          .copySync(
+            environment.outputDir.childFile('isolate_snapshot_data').path,
+          );
+    }
+
+    final DartHooksResult dartHookResult = await LinkHooks.loadHookResult(
+      environment,
+    );
+    final Depfile assetDepfile = await copyAssets(
+      environment,
+      environment.outputDir,
+      dartHookResult: dartHookResult,
+      // The one reason this method is not `super.build(environment)`.
+      //
+      // `copyAssets` takes a single target platform and passes it on to the
+      // shader compiler, which turns it into impellerc backend flags. Upstream
+      // hardcodes `TargetPlatform.android` here, whose bucket is
+      // SkSL + GLES + GLES3 + Vulkan — three backends a watch cannot use and
+      // not the one it can. A watchOS app built that way loses every
+      // `flutter.shaders` entry the moment it runs on Impeller: the blob holds
+      // no Metal stage, `FragmentProgram.fromAsset` rejects it, and because
+      // apps typically guard that load with a null fallback, the effect simply
+      // does not appear. Verified on Apple Watch Series 11 (46mm) with
+      // demo/crown_breaker: the same bundle draws its neon ring on the software
+      // renderer and draws nothing on Metal.
+      //
+      // `darwin` is the bucket that matches what this toolchain ships:
+      // SkSL + Metal, both renderers covered by one bundle. It has to be both,
+      // because the renderer is chosen at runtime (FLUTTER_WATCHOS_RENDERER,
+      // --watchos-renderer, or FLTEnableImpeller in the app's Info.plist), not
+      // at build time. `ios` would give Metal alone and break the software
+      // path, which is still the default.
+      //
+      // The platform also reaches per-asset `platforms:` filtering, where it is
+      // compared against `osName` — 'macos' under darwin, 'android' before.
+      // Neither names a watch, so no watchOS app can rely on either; only an
+      // app that declares `platforms:` on an asset can tell the difference.
+      targetPlatform: TargetPlatform.darwin,
+      buildMode: buildMode,
+      flavor: environment.defines[kFlavor],
+      additionalContent: <String, DevFSContent>{
+        'NativeAssetsManifest.json': DevFSFileContent(manifest),
+      },
+    );
+    environment.depFileService.writeToFile(
+      assetDepfile,
+      environment.buildDir.childFile('flutter_assets.d'),
+    );
   }
 }
 
