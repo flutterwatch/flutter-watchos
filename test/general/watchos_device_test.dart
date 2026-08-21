@@ -14,6 +14,62 @@ import '../src/common.dart';
 void main() {
   // These arguments reach the Dart VM for real as of engine v0.1.2, so a
   // release app must not be launched asking for a VM Service at all.
+  // The app runs on the watch and inherits nothing from this Mac, so a switch
+  // typed on the command line only reaches the engine if the launcher carries
+  // it. Without this a benchmark cannot pick a renderer per arm at all —
+  // --dart-entrypoint-args is desktop-only and goes to Dart's main(), not the
+  // embedder.
+  group('engine switch forwarding', () {
+    testWithoutContext('forwards nothing when nothing is set', () {
+      expect(engineSwitchesFromEnvironment(const <String, String>{}), isEmpty);
+      expect(engineSwitchArguments(const <String, String>{}), isEmpty);
+    });
+
+    testWithoutContext('carries the renderer, vsync and semantics switches', () {
+      expect(
+        engineSwitchesFromEnvironment(const <String, String>{
+          'FLUTTER_WATCHOS_RENDERER': 'metal',
+          'FLUTTER_WATCHOS_VSYNC': 'fallback',
+          'FLUTTER_WATCHOS_SEMANTICS': '0',
+        }),
+        <String, String>{
+          'FLUTTER_WATCHOS_RENDERER': 'metal',
+          'FLUTTER_WATCHOS_VSYNC': 'fallback',
+          'FLUTTER_WATCHOS_SEMANTICS': '0',
+        },
+      );
+    });
+
+    testWithoutContext('ignores unrelated and empty variables', () {
+      expect(
+        engineSwitchesFromEnvironment(const <String, String>{
+          'FLUTTER_WATCHOS_RENDERER': '',
+          'PATH': '/usr/bin',
+          'FLUTTER_WATCHOS_ENGINE_ARTIFACTS': '/somewhere',
+        }),
+        isEmpty,
+      );
+    });
+
+    // The host scans argv for this one and never reads the environment, so it
+    // cannot ride along with the others.
+    testWithoutContext('log-to-file becomes a launch argument, not a variable', () {
+      expect(
+        engineSwitchArguments(const <String, String>{'FLUTTER_WATCHOS_LOG_TO_FILE': '1'}),
+        <String>['--watchos-log-to-file'],
+      );
+      expect(
+        engineSwitchesFromEnvironment(const <String, String>{'FLUTTER_WATCHOS_LOG_TO_FILE': '1'}),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('log-to-file is off for 0 and for empty', () {
+      expect(engineSwitchArguments(const <String, String>{'FLUTTER_WATCHOS_LOG_TO_FILE': '0'}), isEmpty);
+      expect(engineSwitchArguments(const <String, String>{'FLUTTER_WATCHOS_LOG_TO_FILE': ''}), isEmpty);
+    });
+  });
+
   group('appLaunchArguments', () {
     testWithoutContext('release asks for no VM Service', () {
       expect(

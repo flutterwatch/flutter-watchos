@@ -32,6 +32,62 @@ import 'watchos_builder.dart';
 import 'watchos_dds.dart';
 import 'watchos_vm_relay.dart';
 
+/// Engine switches the host reads at startup, and the environment variable
+/// each is spelled as on the command line that launches `run`.
+///
+/// The engine reads most of these from its own environment already, but the
+/// app runs on the watch and inherits nothing from this Mac, so they have to
+/// be carried across deliberately. Forwarding them here is what makes
+///
+///   FLUTTER_WATCHOS_RENDERER=metal flutter-watchos run --profile -d `<id>`
+///
+/// mean the same thing on a device as `SIMCTL_CHILD_…` does on the simulator —
+/// and it is what lets a benchmark script select a renderer per arm, which it
+/// otherwise could not do at all: `--dart-entrypoint-args` is desktop-only and
+/// goes to Dart's `main`, not to the embedder.
+///
+/// Values are passed through untouched; the engine is the only validator.
+@visibleForTesting
+const engineSwitchEnvironment = <String>[
+  // Renderer selection: "metal", or anything else for software.
+  'FLUTTER_WATCHOS_RENDERER',
+  // "fallback" restores the engine's free-running 60 Hz timer instead of the
+  // display clock. The A/B switch behind scripts/scroll_vsync_ab.sh.
+  'FLUTTER_WATCHOS_VSYNC',
+  // "0" turns the semantics bridge off.
+  'FLUTTER_WATCHOS_SEMANTICS',
+];
+
+/// The subset of [engineSwitchEnvironment] this process was given, ready to
+/// hand to a launcher. Empty when none were set, which is the normal case.
+Map<String, String> engineSwitchesFromEnvironment([Map<String, String>? source]) {
+  final Map<String, String> env = source ?? globals.platform.environment;
+  return <String, String>{
+    for (final String name in engineSwitchEnvironment)
+      if (env[name] case final String value when value.isNotEmpty) name: value,
+  };
+}
+
+/// One engine switch has no environment spelling — the host only scans argv
+/// for it — so it is carried as a launch argument instead.
+@visibleForTesting
+List<String> engineSwitchArguments([Map<String, String>? source]) {
+  final Map<String, String> env = source ?? globals.platform.environment;
+  final String? logToFile = env['FLUTTER_WATCHOS_LOG_TO_FILE'];
+  return <String>[
+    if (logToFile != null && logToFile.isNotEmpty && logToFile != '0')
+      '--watchos-log-to-file',
+  ];
+}
+
+/// [relaying] picks the bind address. With the relay the only consumer is the
+/// in-process bridge, so IPv4 loopback is both tighter and avoids a real trap:
+/// `::0` leaves the service on `[::]`, which a bridge dialling `127.0.0.1`
+/// cannot reach, and the symptom is an endless "Could not connect to the
+/// server" against a service that is plainly listening. Without the relay the
+/// dual-stack wildcard is right — nothing off-device can reach it either way
+/// — but a wirelessly-paired watch is often reachable only over IPv6.
+
 /// Arguments forwarded to the Flutter app's `main()` on a device launch.
 ///
 /// These reach the Dart VM as of engine `v0.1.2`; against older artifacts they
@@ -42,13 +98,6 @@ import 'watchos_vm_relay.dart';
 /// is not something to hand a shipping build on the assumption that nothing is
 /// listening.
 ///
-/// [relaying] picks the bind address. With the relay the only consumer is the
-/// in-process bridge, so IPv4 loopback is both tighter and avoids a real trap:
-/// `::0` leaves the service on `[::]`, which a bridge dialling `127.0.0.1`
-/// cannot reach, and the symptom is an endless "Could not connect to the
-/// server" against a service that is plainly listening. Without the relay the
-/// dual-stack wildcard is right — nothing off-device can reach it either way
-/// — but a wirelessly-paired watch is often reachable only over IPv6.
 @visibleForTesting
 List<String> appLaunchArguments({
   required bool enableVmService,
@@ -707,13 +756,23 @@ class WatchosDevice extends Device {
       },
     );
 
-    final RunResult launchResult = await globals.processUtils.run(<String>[
-      'xcrun',
-      'simctl',
-      'launch',
-      id,
-      bundleId,
-    ]);
+    final RunResult launchResult = await globals.processUtils.run(
+      <String>[
+        'xcrun',
+        'simctl',
+        'launch',
+        id,
+        bundleId,
+        ...engineSwitchArguments(),
+      ],
+      // simctl gives the launched app any variable it sees prefixed
+      // SIMCTL_CHILD_, which is how the same switch reaches the simulator that
+      // devicectl's --environment-variables carries to a watch.
+      environment: <String, String>{
+        for (final MapEntry<String, String> e in engineSwitchesFromEnvironment().entries)
+          'SIMCTL_CHILD_${e.key}': e.value,
+      },
+    );
     if (launchResult.exitCode != 0) {
       logger.printError('simctl launch failed: ${launchResult.stderr}');
       return LaunchResult.failed();
@@ -798,8 +857,9 @@ class WatchosDevice extends Device {
         // Pin the port so the in-app bridge knows where the VM Service is
         // without having to discover it.
         if (relayEnvironment.isNotEmpty) '--vm-service-port=$_deviceVmServicePort',
+        ...engineSwitchArguments(),
       ],
-      environment: relayEnvironment,
+      environment: <String, String>{...relayEnvironment, ...engineSwitchesFromEnvironment()},
       // A release engine has no Dart VM Service, and a release app should not
       // be launched asking for one.
       enableVmService: debuggingOptions.buildInfo.mode != BuildMode.release,
