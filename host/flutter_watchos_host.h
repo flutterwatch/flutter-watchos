@@ -51,6 +51,17 @@ void FlutterWatchOSCrownSetTickCallback(FlutterWatchOSCrownTickCallback callback
 // crown-rotation binding since the previous sample).
 void FlutterWatchOSCrownDelta(double delta);
 
+// One display refresh. The host calls this from a display-synced tick
+// (SwiftUI's `TimelineView(.animation)` — watchOS has no CADisplayLink) and
+// the engine renders a frame if it asked for one. A call with nothing pending
+// is a no-op, so calling it every refresh is both correct and cheap.
+//
+// MUST be on the main thread (the one that called FlutterWatchOSHostRun).
+// Without it the engine falls back to a free-running 60 Hz timer whose phase
+// is unrelated to the display, which is judder even with the frame budget half
+// empty.
+void FlutterWatchOSHostNotifyVsync(void);
+
 // -----------------------------------------------------------------------------
 // watchOS text input. The host overlays a native field for each editable rect
 // and forwards focus and edits (see WatchTextInput in FlutterRunner.swift).

@@ -34,6 +34,7 @@ void main() {
         'FlutterWatchOSCrownTickCallback',
         'FlutterWatchOSCrownSetTickCallback',
         'FlutterWatchOSCrownDelta',
+        'FlutterWatchOSHostNotifyVsync',
       ]) {
         expect(bridge, contains(symbol));
       }
@@ -71,8 +72,42 @@ void main() {
       expect(runner, contains('pixelRatio'));
     });
 
-    test('publishes the engine-delivered frame on the main thread', () {
-      expect(runner, contains('DispatchQueue.main.async { runner.publish(image) }'));
+    // The frame path is deliberately two-staged: the raster thread parks the
+    // finished frame and the display tick publishes it. Hopping straight to
+    // the main queue instead lands the frame at an arbitrary point in the run
+    // loop, so SwiftUI draws it on whichever render pass comes next — which
+    // is a whole refresh late whenever the frame finishes just after a commit,
+    // and because the two clocks drift, WHICH frames wait walks through the
+    // sequence. That is the judder these three tests exist to prevent
+    // regressing.
+    test('parks the engine-delivered frame on the raster thread', () {
+      expect(runner, contains('runner.stash(image)'));
+      expect(
+        runner,
+        isNot(contains('DispatchQueue.main.async { runner.publish(image) }')),
+        reason: 'frames must reach the screen on a display tick, not '
+            'whenever the raster thread finishes one',
+      );
+    });
+
+    test('publishes the parked frame from the display tick', () {
+      expect(runner, contains('func presentLatestFrame()'));
+      expect(runner, contains('func notifyVsync()'));
+      expect(runner, contains('FlutterWatchOSHostNotifyVsync()'));
+    });
+
+    test('drives the engine from the display-synced schedule, presenting first',
+        () {
+      expect(app, contains('TimelineView(.animation)'));
+      expect(app, contains('EngineVsyncClock'));
+      // Order matters: show the frame that is ready for THIS refresh, then let
+      // the engine start the next. The other way round delays the picture by a
+      // refresh.
+      final int present = app.indexOf('presentLatestFrame()');
+      final int notify = app.indexOf('notifyVsync()');
+      expect(present, greaterThan(-1));
+      expect(notify, greaterThan(-1));
+      expect(present, lessThan(notify));
     });
 
     test('hosts no bootstrap logic (that moved into the engine)', () {

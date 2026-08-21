@@ -221,6 +221,10 @@ public struct FlutterHostView: View {
             }
         }
         .ignoresSafeArea()
+        // The engine's frame clock. Must be attached wherever the Flutter
+        // surface is on screen; see EngineVsyncClock for why it looks like
+        // nothing.
+        .background { EngineVsyncClock() }
         // Safe area. The Flutter surface is deliberately full-bleed (above),
         // but Dart still has to KNOW which edges the system occupies — the
         // clock at the top and the display's own curvature all round — or
@@ -328,6 +332,62 @@ public struct FlutterHostView: View {
         } else {
             TextField("", text: text)
         }
+    }
+}
+
+/// Gives the engine the display's own clock.
+///
+/// watchOS has no `CADisplayLink` (`API_UNAVAILABLE(watchos)`, checked in the
+/// SDK header, not assumed), so without this the engine has no way to know when
+/// the panel refreshes and falls back to `VsyncWaiterFallback`: a phase fixed
+/// at engine boot, then a posted task every 1/60 s forever. That grid and the
+/// panel's are unrelated clocks that drift against each other, so finished
+/// frames are handed to the compositor at a walking offset from the display's
+/// latch point.
+///
+/// Measured on a Series 10 before this existed: frame delivery p99 of 21.4 ms
+/// against native's 17.2 ms, worst case two whole refresh periods — while
+/// raster needed 2.3 ms of a 16.67 ms budget. Judder with 13 ms of headroom,
+/// which no amount of faster rasterizing would have fixed.
+///
+/// `TimelineView(.animation)` is the one display-synced schedule SwiftUI vends
+/// on this platform, and it is a good one: 300 consecutive entries measured
+/// 16.665 ms p50 / 17.22 ms p99.
+///
+/// Two deliberate choices:
+///
+///  * **`Color.clear` inside a `.background`.** The tick IS the payload —
+///    nothing is drawn. Wrapping the frame image (let alone the whole host
+///    view, with its platform-view, proxy-field and accessibility overlays) in
+///    the TimelineView would re-evaluate all of it sixty times a second for no
+///    visual result.
+///  * **`onChange` rather than calling from `body`.** One call per schedule
+///    entry, with no reliance on how often SwiftUI chooses to evaluate a view
+///    body. (The engine tolerates extra calls — a tick with no frame pending
+///    is a no-op — but relying on that would be relying on luck.)
+///
+/// In Always-On the schedule drops to a low frequency by itself and the engine
+/// simply produces fewer frames, which is exactly right for a screen nobody is
+/// looking at.
+private struct EngineVsyncClock: View {
+    var body: some View {
+        TimelineView(.animation) { context in
+            Color.clear
+                .onChange(of: context.date) { _, _ in
+                    // Present first, then ask. Show the frame that is ready
+                    // for THIS refresh, then let the engine start the next —
+                    // the other order would hand the engine a head start it
+                    // cannot use and delay the picture by a refresh.
+                    //
+                    // Both go through the runner, like every other engine call
+                    // this file makes: the C module is imported by
+                    // FlutterRunner, and a Swift import is per-FILE, not
+                    // per-module, so calling the symbol here would not compile.
+                    FlutterRunner.shared.presentLatestFrame()
+                    FlutterRunner.shared.notifyVsync()
+                }
+        }
+        .allowsHitTesting(false)
     }
 }
 

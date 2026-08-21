@@ -259,6 +259,12 @@ final class FlutterRunner: ObservableObject {
     /// The latest Flutter frame, rendered by the engine.
     @Published var frame: CGImage?
 
+    /// The newest frame the engine has finished, waiting for a display tick.
+    /// Written on the raster thread, read on the main thread, hence the lock —
+    /// one pointer swap per frame, uncontended in practice.
+    private var stashed: CGImage?
+    private let stashLock = NSLock()
+
     /// Whether the app asked (via WatchStatusBar in package:flutter_watchos)
     /// for the system status bar — the clock — to be hidden. Default: visible,
     /// per the watchOS HIG. Mirrored from the plugin's C flag on each frame,
@@ -323,11 +329,12 @@ final class FlutterRunner: ObservableObject {
             flutterSize.height,
             pixelRatio,
             { context, image in
-                // Hop to the main thread to publish the frame.
+                // Park the frame; the next display tick publishes it. See
+                // `presentLatestFrame`.
                 guard let context, let image else { return }
                 let runner = Unmanaged<FlutterRunner>.fromOpaque(context)
                     .takeUnretainedValue()
-                DispatchQueue.main.async { runner.publish(image) }
+                runner.stash(image)
             },
             ctx)
         guard running else {
@@ -351,6 +358,18 @@ final class FlutterRunner: ObservableObject {
     /// points so the physical scroll feel is identical at any content scale.
     func sendCrownDelta(_ delta: Double) {
         FlutterWatchOSCrownDelta(delta / WatchContentScale.value)
+    }
+
+    /// One display refresh, from `EngineVsyncClock`'s display-synced tick.
+    ///
+    /// The engine renders a frame only if it asked for one, so a tick with
+    /// nothing pending costs a call and returns. Without this the engine has
+    /// no display clock at all on watchOS (`CADisplayLink` is
+    /// `API_UNAVAILABLE`) and falls back to a free-running 60 Hz timer whose
+    /// phase drifts against the panel's — judder even with the frame budget
+    /// half empty.
+    func notifyVsync() {
+        FlutterWatchOSHostNotifyVsync()
     }
 
     /// Report the Always-On (reduced-luminance) state to Dart, where
@@ -384,6 +403,49 @@ final class FlutterRunner: ObservableObject {
                                             insets.trailing / scale,
                                             insets.bottom / scale,
                                             insets.leading / scale)
+    }
+
+    /// Raster thread: hold the newest frame until a display tick collects it.
+    ///
+    /// Retaining is what the `+0` borrow in the callback contract requires, and
+    /// assigning to this property is what does it — the engine releases its own
+    /// reference as soon as the callback returns.
+    ///
+    /// Replacing rather than queueing is deliberate. If the engine ever
+    /// produced two frames inside one refresh, showing the older one first
+    /// would add latency to display a picture that is already stale.
+    func stash(_ image: CGImage) {
+        stashLock.lock()
+        stashed = image
+        stashLock.unlock()
+    }
+
+    /// Main thread, once per display refresh: show the newest finished frame.
+    ///
+    /// This is the second half of giving the engine the display's clock, and
+    /// without it the first half does not reach the screen. Frames used to go
+    /// `DispatchQueue.main.async { publish(image) }` straight from the raster
+    /// thread, landing at an arbitrary point in the run loop; the `@Published`
+    /// write then invalidated the view, and SwiftUI drew it on whichever render
+    /// pass came next. A frame finishing just after SwiftUI committed waited a
+    /// whole refresh, and because the raster clock and the display clock drift
+    /// against each other, which frames wait walks slowly through the sequence.
+    ///
+    /// Measured: fixing only the production clock moved the app's own frame
+    /// intervals (p99 22.2 ms -> 19.1 ms on the simulator) while what reached
+    /// the screen did not improve at all — 14.1% of captured frames stepped
+    /// more than 1.5x the median before, 16.8% after. Producing on time is not
+    /// the same as presenting on time.
+    ///
+    /// Invalidating from the display tick means the ensuing SwiftUI render pass
+    /// is the one for the refresh in progress, not an arbitrary later one.
+    func presentLatestFrame() {
+        stashLock.lock()
+        let image = stashed
+        stashed = nil
+        stashLock.unlock()
+        guard let image else { return }
+        publish(image)
     }
 
     /// Main thread: publish the frame and mirror the plugin's status-bar
