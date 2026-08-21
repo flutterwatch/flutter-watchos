@@ -5,6 +5,7 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_watchos/build_targets/application.dart';
+import 'package:flutter_watchos/watchos_build_info.dart';
 
 import '../src/common.dart';
 
@@ -98,5 +99,28 @@ void main() {
     expect(args, contains('--save-debugging-info=/symbols/app.watchos-arm64.symbols'));
     expect(args, contains('--write-v8-snapshot-profile-to=/tmp/p.json'));
     expect(args.last, '/out/app.dill');
+  });
+
+  // A target with no inputs has a fingerprint that never changes, so the build
+  // system skips it forever after the first run. NativeWatchosBundle stages the
+  // engine, and which engine that is depends on the build mode, the environment
+  // type and WATCHOS_ENGINE_ARTIFACTS — none of which a const Source list can
+  // see. The depfile is what carries them, the same way flutter_assets.d does
+  // upstream.
+  //
+  // Without it, swapping engine trees between two builds left the first engine
+  // staged: an A/B benchmark ran both arms on the same engine and reported a
+  // confident "no difference". Verified on disk after the fix by alternating
+  // two trees across four builds — the embedded engine alternated with them.
+  group('engine staging is a build input', () {
+    testWithoutContext('declares a depfile for the staged engine', () {
+      expect(
+        NativeWatchosBundle(
+          const WatchosBuildInfo(BuildInfo.release, targetArch: 'arm64'),
+          'lib/main.dart',
+        ).depfiles,
+        contains(NativeWatchosBundle.engineDepfile),
+      );
+    });
   });
 }

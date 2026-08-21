@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
@@ -311,6 +312,26 @@ class NativeWatchosBundle extends Target {
   @override
   List<Source> get outputs => const <Source>[];
 
+  /// The engine files this target stages, recorded as they are copied.
+  ///
+  /// They cannot be declared as [inputs]: which engine gets staged depends on
+  /// the build mode, the environment type, and the `WATCHOS_ENGINE_ARTIFACTS`
+  /// override — none of which a `const` Source list can see. A depfile is the
+  /// mechanism flutter_tools already uses for exactly that (see
+  /// `flutter_assets.d`), and without one this target has no inputs at all, so
+  /// its fingerprint never changes and the second build in a row is skipped.
+  ///
+  /// That is not hypothetical. Swapping engine trees between two builds left
+  /// the first engine staged, so an A/B benchmark ran both arms on the same
+  /// engine and reported a confident "no difference".
+  @override
+  List<String> get depfiles => const <String>[engineDepfile];
+
+  static const engineDepfile = 'watchos_engine.d';
+
+  final _stagedEngineInputs = <File>[];
+  final _stagedEngineOutputs = <File>[];
+
   @override
   Future<void> build(Environment environment) async {
     final FlutterProject project = FlutterProject.current();
@@ -327,6 +348,7 @@ class NativeWatchosBundle extends Target {
     //    Runner/FlutterRunner.swift); the engine ships as a real framework the
     //    Xcode project links and embeds.
     await _copyEngine(watchosProjectDir);
+    _writeEngineDepfile(environment);
 
     // 2. Copy flutter_assets into watchos/Flutter/
     _copyFlutterAssets(project, watchosProjectDir);
@@ -606,6 +628,20 @@ class NativeWatchosBundle extends Target {
   /// `icudtl.dat` and the snapshots stay as loose files here; the Xcode
   /// resources phase copies them to the watch app bundle root, where the engine
   /// resolves them relative to `Bundle.main.bundlePath`.
+  /// Records the staged engine as this target's real inputs and outputs.
+  ///
+  /// Written immediately after staging rather than at the end of `build()`:
+  /// the Xcode step that follows can fail for reasons of its own, and the
+  /// engine is staged either way — so the next build must still see it.
+  void _writeEngineDepfile(Environment environment) {
+    final depfile = Depfile(_stagedEngineInputs, _stagedEngineOutputs);
+    final File output = environment.buildDir.childFile(engineDepfile);
+    if (!output.parent.existsSync()) {
+      output.parent.createSync(recursive: true);
+    }
+    environment.depFileService.writeToFile(depfile, output);
+  }
+
   Future<void> _copyEngine(Directory watchosProjectDir) async {
     final watchosArtifacts = globals.artifacts! as WatchosArtifacts;
     final EnvironmentType envType = buildInfo.simulator
@@ -643,6 +679,8 @@ class NativeWatchosBundle extends Target {
       }
       final String dest = globals.fs.path.join(flutterDir.path, destName);
       src.copySync(dest);
+      _stagedEngineInputs.add(src);
+      _stagedEngineOutputs.add(globals.fs.file(dest));
     }
 
     // Stage the engine as a real Flutter.framework (Frameworks/Flutter.framework
@@ -653,6 +691,14 @@ class NativeWatchosBundle extends Target {
       flutterDir: flutterDir,
       frameworkName: 'Flutter',
       bundleId: _flutterFrameworkBundleId,
+    );
+    // The dylib is the one that actually decides which engine an app runs, so
+    // it matters most that this pair is in the depfile.
+    _stagedEngineInputs.add(engineDylib);
+    _stagedEngineOutputs.add(
+      globals.fs.file(
+        globals.fs.path.join(flutterDir.path, 'Flutter.framework', 'Flutter'),
+      ),
     );
     // Sweep away any bare engine dylib left by an earlier toolchain version so
     // the framework is the single source of the engine binary.
