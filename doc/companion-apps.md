@@ -24,7 +24,7 @@ phase and the watch `Info.plist` declares `WKCompanionAppBundleIdentifier`.
 Build the watch app first; the iOS build picks it up:
 
 ```sh
-flutter-watchos build watchos --release --target lib/main_watch.dart
+flutter-watchos build watchos --release
 flutter build ipa
 ```
 
@@ -32,27 +32,48 @@ flutter build ipa
 
 Put the model, business logic and transport policy in a `lib/core/` that
 imports no UI and branches on no platform, and give each device its own widget
-tree and its own entrypoint:
+tree:
 
 ```
 lib/
-  main.dart          → phone/
-  main_watch.dart    → watch/
-  core/                          shared verbatim
+  main.dart     ── isWatch ? WatchApp : PhoneApp
+  phone/
+  watch/
+  design/                        theme and widgets, shared verbatim
+  core/                          model and transport, shared verbatim
 ```
 
-Two entrypoints rather than one `main.dart` branching at runtime: a runtime
-branch compiles *both* UIs into *both* binaries, and there is no reason for a
-watch binary to carry a phone UI. Select with `--target`:
+One entrypoint, branching once at `runApp`:
+
+```dart
+runApp(
+  FlutterWatchosPlatform.isWatch
+      ? WatchApp(scope: scope)
+      : PhoneApp(scope: scope),
+);
+```
 
 ```sh
-flutter run                                                    # phone
-flutter-watchos run -d <watch-id> --target lib/main_watch.dart # watch
+flutter run                       # phone
+flutter-watchos run -d <watch-id> # watch
 ```
 
-Inside `core/`, where behaviour really does differ per device, branch on
-`FlutterWatchosPlatform.isWatch`. **Not** `Platform.isIOS`, which is `true` on
-watchOS as well — see [plugins.md](plugins.md).
+`FlutterWatchosPlatform.isWatch` is the check to branch on — **not**
+`Platform.isIOS`, which is `true` on watchOS as well (see
+[plugins.md](plugins.md)). It is pure Dart with no FFI behind it, so it is safe
+before plugin registration and safe inside the iOS binary.
+
+**The cost, measured.** A runtime branch cannot be tree-shaken, so the watch
+binary carries the phone widget tree it will never draw. Measured on a
+companion app with two full UIs, a shared design system and a sync engine, by
+building it both ways: **184,896 bytes** in the release `App.framework/App` —
+3.3% of the Dart snapshot, and 0.4% of the shipped app, which is dominated by
+the engine.
+
+Splitting into a second entrypoint (`lib/main_watch.dart`, selected with
+`--target`) buys that back, at the cost of a flag on every `run` and `build`
+and two files that must be kept in step. Start with one file; measure your own
+app before deciding the number has grown enough to matter.
 
 Lay the two UIs out separately — the watch wants whole-row tap targets, haptic
 confirmation, Digital Crown scrolling and as little text entry as possible, and
