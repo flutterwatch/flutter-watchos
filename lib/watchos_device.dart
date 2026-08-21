@@ -18,6 +18,7 @@ import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
+import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -809,13 +810,20 @@ class WatchosDevice extends Device {
       // can stall or drop the CoreDevice connection.
       var attached = false;
       final int? pid = await _findAppPid(id, bundleId, installUrl: installUrl);
-      if (pid != null) {
+      // Since 3.47 LLDB shells out via `xcrun`, which it gets from the Xcode
+      // project interpreter. Without it, skip straight to the Xcode fallback.
+      final XcodeProjectInterpreter? xcodeProjectInterpreter = globals.xcodeProjectInterpreter;
+      if (pid != null && xcodeProjectInterpreter != null) {
         logger.printTrace('Attaching lldb to pid $pid for JIT debugging...');
         final LLDBLogForwarder lldbForwarder = _lldbLogForwarder ??= LLDBLogForwarder();
         lldbForwarder.logLines.listen((String line) {
           logger.printTrace('[lldb] $line');
         });
-        final LLDB lldb = _lldb ??= LLDB(logger: logger, processUtils: globals.processUtils);
+        final LLDB lldb = _lldb ??= LLDB(
+          logger: logger,
+          processUtils: globals.processUtils,
+          xcodeProjectInterpreter: xcodeProjectInterpreter,
+        );
         final Duration timeout = _lldbAttachTimeout;
         attached = await lldb
             .attachAndStart(

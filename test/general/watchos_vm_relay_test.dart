@@ -996,14 +996,56 @@ Future<HttpClientResponse> _get(int port, String path) async {
 
 class _FakeInterface implements NetworkInterface {
   _FakeInterface(this.name, List<String> addresses)
-    : addresses = addresses.map(InternetAddress.new).toList();
+    : addresses = addresses.map(_FakeInterfaceAddress.new).toList();
 
   @override
   final String name;
 
   @override
-  final List<InternetAddress> addresses;
+  final List<_FakeInterfaceAddress> addresses;
 
   @override
   int get index => 0;
+}
+
+/// `NetworkInterface.addresses` is a `List<InterfaceAddress>`, which is a
+/// narrower type than the `InternetAddress` the code under test reads (the
+/// former implements the latter). Everything the picker looks at —
+/// `address`, `isLoopback`, `isLinkLocal` — comes from the real parsed
+/// address; only the two members `InterfaceAddress` adds are invented, and
+/// nothing reads them.
+class _FakeInterfaceAddress implements InterfaceAddress {
+  _FakeInterfaceAddress(String address) : _inner = InternetAddress(address);
+
+  final InternetAddress _inner;
+
+  @override
+  int get prefixLength => 24;
+
+  @override
+  InternetAddress? get broadcast => null;
+
+  @override
+  String get address => _inner.address;
+
+  @override
+  String get host => _inner.host;
+
+  @override
+  bool get isLinkLocal => _inner.isLinkLocal;
+
+  @override
+  bool get isLoopback => _inner.isLoopback;
+
+  @override
+  bool get isMulticast => _inner.isMulticast;
+
+  @override
+  Uint8List get rawAddress => _inner.rawAddress;
+
+  @override
+  InternetAddressType get type => _inner.type;
+
+  @override
+  Future<InternetAddress> reverse() => _inner.reverse();
 }
