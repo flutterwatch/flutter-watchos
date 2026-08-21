@@ -26,6 +26,7 @@ import '../watchos_build_info.dart';
 import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
+import 'watchos_data_hooks.dart';
 import 'watchos_host_module.dart';
 import 'watchos_plugin_views.dart';
 
@@ -190,12 +191,19 @@ class WatchosCopyFlutterBundle extends CopyFlutterBundle {
 
   @override
   List<Target> get dependencies => const <Target>[
-    // NOTE: deliberately NOT depending on DartBuildForNative() /
-    // InstallCodeAssets(). The flutter-watchos toolchain cannot build Dart
-    // native-assets / code-assets for watchOS (flutter_tools' code-asset path
-    // is iOS/macOS-only and we don't patch it). On watchOS those FFI Dart
-    // implementations are never used anyway: WatchosDartPluginRegistrantTarget
-    // routes federated plugins to their native `*_watchos` package instead.
+    // NOTE: deliberately NOT depending on the upstream code-asset targets
+    // (BuildHooks() / InstallCodeAssets()). The flutter-watchos toolchain
+    // cannot build Dart native-assets / code-assets for watchOS
+    // (flutter_tools' code-asset path is iOS/macOS-only and we don't patch
+    // it). On watchOS those FFI Dart implementations are never used anyway:
+    // WatchosDartPluginRegistrantTarget routes federated plugins to their
+    // native `*_watchos` package instead.
+    //
+    // Data assets are not in that boat: they are built on the host by ordinary
+    // Dart, and packages like flutter_scene use them to compile shader
+    // bundles. Skipping them silently shipped whatever a package's generated
+    // directory happened to hold, so run that half on its own.
+    WatchosBuildDataHooks(),
     WatchosKernelSnapshot(),
   ];
 
