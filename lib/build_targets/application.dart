@@ -769,6 +769,7 @@ class NativeWatchosBundle extends Target {
       flutterDir: flutterDir,
       frameworkName: 'Flutter',
       bundleId: _flutterFrameworkBundleId,
+      privacyManifest: _flutterPrivacyManifest,
     );
     // The dylib is the one that actually decides which engine an app runs, so
     // it matters most that this pair is in the depfile.
@@ -944,6 +945,7 @@ class NativeWatchosBundle extends Target {
     required Directory flutterDir,
     required String frameworkName,
     required String bundleId,
+    String? privacyManifest,
   }) {
     final Directory fw = flutterDir.childDirectory('$frameworkName.framework');
     if (fw.existsSync()) {
@@ -967,7 +969,60 @@ class NativeWatchosBundle extends Target {
     fw.childFile('Info.plist').writeAsStringSync(
       _frameworkInfoPlist(executable: frameworkName, bundleId: bundleId),
     );
+    if (privacyManifest != null) {
+      fw.childFile('PrivacyInfo.xcprivacy').writeAsStringSync(privacyManifest);
+    }
   }
+
+  /// The privacy manifest that ships inside `Flutter.framework`.
+  ///
+  /// Apple classifies Flutter as a commonly used third-party SDK, so a binary
+  /// that embeds the engine without one is rejected before review ever looks at
+  /// it — ITMS-91061, "Missing privacy manifest". App Store Connect names the
+  /// path it found, `Frameworks/Flutter.framework/Flutter`, so the manifest has
+  /// to sit in that bundle rather than in the app's own.
+  ///
+  /// Copied verbatim from upstream's iOS manifest,
+  /// `shell/platform/darwin/ios/framework/PrivacyInfo.xcprivacy`. Same engine
+  /// sources, so the same two API categories and the same reasons: file
+  /// timestamps and system boot time. The watchOS engine artifacts do not carry
+  /// it — upstream installs it from a GN rule in the iOS framework target,
+  /// which this toolchain does not build — so the CLI supplies it here, and
+  /// every app it builds gets it without having to know any of this.
+  static const String _flutterPrivacyManifest = '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>0A2A.1</string>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
+''';
 
   /// FMWK Info.plist for a staged engine/Dart framework. The supported platform
   /// follows the build SDK (WatchSimulator for the debug/JIT simulator loop,
