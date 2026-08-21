@@ -115,8 +115,14 @@ where possible; watchOS-specific behaviour is called out per command.
   Run integration tests (`integration_test/`) on a simulator.
 
   ```sh
-  flutter-watchos drive --target=integration_test/app_test.dart -d <simulator-id>
+  flutter-watchos drive --driver=test_driver/integration_test.dart \
+      --target=integration_test/app_test.dart -d <simulator-id>
   ```
+
+  `--driver` is not optional unless the driver file is named after the target.
+  Without it the tool looks for `test_driver/<target-basename>_test.dart` and
+  fails with "Test file not found" — the convention in this repo's examples is
+  a single `test_driver/integration_test.dart` shared by every target.
 
 - ### `host`
 
