@@ -50,6 +50,19 @@ the first change in a while that you can see rather than read about.
   under the iOS-family name it understands, so apps that built before still
   build — `package:code_assets` throws on an OS it does not know until 2.0.0,
   which `objective_c` and so most plugin graphs inherit today.
+
+  **Requires `flutter config --enable-dart-data-assets`.** Dart data assets are
+  off by default. With them off the pass does not run at all and says so,
+  naming the packages whose hooks were skipped and the command that turns them
+  on — running the hooks to collect assets nobody asked for would be cost
+  without benefit, and cost that can fail a build.
+
+  **Known boundary: a hook cannot tell a watch from the simulator.** The
+  protocol carries that in a per-OS sub-config — `IOSCodeConfig.targetSdk`, and
+  there is an Android and a macOS one — and there is no watchOS sub-config to
+  carry it in. Both builds are arm64, so the two hand a hook byte-identical
+  input and share one hook cache entry. A hook that ships source is unaffected;
+  one that precompiles per-platform binaries is not.
 - **`--watchos-log-to-file`.** A watch has no console to attach to, and
   `print()` and engine logs both go to stderr, which on a device goes nowhere.
   Launching with this flag redirects them into the app's own container, where

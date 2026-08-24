@@ -16,12 +16,14 @@
 // and guesses wrong: it compiles GLES for a Metal engine. Nothing throws. The
 // app draws a black frame, which is why this is a test and not a comment.
 
+import 'dart:convert' show json;
 import 'dart:io' as io;
 
 import 'package:code_assets/code_assets.dart';
 import 'package:data_assets/data_assets.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/asset.dart' show FlutterHookResult;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
@@ -31,9 +33,11 @@ import 'package:flutter_tools/src/build_system/targets/native_assets.dart' show 
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/targets.dart';
+import 'package:flutter_tools/src/macos/xcode.dart' show Xcode;
 import 'package:flutter_watchos/build_targets/watchos_hooks.dart';
 import 'package:hooks/hooks.dart';
 import 'package:hooks_runner/hooks_runner.dart';
+import 'package:test/fake.dart';
 
 import '../../flutter/packages/flutter_tools/test/general.shard/isolated/fake_native_assets_build_runner.dart'
     show FakeFlutterNativeAssetsBuilderResult;
@@ -48,7 +52,16 @@ import '../src/context.dart';
 /// which the test harness's filesystem guard refuses. This one builds the same
 /// input the real runner would, from fixed paths, and never touches disk.
 class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
-  _RecordingBuildRunner({this.failuresBeforeSuccess = 0, this.alwaysFails = false});
+  _RecordingBuildRunner({
+    this.failuresBeforeSuccess = 0,
+    this.alwaysFails = false,
+    this.assets = const <EncodedAsset>[],
+    this.dependencies = const <Uri>[],
+  });
+
+  /// What the hooks "produced". Empty in tests that only care about the input.
+  final List<EncodedAsset> assets;
+  final List<Uri> dependencies;
 
   /// How many attempts refuse to build before one succeeds. One stands for a
   /// hook that cannot cope with being told `watchos` but can build for the iOS
@@ -91,7 +104,10 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     if (alwaysFails || inputs.length <= failuresBeforeSuccess) {
       return null;
     }
-    return const FakeFlutterNativeAssetsBuilderResult();
+    return FakeFlutterNativeAssetsBuilderResult(
+      encodedAssets: assets,
+      dependencies: dependencies,
+    );
   }
 
   @override
@@ -109,6 +125,14 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
   }
 }
 
+/// Stands in for the real Xcode when the fallback has to derive an SDK root
+/// because the environment carries none.
+class _FakeXcode extends Fake implements Xcode {
+  @override
+  Future<String> sdkLocation(EnvironmentType environmentType) async =>
+      '/sdk/iPhoneOS.sdk';
+}
+
 void main() {
   late FileSystem fileSystem;
 
@@ -123,7 +147,9 @@ void main() {
     );
   });
 
-  Environment buildEnv() {
+  /// [sdkRoot] null stands for the environment a resident session assembles,
+  /// which carries `kTargetFile` and `kBuildMode` and nothing else.
+  Environment buildEnv({Logger? logger, String? sdkRoot = '/sdk/iPhoneSimulator.sdk'}) {
     final env = Environment.test(
       fileSystem.currentDirectory,
       defines: <String, String>{
@@ -133,13 +159,13 @@ void main() {
         // it does not, which is what this file is about.
         kTargetPlatform: getNameForTargetPlatform(TargetPlatform.ios),
         // Only the fallback reads this, to build a faithful iOS input.
-        kSdkRoot: '/sdk/iPhoneSimulator.sdk',
+        if (sdkRoot != null) kSdkRoot: sdkRoot,
       },
       inputs: <String, String>{},
       artifacts: Artifacts.test(),
       processManager: FakeProcessManager.any(),
       fileSystem: fileSystem,
-      logger: BufferLogger.test(),
+      logger: logger ?? BufferLogger.test(),
       platform: FakePlatform(),
     );
     env.buildDir.createSync(recursive: true);
@@ -193,10 +219,20 @@ void main() {
       // keep working, so the pass is retried under the name such a hook can
       // read — which is what watchOS builds asked for before this.
       final runner = _RecordingBuildRunner(failuresBeforeSuccess: 1);
+      final logger = BufferLogger.test();
 
-      await WatchosBuildHooks(buildRunner: runner).build(buildEnv());
+      await WatchosBuildHooks(buildRunner: runner).build(buildEnv(logger: logger));
 
       expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+      // The hooks have just printed a stack trace; an unexplained second
+      // attempt after one reads as a broken build.
+      expect(logger.statusText, contains('Retrying as the iOS family'));
+      expect(
+        logger.statusText,
+        contains('That is a guess'),
+        reason: 'every failure kind arrives here as a null, so the retry must '
+            'not claim to know which one it was',
+      );
       Map<String, Object?> code(BuildInput input) =>
           (input.config.json['extensions']! as Map<String, Object?>)['code_assets']!
               as Map<String, Object?>;
@@ -214,6 +250,74 @@ void main() {
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
     });
 
+    testUsingContext('keeps the data assets and drops the code assets', () async {
+      // Every other test here drives a runner that produces nothing, so none of
+      // them can see what this pass does with what a hook returns. Without an
+      // asset in flight, inverting the `isDataAsset` filter — which is the
+      // original bug, an app shipping no generated assets — leaves the suite
+      // green.
+      final EncodedAsset dataAsset = DataAsset(
+        package: 'some_package',
+        name: 'shaders/bundle.bin',
+        file: Uri.file('/tmp/bundle.bin'),
+      ).encode();
+      final EncodedAsset codeAsset = CodeAsset(
+        package: 'some_package',
+        name: 'native.dylib',
+        linkMode: DynamicLoadingBundled(),
+        file: Uri.file('/tmp/native.dylib'),
+      ).encode();
+      final runner = _RecordingBuildRunner(
+        assets: <EncodedAsset>[dataAsset, codeAsset],
+        dependencies: <Uri>[Uri.file('/tmp/shader.glsl')],
+      );
+      final Environment env = buildEnv();
+
+      await WatchosBuildHooks(buildRunner: runner).build(env);
+
+      final written =
+          json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
+              as Map<String, Object?>;
+      expect(
+        written['data_assets'],
+        hasLength(1),
+        reason: 'the data asset a hook produced has to reach CopyFlutterBundle',
+      );
+      expect(
+        written['code_assets'],
+        isEmpty,
+        reason: 'nothing a code-asset hook produces is installed into a watchOS app',
+      );
+      expect(written['dependencies'], hasLength(1));
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('does not run the hooks when data assets are off', () async {
+      // The product of this pass is data assets; with them off there is nothing
+      // to collect, and running every hook to collect it costs time and can
+      // fail the build outright. The feature is off by default, so this is the
+      // path most installs take.
+      final runner = _RecordingBuildRunner();
+      final logger = BufferLogger.test();
+
+      await WatchosBuildHooks(buildRunner: runner).build(buildEnv(logger: logger));
+
+      expect(runner.inputs, isEmpty, reason: 'no hook should have been invoked');
+      expect(logger.warningText, contains('some_package'));
+      expect(
+        logger.warningText,
+        contains('flutter config --enable-dart-data-assets'),
+        reason: 'the warning has to name the one command that fixes it',
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true),
+    });
+
     testUsingContext('writes the result where CopyFlutterBundle reads it', () async {
       final runner = _RecordingBuildRunner();
       final Environment env = buildEnv();
@@ -225,6 +329,53 @@ void main() {
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('falls back without an SDK root on the environment', () async {
+      // A resident session's Environment carries `kTargetFile` and `kBuildMode`
+      // and nothing else, so requiring `kSdkRoot` meant `run` threw
+      // `MissingDefineException` the moment the fallback fired — not a
+      // `ToolExit`, uncaught, and worded as a missing define rather than as a
+      // package that could not be told an OS name. The fallback has to be able
+      // to derive one.
+      final runner = _RecordingBuildRunner(failuresBeforeSuccess: 1);
+
+      await WatchosBuildHooks(buildRunner: runner).build(buildEnv(sdkRoot: null));
+
+      expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+      final code = (runner.inputs.last.config.json['extensions']! as Map)['code_assets']! as Map;
+      expect(code['target_os'], 'ios');
+      expect(
+        code['ios'],
+        isNotNull,
+        reason: 'the derived config still has to be a faithful iOS input',
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+      Xcode: () => _FakeXcode(),
+    });
+
+    testUsingContext('the resident runner drives the same pass', () async {
+      // WatchosHookRunner had no test at all, which is how the crash above reached
+      // review: nothing exercised the one path that differs from a build.
+      final runner = _RecordingBuildRunner(failuresBeforeSuccess: 1);
+
+      final FlutterHookResult result = await WatchosHookRunner(buildRunner: runner).runHooks(
+        targetPlatform: TargetPlatform.ios,
+        environment: buildEnv(sdkRoot: null),
+      );
+
+      expect(runner.inputs, hasLength(2));
+      final first = (runner.inputs.first.config.json['extensions']! as Map)['code_assets']! as Map;
+      expect(first['target_os'], 'watchos', reason: 'a reload must name what a build names');
+      expect(result.dataAssets, isEmpty);
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+      Xcode: () => _FakeXcode(),
     });
 
     testUsingContext('explains itself when a hook cannot build', () async {

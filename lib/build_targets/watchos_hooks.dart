@@ -17,6 +17,7 @@ import 'package:flutter_tools/src/build_system/exceptions.dart' show MissingDefi
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart'
     show LinkHooks, createFlutterNativeAssetsBuildRunner;
 import 'package:flutter_tools/src/features.dart' show featureFlags;
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/isolated/native_assets/ios/native_assets.dart'
@@ -52,6 +53,21 @@ import 'package:meta/meta.dart' show visibleForTesting;
 /// different SDK, a different set of things a package can do. A hook told
 /// `ios` cannot tell the difference and has no way to ask; a hook told
 /// `watchos` can.
+///
+/// What a hook still cannot be told is device versus simulator. The typed side
+/// of the protocol carries that in a per-OS sub-config — `IOSCodeConfig` has
+/// `targetSdk`, and there is an `AndroidCodeConfig` and a `MacOSCodeConfig` —
+/// and there is no watchOS one to carry it in. Naming the simulator as a separate
+/// OS would invent vocabulary no hook reads, and the architecture is arm64
+/// either way, so the two are indistinguishable here.
+///
+/// A hook that ships *source* is unaffected; one that precompiles per-platform
+/// binaries is not. A Metal library built against `applewatchos` and one built
+/// against `appletvsimulator` carry different target triples, and Metal
+/// validates that when a pipeline is created rather than degrading, so whichever
+/// such a hook produced first would serve both. The iOS-family fallback keeps
+/// the distinction — `targetSdk` comes from the SDK root — which leaves the
+/// degraded path better off in this one respect than the accurate one.
 const String watchOSName = 'watchos';
 
 /// The architecture watchOS builds target.
@@ -60,6 +76,12 @@ const String watchOSName = 'watchos';
 /// simulator alike, so there is one value here rather than a list. (An
 /// `arm64_32` slice is added at packaging time for older deployment targets;
 /// nothing is compiled for it, so no hook is ever asked to build for it.)
+///
+/// Which also means the architecture cannot separate the two, and neither can
+/// anything else on this path: a device build and a simulator build produce
+/// byte-identical hook inputs, and therefore one `hooks_runner` cache entry
+/// serving both. See [watchOSName] for why there is nowhere to put the
+/// distinction.
 const Architecture watchOSArchitecture = Architecture.arm64;
 
 /// The `buildAssetTypes` name for code assets, which is not exported.
@@ -121,6 +143,14 @@ final class WatchosCodeAssetExtension extends ProtocolExtension {
   /// `target_os` is a plain string in the protocol's syntax on both sides, so
   /// this produces an input that is well-formed by the schema and reads back as
   /// an ordinary [OS] wherever the library is new enough to mint one.
+  ///
+  /// The two casts below are load-bearing. They read the block `setupCode` has
+  /// just written, so they hold today by construction; if a future layout kept
+  /// the block but moved `target_os` elsewhere, this would write a key nothing
+  /// reads, raise nothing, and every build would quietly go back to announcing
+  /// iOS. `tells the hook what it is building for` in
+  /// `test/general/watchos_build_hooks_test.dart` is what stands between that and
+  /// a silent regression, so it asserts the wire and not this function.
   static void _nameWatchOS(Map<String, Object?> config) {
     final extensions = config['extensions']! as Map<String, Object?>;
     final code = extensions[_codeAssetType]! as Map<String, Object?>;
@@ -133,14 +163,33 @@ final class WatchosCodeAssetExtension extends ProtocolExtension {
 /// A hook told `ios` goes on to read this — `objective_c` reaches for
 /// `code.iOS.targetSdk` — so the fallback has to be a faithful iOS input, not
 /// just an iOS name.
-IOSCodeConfig _iosFamilyConfig(Environment environment) {
-  final String? sdkRoot = environment.defines[kSdkRoot];
-  if (sdkRoot == null) {
-    throw MissingDefineException(kSdkRoot, 'watchos_build_hooks');
-  }
+///
+/// [kSdkRoot] is only on the environment the one-shot build assembles; a
+/// resident session's carries `kTargetFile` and `kBuildMode` and nothing else.
+/// Requiring the define meant `run` threw `MissingDefineException` the moment
+/// the fallback fired, which is not a `ToolExit` and reads as a broken build
+/// rather than as a package that could not be told an OS name. So it is derived
+/// when absent, from the same call the builder makes.
+///
+/// Which SDK that resolves to barely matters: nothing produced under this
+/// config is installed, and only a hook reading `code.iOS.targetSdk` sees it at
+/// all. A resident session cannot tell device from simulator, so it says
+/// device; the alternative is refusing to build.
+Future<IOSCodeConfig> _iosFamilyConfig(Environment environment) async {
+  final String sdkRoot =
+      environment.defines[kSdkRoot] ??
+      await globals.xcode!.sdkLocation(EnvironmentType.physical);
+  final EnvironmentType? environmentType = environmentTypeFromSdkroot(
+    sdkRoot,
+    environment.fileSystem,
+  );
   return IOSCodeConfig(
     targetVersion: targetIOSVersion,
-    targetSdk: getIOSSdk(environmentTypeFromSdkroot(sdkRoot, environment.fileSystem)!),
+    // `environmentTypeFromSdkroot` returns null for a path whose basename does
+    // not name an iPhone SDK — pointing kSdkRoot at the watchOS SDK, say, which is
+    // the natural thing for someone to try. Falling back rather than asserting
+    // keeps that from crashing inside a retry.
+    targetSdk: getIOSSdk(environmentType ?? EnvironmentType.physical),
   );
 }
 
@@ -176,18 +225,32 @@ Future<DartHooksResult> runWatchosHooks({
     return DartHooksResult.empty();
   }
 
-  if (!featureFlags.isNativeAssetsEnabled && !featureFlags.isDartDataAssetsEnabled) {
-    throwToolExit(
-      'Package(s) ${packagesWithHooks.join(' ')} require the dart assets feature '
-      'to be enabled.\n'
-      '  Enable data assets using `flutter config --enable-dart-data-assets`.',
+  // Data assets are the entire product of this pass: the code assets it also
+  // asks for exist to carry a target OS and are dropped. So with the feature
+  // off there is nothing to collect, and running every package's hook to
+  // collect it would be pure cost — worse, it would be cost that also fails
+  // builds, since a hook can refuse the target OS.
+  //
+  // The feature is off by default. `dartDataAssets` declares no
+  // `enabledByDefault` on any channel, while `nativeAssets` declares it on all
+  // of them, so a guard reading both with `&&` can never fire and this used to
+  // run the hooks and silently collect nothing. Say what is off, name the
+  // packages it affects and the one command that turns it on.
+  if (!featureFlags.isDartDataAssetsEnabled) {
+    environment.logger.printWarning(
+      'Dart data assets are disabled, so the build hooks in '
+      '${packagesWithHooks.join(', ')} were not run.\n'
+      'A package that generates assets for the platform it is built for — '
+      'shader bundles and the like — will ship whatever its generated '
+      'directory already held, which may be output from a build for another '
+      'platform, or nothing.\n'
+      'Turn them on with `flutter config --enable-dart-data-assets`.',
     );
+    return DartHooksResult.empty();
   }
 
   final CCompilerConfig? cCompiler = await cCompilerConfigMacOS(throwIfNotFound: false);
-  final DataAssetsExtension? dataAssets = featureFlags.isDartDataAssetsEnabled
-      ? DataAssetsExtension()
-      : null;
+  final dataAssets = DataAssetsExtension();
 
   // Ask as watchOS first. Whether that works is a property of the app's
   // packages, not something this build can look up: the name is read on the
@@ -204,7 +267,7 @@ Future<DartHooksResult> runWatchosHooks({
   BuildResult? result = await buildRunner.build(
     extensions: <ProtocolExtension>[
       WatchosCodeAssetExtension(cCompiler: cCompiler),
-      if (dataAssets != null) dataAssets,
+      dataAssets,
     ],
     // Linking only ever concerns code assets, and none survive this function.
     linkingEnabled: false,
@@ -214,13 +277,20 @@ Future<DartHooksResult> runWatchosHooks({
     // Fall back to what builds for this platform said before it could name
     // itself. The hooks just printed why they stopped, so say what happens now:
     // an unexplained retry after a stack trace reads as a broken build.
+    //
+    // What is deliberately *not* said is why it failed. `build` collapses every
+    // failure — a missing toolchain, a compile error, a fetch that timed out, a
+    // hook that deliberately reports watchOS as unsupported, and one that choked on
+    // the name — into a null, so naming the last of those would be a diagnosis
+    // nothing here established. The hooks' own error is on screen directly
+    // above; this must not talk over it.
     environment.logger.printStatus(
-      'A build hook could not be run for watchOS by name. Retrying as the iOS '
-      'family, which is what watchOS builds asked for before this platform '
-      'could introduce itself.\n'
-      'A package holding this back is one that reads its target OS through '
-      "code_assets' typed accessor on a code_assets older than 2.0.0, which "
-      'throws on any OS it does not already know.',
+      'A build hook failed while building for watchOS by name. The reason is above.\n'
+      'Retrying as the iOS family, which is what watchOS builds asked for before '
+      'this platform could introduce itself. That is a guess, and it helps only '
+      'if the hook stopped on the target OS rather than on something else: '
+      '`package:code_assets` throws on an OS it does not know until 2.0.0, so a '
+      'hook reading one through its typed accessor cannot see `watchos` at all.',
     );
     result = await buildRunner.build(
       extensions: <ProtocolExtension>[
@@ -229,15 +299,24 @@ Future<DartHooksResult> runWatchosHooks({
           targetOS: OS.iOS,
           linkModePreference: LinkModePreference.dynamic,
           cCompiler: cCompiler,
-          iOS: _iosFamilyConfig(environment),
+          iOS: await _iosFamilyConfig(environment),
         ),
-        if (dataAssets != null) dataAssets,
+        dataAssets,
       ],
       linkingEnabled: false,
     );
   }
   if (result == null) {
     _throwHookFailed(packagesWithHooks);
+  }
+
+  final int droppedCodeAssets = result.encodedAssets.where((a) => a.isCodeAsset).length;
+  if (droppedCodeAssets > 0) {
+    // Otherwise "no code assets existed" and "code assets existed and were
+    // discarded" look identical from the outside, including in a bug report.
+    environment.logger.printTrace(
+      'Discarding $droppedCodeAssets code asset(s); a watchOS app installs none.',
+    );
   }
 
   return DartHooksResult(
@@ -383,6 +462,14 @@ class WatchosBuildHooks extends Target {
 /// all — and a package choosing an output from it would swap in a different
 /// one every time the two paths took turns.
 class WatchosHookRunner implements FlutterHookRunner {
+  WatchosHookRunner({@visibleForTesting FlutterNativeAssetsBuildRunner? buildRunner})
+    : _buildRunner = buildRunner;
+
+  /// Injected by tests. The same seam [WatchosBuildHooks] has, and for the same
+  /// reason: without it nothing could exercise this path, which is how a crash
+  /// on the resident environment's missing [kSdkRoot] reached review.
+  final FlutterNativeAssetsBuildRunner? _buildRunner;
+
   FlutterHookResult? _lastResult;
 
   @override
@@ -399,7 +486,7 @@ class WatchosHookRunner implements FlutterHookRunner {
     logger?.printTrace('runWatchosHooks() - will perform dart build');
 
     final DartHooksResult result = await runWatchosHooks(
-      buildRunner: await createFlutterNativeAssetsBuildRunner(environment),
+      buildRunner: _buildRunner ?? await createFlutterNativeAssetsBuildRunner(environment),
       environment: environment,
     );
     return _lastResult = result.asFlutterResult;
