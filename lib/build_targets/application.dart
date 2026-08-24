@@ -74,9 +74,11 @@ class WatchosDartPluginRegistrantTarget extends Target {
 /// A [KernelSnapshot] subclass that swaps in our watchOS-aware registrant
 /// target and forces `targetOS: null` for correct AOT platform identity.
 ///
-/// See "Platform Identity" and "Dart Plugin Registrant Build Graph" in
-/// CLAUDE.md. Kept in sync with upstream `KernelSnapshot.build`; re-mirror any
-/// change on a Flutter upgrade.
+/// `targetOS` is what the AOT snapshot records as its platform, and leaving it
+/// null is what keeps the watch app from claiming to be an iOS one; see
+/// "Platform identity" in [doc/architecture.md](../../doc/architecture.md).
+/// Kept in sync with upstream `KernelSnapshot.build`; re-mirror any change on a
+/// Flutter upgrade.
 class WatchosKernelSnapshot extends KernelSnapshot {
   const WatchosKernelSnapshot();
 
@@ -363,8 +365,9 @@ class ReleaseWatchosApplication extends Target {
 /// The build product is a single independent watch app, `Runner.app`
 /// (`WKWatchOnly`), installed directly on the simulator or a paired watch.
 /// The arm64_32 stub slice (required when WATCHOS_DEPLOYMENT_TARGET < 27.0,
-/// because the engine is arm64-only) is handled by the Xcode project template
-/// — see CLAUDE.md. This target copies the engine + assets, generates the
+/// because the engine is arm64-only) is handled by the Xcode project template;
+/// see "Build pipeline" in [doc/architecture.md](../../doc/architecture.md).
+/// This target copies the engine + assets, generates the
 /// registrants / xcconfigs / SPM packages, and drives xcodebuild.
 ///
 /// Note: App Store distribution additionally requires wrapping this watch app
@@ -527,8 +530,7 @@ class NativeWatchosBundle extends Target {
         // project template supplies that slice (a stub, since the engine is
         // arm64-only, plus a "Requires Apple Watch Series 9 or later" fallback).
         // Letting the project's Standard Architectures apply preserves the fat
-        // executable; forcing arm64 here would strip the required slice. See
-        // the arm64_32 gate in CLAUDE.md.
+        // executable; forcing arm64 here would strip the required slice.
         if (buildInfo.simulator) 'ARCHS=arm64',
         ...signingArgs,
         if (!buildInfo.simulator) '-allowProvisioningUpdates',
