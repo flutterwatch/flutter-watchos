@@ -318,6 +318,30 @@ void main() {
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true),
     });
 
+    testUsingContext('the fallback keeps device and simulator apart', () async {
+      // The primary path cannot: `target_os` is `watchos` and the architecture is
+      // arm64 for both, and the protocol has no watchOS sub-config to carry the
+      // difference, so a device build and a simulator build hand a hook
+      // byte-identical input. The fallback is the one path where it survives,
+      // through the SDK root, and that is worth holding down — it is a live
+      // property that could regress without anything else noticing.
+      Future<Object?> sdkFor(String root) async {
+        final runner = _RecordingBuildRunner(failuresBeforeSuccess: 1);
+        await WatchosBuildHooks(buildRunner: runner).build(buildEnv(sdkRoot: root));
+        final code =
+            (runner.inputs.last.config.json['extensions']! as Map)['code_assets']! as Map;
+        return (code['ios']! as Map)['target_sdk'];
+      }
+
+      expect(await sdkFor('/sdk/WatchOS.sdk'), 'iphoneos');
+      expect(await sdkFor('/sdk/iPhoneSimulator.sdk'), 'iphonesimulator');
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+      Xcode: () => _FakeXcode(),
+    });
+
     testUsingContext('writes the result where CopyFlutterBundle reads it', () async {
       final runner = _RecordingBuildRunner();
       final Environment env = buildEnv();
