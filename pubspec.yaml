@@ -11,6 +11,21 @@ environment:
 dependencies:
   analyzer:
   archive:
+  # The Dart hooks protocol, used directly rather than through flutter_tools'
+  # translation layer: that layer maps flutter_tools' own closed set of target
+  # platforms onto the protocol, and watchOS is not in it, so a build routed
+  # through it introduces itself as iOS. Driving the protocol here is what lets
+  # watchOS name itself — see lib/build_targets/watchos_hooks.dart.
+  #
+  # These ranges must keep admitting the exact versions flutter_tools pins, so
+  # the tool resolves one copy of each. In particular code_assets stays on 1.x:
+  # 2.0.0 gives `OS` a non-primitive `==`, which makes flutter_tools' own
+  # `const _osTargets` map fail to compile, and the Flutter SDK checkout is
+  # never patched (see bin/internal/shared.sh).
+  code_assets: ^1.2.1
+  data_assets: ^0.20.0
+  hooks: ^2.0.2
+  hooks_runner: ^1.5.0
   flutter_tools:
     path: flutter/packages/flutter_tools
   file:

@@ -98,7 +98,7 @@ packages:
     source: hosted
     version: "1.1.2"
   code_assets:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: code_assets
       sha256: bf394f466ba9205f1812a0433b392d6af280f155f56651eda7c18cc32ed493b8
@@ -186,7 +186,7 @@ packages:
     source: hosted
     version: "3.1.7"
   data_assets:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: data_assets
       sha256: "8bfdbf25ec8a0f4b5a3c993042c4ab9996ba354f0b03d40f4e360f3730d71cae"
@@ -321,7 +321,7 @@ packages:
     source: hosted
     version: "2.3.2"
   hooks:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: hooks
       sha256: "9a62a50b50b769a737bc0a8ff381f333529df3ab746b2f6b02e83760231455ba"
@@ -329,7 +329,7 @@ packages:
     source: hosted
     version: "2.0.2"
   hooks_runner:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: hooks_runner
       sha256: a67ab8106545fcffcf5c43edf84b4be222fc95a9fbec8baef1bcaf4534540cfc

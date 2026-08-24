@@ -36,6 +36,7 @@ import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
 import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
@@ -43,6 +44,7 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
+import 'build_targets/watchos_hooks.dart' show WatchosHookRunner;
 import 'commands/attach.dart';
 import 'commands/build.dart';
 import 'commands/clean.dart';
@@ -191,6 +193,23 @@ Future<void> main(List<String> args) async {
     muteCommandLogging: muteCommandLogging,
     reportCrashes: false,
     overrides: <Type, Generator>{
+      // Runs the build hooks during a resident session. `RunCommand` already
+      // passes this through as the resident runner's `dartBuilder`, and
+      // `HotRunner._updateDevFS` calls it whenever the asset bundle needs
+      // rebuilding — but the getter reads it out of the context, so without an
+      // override it was null and the call was skipped for the whole session. A
+      // package that generates its assets from a build hook then served
+      // whatever the last full build happened to leave behind.
+      //
+      // What counts as "needs rebuilding" is upstream's
+      // `AssetBundle.needsBuild()`, untouched here; this restores the call it
+      // gates, not the gate.
+      //
+      // This is watchOS's own runner rather than upstream's, so a reload names
+      // the same target OS a build does. Upstream's asks for data assets alone,
+      // which carries no target OS at all, and a package choosing an output
+      // from it would swap in a different one every time the two took turns.
+      FlutterHookRunner: () => WatchosHookRunner(),
       ApplicationPackageFactory: () => WatchosApplicationPackageFactory(),
       BuildTargets: () => const BuildTargetsImpl(),
       Cache: () => WatchosFlutterCache(

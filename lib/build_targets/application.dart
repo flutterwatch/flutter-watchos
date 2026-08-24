@@ -31,7 +31,7 @@ import '../watchos_build_info.dart';
 import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
-import 'watchos_data_hooks.dart';
+import 'watchos_hooks.dart';
 import 'watchos_host_module.dart';
 import 'watchos_plugin_views.dart';
 
@@ -205,10 +205,11 @@ class WatchosCopyFlutterBundle extends CopyFlutterBundle {
     // native `*_watchos` package instead.
     //
     // Data assets are not in that boat: they are built on the host by ordinary
-    // Dart, and packages like flutter_scene use them to compile shader
-    // bundles. Skipping them silently shipped whatever a package's generated
-    // directory happened to hold, so run that half on its own.
-    WatchosBuildDataHooks(),
+    // Dart — a 3D or shader package compiling its GPU bundles for the
+    // target, say. Skipping them silently shipped whatever a package's
+    // generated directory happened to hold, so run that half on its own, and
+    // run it as watchOS rather than as iOS.
+    WatchosBuildHooks(),
     WatchosKernelSnapshot(),
   ];
 

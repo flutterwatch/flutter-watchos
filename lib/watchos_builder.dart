@@ -48,6 +48,20 @@ class WatchosBuilder {
     // CLAUDE.md.
     final String targetPlatformName = getNameForTargetPlatform(TargetPlatform.ios);
 
+    // Read by the hooks target when it has to fall back to naming the iOS
+    // family — see `watchosTargetOSName`. That fallback feeds an
+    // `IOSCodeConfig`, whose `targetSdk` can only say `iPhoneOS` or
+    // `iPhoneSimulator`, so this is deliberately the *iPhone* SDK rather than
+    // the watchOS one: it keeps the value consistent with the config it ends up
+    // in instead of describing an SDK no hook will hear about. Only
+    // device-vs-simulator is read out of it, and the two SDKs agree on that.
+    //
+    // Nothing else in this pipeline reads it: the release path is
+    // AotElfRelease, not iOS's AotAssembly.
+    final String sdkRoot = await globals.xcode!.sdkLocation(
+      watchosBuildInfo.simulator ? EnvironmentType.simulator : EnvironmentType.physical,
+    );
+
     final environment = Environment(
       projectDir: project.directory,
       outputDir: outputDir,
@@ -68,6 +82,7 @@ class WatchosBuilder {
         kTargetFile: targetFile,
         kBuildMode: buildModeName,
         kTargetPlatform: targetPlatformName,
+        kSdkRoot: sdkRoot,
         ...buildInfo.toBuildSystemEnvironment(),
       },
       artifacts: globals.artifacts!,

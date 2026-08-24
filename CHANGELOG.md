@@ -32,7 +32,24 @@ the first change in a while that you can see rather than read about.
   such a package shipped whatever its generated directory happened to contain,
   left over from a macOS or simulator build of the same tree, or nothing at
   all. Neither failed the build; the app just rendered a black scene on the
-  device. Data-asset hooks now run as their own build step.
+  device. Data-asset hooks now run as their own build step, and that step tells
+  a hook it is building for `watchos` rather than for the iOS family.
+  flutter_tools maps its own closed set of target platforms onto the hooks
+  protocol and has no watchOS in it, so anything routed through it is announced
+  as iOS; the step assembles the protocol input itself instead. A package
+  picking a per-platform output now picks the right one rather than guessing,
+  and hot reload runs the same pass, so a reload and a build no longer name
+  different targets.
+
+  Code assets are requested and then discarded. The protocol keeps the target
+  OS *inside* the code-asset config, so asking is the only way to say
+  `watchos`; nothing a code-asset hook produces is installed into a watchOS
+  app, whose plugins are native and resolved by the package manager, and the
+  app bundle is unchanged. An app with no hook-carrying packages is unaffected.
+  A hook that cannot cope with an unfamiliar target OS makes the pass retry
+  under the iOS-family name it understands, so apps that built before still
+  build — `package:code_assets` throws on an OS it does not know until 2.0.0,
+  which `objective_c` and so most plugin graphs inherit today.
 - **`--watchos-log-to-file`.** A watch has no console to attach to, and
   `print()` and engine logs both go to stderr, which on a device goes nowhere.
   Launching with this flag redirects them into the app's own container, where

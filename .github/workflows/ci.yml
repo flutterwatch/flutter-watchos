@@ -23,8 +23,11 @@ jobs:
       - name: Bootstrap (pinned SDK + snapshot compile)
         run: ./bin/flutter-watchos --version
 
+      # --fatal-infos so the analyzer gates a pull request the way the tests
+      # do. Without it `dart analyze` exits 0 on infos, and a lint can sit in
+      # the tree indefinitely while this step reports green.
       - name: Analyze
-        run: ./flutter/bin/dart analyze --fatal-warnings
+        run: ./flutter/bin/dart analyze --fatal-infos
 
       - name: Unit tests
         run: ./flutter/bin/dart test test/general
