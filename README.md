@@ -136,6 +136,8 @@ if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
 
 Text input (the system keyboard), Digital Crown scrolling and haptics, and app-lifecycle events (`WidgetsBindingObserver`) are all supported.
 
+Apps render with **Impeller on Metal**, the same renderer Flutter uses on iOS — no opt-in required. If a watch cannot open a Metal device the engine falls back to Skia's software rasterizer on its own, and an app can ask for that path explicitly with `FLTEnableImpeller` set to `false` in `watchos/Runner/Info.plist`.
+
 ## Docs
 
 #### App development

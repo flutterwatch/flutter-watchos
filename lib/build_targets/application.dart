@@ -281,10 +281,12 @@ class WatchosCopyFlutterBundle extends CopyFlutterBundle {
       //
       // `darwin` is the bucket that matches what this toolchain ships:
       // SkSL + Metal, both renderers covered by one bundle. It has to be both,
-      // because the renderer is chosen at runtime (FLUTTER_WATCHOS_RENDERER,
-      // --watchos-renderer, or FLTEnableImpeller in the app's Info.plist), not
-      // at build time. `ios` would give Metal alone and break the software
-      // path, which is still the default.
+      // because the renderer is chosen at runtime, not at build time: Impeller
+      // is the default, and FLUTTER_WATCHOS_RENDERER / --watchos-renderer /
+      // FLTEnableImpeller=false in the app's Info.plist each select software
+      // instead — as does the engine's own fallback when no Metal device can
+      // be opened. `ios` would give Metal alone and leave that path with no
+      // shaders.
       //
       // The platform also reaches per-asset `platforms:` filtering, where it is
       // compared against `osName` — 'macos' under darwin, 'android' before.
@@ -426,9 +428,8 @@ class NativeWatchosBundle extends Target {
 
     // 1. Stage the engine into watchos/Flutter/ as Flutter.framework, alongside
     //    flutter_embedder.h + icudtl.dat + the core snapshots. watchOS uses the
-    //    Flutter embedder C API with software rendering (driven by
-    //    Runner/FlutterRunner.swift); the engine ships as a real framework the
-    //    Xcode project links and embeds.
+    //    Flutter embedder C API (driven by Runner/FlutterRunner.swift); the
+    //    engine ships as a real framework the Xcode project links and embeds.
     await _copyEngine(watchosProjectDir);
     _writeEngineDepfile(environment);
 
@@ -704,8 +705,8 @@ class NativeWatchosBundle extends Target {
   /// the last of these only in debug, since AOT reads its snapshots out of
   /// `App.dylib`; see the comment at the copy itself.
   ///
-  /// watchOS consumes the Flutter **embedder C API** (software rendering, driven
-  /// by `Runner/FlutterRunner.swift`), but the engine ships as a real
+  /// watchOS consumes the Flutter **embedder C API** (driven by
+  /// `Runner/FlutterRunner.swift`), but the engine ships as a real
   /// `Flutter.framework` bundle — the Xcode project links and embeds it, and
   /// App Store packages must contain framework bundles, not bare dylibs.
   /// `icudtl.dat` and the snapshots stay as loose files here; the Xcode
@@ -1405,8 +1406,8 @@ class NativeWatchosBundle extends Target {
   /// archive path and the frameworks it needs, for [_appendNativeLinkFlags];
   /// null when there are no such plugins.
   ///
-  /// watchOS plugins here are **FFI-only** (the software-rendering embedder
-  /// exposes no `Flutter` Swift module or plugin registrar), so instead of
+  /// watchOS plugins here are **FFI-only** (the embedder API exposes no
+  /// `Flutter` Swift module or plugin registrar), so instead of
   /// resolving an SPM graph we compile the C/ObjC sources directly and
   /// `-force_load` the archive into Runner. `-force_load` keeps every member —
   /// FFI symbols have no compile-time caller, so they would otherwise be

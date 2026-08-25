@@ -39,7 +39,7 @@ import 'watchos_vm_relay.dart';
 /// app runs on the watch and inherits nothing from this Mac, so they have to
 /// be carried across deliberately. Forwarding them here is what makes
 ///
-///   FLUTTER_WATCHOS_RENDERER=metal flutter-watchos run --profile -d `<id>`
+///   FLUTTER_WATCHOS_RENDERER=software flutter-watchos run --profile -d `<id>`
 ///
 /// mean the same thing on a device as `SIMCTL_CHILD_…` does on the simulator —
 /// and it is what lets a benchmark script select a renderer per arm, which it
@@ -49,7 +49,11 @@ import 'watchos_vm_relay.dart';
 /// Values are passed through untouched; the engine is the only validator.
 @visibleForTesting
 const engineSwitchEnvironment = <String>[
-  // Renderer selection: "metal", or anything else for software.
+  // Renderer selection. Impeller on Metal is the engine's default, so the
+  // value that changes anything is "software" — "metal" only forces back what
+  // an app already gets, which is what a renderer A/B's Metal arm wants to say
+  // out loud. Note the empty string never travels (see below), so an A/B arm
+  // has to name its renderer rather than leaving it unset.
   'FLUTTER_WATCHOS_RENDERER',
   // "fallback" restores the engine's free-running 60 Hz timer instead of the
   // display clock. The A/B switch behind scripts/scroll_vsync_ab.sh.
