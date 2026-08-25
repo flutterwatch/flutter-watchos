@@ -2,8 +2,38 @@
 
 ## 0.1.0-beta.10 (closed beta)
 
-Moves to Flutter 3.47.1 and gives the engine the display's own clock, which is
-the first change in a while that you can see rather than read about.
+Moves to Flutter 3.47.1, renders on the watch GPU by default, and gives the
+engine the display's own clock — two changes in a row you can see rather than
+read about.
+
+- **Your app renders on the GPU now.** Impeller on Metal is the default
+  renderer; it used to be Skia's software rasterizer on the CPU. watchOS
+  declares no Metal framework in its SDK, which is why this took a while: the
+  engine is built against an SDK overlay that supplies the framework watchOS
+  ships but does not advertise. Nothing in an app has to change, and nothing
+  opts in.
+
+  An app can still opt out — `FLTEnableImpeller` set to `false` in
+  `watchos/Runner/Info.plist` — and the key is read in both directions now,
+  where before only `true` meant anything. If a watch cannot open a Metal
+  device the engine falls back to the software rasterizer on its own, so the
+  default cannot leave an app with no renderer. For development,
+  `FLUTTER_WATCHOS_RENDERER=software` on the simulator and
+  `--watchos-renderer=software` on a device do the same thing per-run.
+
+- **Images with `cacheWidth` or `ResizeImage` decode correctly again.** Metal's
+  only scaling blit comes from MetalPerformanceShaders, which watchOS does not
+  ship, so `BlitPassMTL::ResizeTexture` had nothing to scale with. It reported
+  success anyway and left the caller a texture nothing had written to.
+  Downscales now take upstream's own CPU path — the one meant for a backend
+  that cannot scale — and the blit reports the failure honestly.
+
+- **The engine is pinned by what it is, not by a Flutter version.**
+  `bin/internal/engine.version` now holds an engine id (`engine-…`) derived
+  from the sources and build arguments that determine the binary, the way
+  flutter-tvos pins its engine. A Flutter release that changes nothing the
+  engine depends on no longer forces a rebuild, a re-upload, or a new download
+  for you.
 
 - **The engine now runs on the display's clock.** watchOS has no
   `CADisplayLink` — it is `API_UNAVAILABLE(watchos)` in the SDK — so the engine
