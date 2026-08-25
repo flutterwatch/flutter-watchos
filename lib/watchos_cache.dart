@@ -4,7 +4,6 @@
 // found in the LICENSE file.
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
@@ -254,42 +253,7 @@ class WatchosFlutterCache extends FlutterCache {
 ///
 /// The GitHub Releases base URL can be overridden with the
 /// `WATCHOS_ENGINE_BASE_URL` environment variable. The release tag comes from
-/// `bin/internal/engine.version` (e.g. `v0.1.0-flutter3.44.4`).
-/// The engine id in a `/v1/engine-for` response, or null if there isn't a
-/// usable one — a non-200, a body that is not JSON, a missing `engine_id`, or
-/// one shaped wrongly.
-///
-/// Null always means "fall back to the pinned tag", so every malformed answer
-/// degrades to the behaviour the CLI had before the service existed.
-///
-/// The id is interpolated into a download URL as a path segment, so its shape
-/// is checked here rather than assumed from the server's own validation: this
-/// CLI can be pointed at any host via WATCHOS_ARTIFACTS_API. Dots are allowed
-/// because legacy tags contain them (`v0.1.8-flutter3.47.1`), but a segment of
-/// nothing but dots is refused — `..` would climb the URL path.
-String? engineTagFromResponse(int statusCode, String body) {
-  if (statusCode != 200) {
-    return null;
-  }
-  Object? decoded;
-  try {
-    decoded = json.decode(body);
-  } on FormatException {
-    return null;
-  }
-  if (decoded is! Map<String, Object?>) {
-    return null;
-  }
-  final Object? id = decoded['engine_id'];
-  if (id is! String || !RegExp(r'^[A-Za-z0-9._-]{1,100}$').hasMatch(id)) {
-    return null;
-  }
-  if (RegExp(r'^\.+$').hasMatch(id)) {
-    return null;
-  }
-  return id;
-}
-
+/// `bin/internal/engine.version` (e.g. `engine-76856972325c`).
 class WatchosEngineArtifacts extends EngineCachedArtifact {
   WatchosEngineArtifacts(
     Cache cache, {
@@ -324,16 +288,18 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     return versionFile.existsSync() ? versionFile.readAsStringSync().trim() : null;
   }
 
-  /// Resolved once per run by [resolveReleaseTag]; null until then.
-  String? _resolvedTag;
-
-  /// The tag artifacts are fetched under — an engine id like `e76856972325c`
-  /// once the service has resolved one, otherwise the pinned release tag.
+  /// The engine id the artifacts are stored under, e.g.
+  /// `engine-76856972325c`, from `bin/internal/engine.version`.
+  ///
+  /// It names WHAT WAS BUILT rather than the Flutter version it happened to be
+  /// built for, which is the same choice flutter-tvos makes and for the same
+  /// reason: a version-shaped tag ("v0.1.8-flutter3.47.1") goes stale the
+  /// moment one engine is reused across two Flutter releases, and forces a
+  /// rebuild and a 75 MB re-upload of bytes that are already there. The id
+  /// comes from engine_build/scripts/engine_id.sh, which hashes what actually
+  /// determines the binary, so a framework-only release simply leaves this pin
+  /// alone.
   String get releaseTag {
-    final String? resolved = _resolvedTag;
-    if (resolved != null) {
-      return resolved;
-    }
     if (version == null || version!.isEmpty) {
       throwToolExit(
         'Could not read engine version from bin/internal/engine.version.\n'
@@ -341,73 +307,6 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       );
     }
     return version!;
-  }
-
-  /// Asks the service which engine this Flutter version uses, and remembers
-  /// the answer for the rest of the run.
-  ///
-  /// The pin in `bin/internal/engine.version` names a Flutter version the
-  /// engine binary does not actually depend on, so a framework-only release
-  /// used to force a rebuild and a fresh upload of ~75 MB that was byte-for-
-  /// byte the previous engine. The service maps many Flutter versions onto one
-  /// engine id instead, and this is the CLI asking.
-  ///
-  /// EVERY failure falls back to the pin, quietly. Offline, a service that is
-  /// down, a self-hosted setup with no mapping table, a Flutter version nobody
-  /// has mapped yet — all of them are ordinary, and all of them still work
-  /// exactly as before, because the pinned tag is a complete answer on its own.
-  /// This is an optimisation, not a dependency.
-  ///
-  /// Note the mapping is consulted when a download actually happens. An engine
-  /// already extracted in the cache is not re-checked against the service, so
-  /// re-pointing a version at a rebuilt engine reaches a machine that has
-  /// already precached only when something else invalidates its cache.
-  Future<String> resolveReleaseTag() async {
-    final String? cached = _resolvedTag;
-    if (cached != null) {
-      return cached;
-    }
-
-    // A hard override, for bisecting an engine or testing an unreleased one.
-    final String? forced = _platform.environment['WATCHOS_ENGINE_TAG'];
-    if (forced != null && forced.isNotEmpty) {
-      _logger.printTrace('watchOS engine tag forced to $forced by WATCHOS_ENGINE_TAG');
-      return _resolvedTag = forced;
-    }
-
-    final String? apiBase = watchosArtifactApiBase(_platform);
-    if (apiBase == null) {
-      return _resolvedTag = releaseTag;
-    }
-
-    final String frameworkVersion = globals.flutterVersion.frameworkVersion;
-    final client = HttpClient()
-      // Short on purpose: this runs before every download, and a service that
-      // hangs must cost seconds rather than the whole command.
-      ..connectionTimeout = const Duration(seconds: 5);
-    try {
-      final HttpClientRequest request = await client.getUrl(
-        Uri.parse('$apiBase/v1/engine-for/${Uri.encodeComponent(frameworkVersion)}'),
-      );
-      final HttpClientResponse response = await request.close().timeout(
-        const Duration(seconds: 5),
-      );
-      final String text = await utf8.decoder.bind(response).join();
-      final String? id = engineTagFromResponse(response.statusCode, text);
-      if (id != null) {
-        _logger.printTrace('watchOS engine for Flutter $frameworkVersion resolved to $id');
-        return _resolvedTag = id;
-      }
-      _logger.printTrace(
-        'No watchOS engine mapping for Flutter $frameworkVersion '
-        '(HTTP ${response.statusCode}); using the pinned tag.',
-      );
-    } on Exception catch (error) {
-      _logger.printTrace('watchOS engine resolution failed ($error); using the pinned tag.');
-    } finally {
-      client.close(force: true);
-    }
-    return _resolvedTag = releaseTag;
   }
 
   /// Base URL for GitHub Releases downloads.
@@ -449,10 +348,6 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     FileSystem fileSystem,
     OperatingSystemUtils operatingSystemUtils,
   ) async {
-    // Resolve before anything consults `releaseTag`: the local-artifact
-    // strategies below compare the extracted engine against it.
-    await resolveReleaseTag();
-
     // --- Strategy 1: WATCHOS_ENGINE_ARTIFACTS points at a ready dir ---
     final String? envDir = _platform.environment['WATCHOS_ENGINE_ARTIFACTS'];
     if (envDir != null && envDir.isNotEmpty && fileSystem.directory(envDir).existsSync()) {
