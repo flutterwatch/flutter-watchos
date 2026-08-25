@@ -155,6 +155,36 @@ void main() {
       // stale would delete a local engine build and re-download over it.
       expect(engineArtifactsMatchTag(artifactDir, 'v0.1.3-flutter3.44.4'), isTrue);
     });
+
+    // Reusable and verified are not the same thing, and the bool cannot tell
+    // them apart. On 2026-08-25 an unstamped four-day-old engine_artifacts/
+    // answered for a freshly built id: precache reported success and the CLI
+    // ran the old binary. The caller warns on this case, which it can only do
+    // if the case is distinguishable.
+    testWithoutContext('a matching stamp reports as verified', () {
+      writeEngineVersionStamp(artifactDir, 'engine-ddc777be435e');
+      expect(engineArtifactsMatch(artifactDir, 'engine-ddc777be435e'),
+          EngineArtifactsMatch.stamped);
+    });
+
+    testWithoutContext('a stale stamp reports as mismatched', () {
+      writeEngineVersionStamp(artifactDir, 'engine-cf45e013db7c');
+      expect(engineArtifactsMatch(artifactDir, 'engine-ddc777be435e'),
+          EngineArtifactsMatch.mismatched);
+    });
+
+    testWithoutContext('an unstamped directory reports as unverifiable, not matched', () {
+      expect(engineArtifactsMatch(artifactDir, 'engine-ddc777be435e'),
+          EngineArtifactsMatch.unverifiable);
+      // Still reusable — refusing would break a local engine build.
+      expect(engineArtifactsMatchTag(artifactDir, 'engine-ddc777be435e'), isTrue);
+    });
+
+    testWithoutContext('a blank stamp is unverifiable rather than a mismatch', () {
+      artifactDir.childFile(kWatchosEngineVersionFileName).writeAsStringSync('  \n');
+      expect(engineArtifactsMatch(artifactDir, 'engine-ddc777be435e'),
+          EngineArtifactsMatch.unverifiable);
+    });
   });
 
   group('apiGateErrorCode', () {

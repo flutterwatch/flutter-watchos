@@ -74,16 +74,50 @@ void writeEngineVersionStamp(Directory artifactDir, String tag) {
   artifactDir.childFile(kWatchosEngineVersionFileName).writeAsStringSync('$tag\n');
 }
 
-/// Whether [artifactDir] can be reused for [tag].
-///
-/// Unstamped directories are reusable: they are local engines, not downloads
-/// (see [kWatchosEngineVersionFileName]). A stamped one is reusable only when
-/// it matches, which is what makes an engine bump actually reach an existing
-/// install.
-bool engineArtifactsMatchTag(Directory artifactDir, String tag) {
-  final String? stamped = readEngineVersionStamp(artifactDir);
-  return stamped == null || stamped == tag;
+/// How an extracted engine directory relates to the tag being asked for — the
+/// three cases are not the same, and collapsing them to a bool is what let a
+/// stale engine pass for a fresh one.
+enum EngineArtifactsMatch {
+  /// Stamped with this exact tag. Reuse it.
+  stamped,
+
+  /// Stamped with something else: an engine bump that has not arrived yet.
+  /// Re-fetch.
+  mismatched,
+
+  /// No stamp at all. Reusable, but only because refusing would break a
+  /// hand-assembled local engine — NOT because it was checked. See
+  /// [engineArtifactsMatchTag].
+  unverifiable,
 }
+
+/// Whether [artifactDir] can be reused for [tag], and on what grounds.
+///
+/// A stamped directory is reusable only when it matches, which is what makes an
+/// engine bump reach an existing install.
+///
+/// An unstamped one is reusable too, and that is the dangerous case. It is
+/// meant for a local engine somebody built and dropped in, which has no id to
+/// declare — but nothing distinguishes it from a download whose stamp went
+/// missing, or a tree that has simply gone stale. On 2026-08-25 exactly that
+/// happened: a four-day-old engine_artifacts/ answered for a freshly built id,
+/// `precache` reported success, and the CLI ran the old binary. Everything this
+/// project's tooling produces is stamped now (package_artifacts.sh writes it),
+/// so an unstamped tree really is hand-assembled — and the caller says so out
+/// loud rather than reusing it in silence.
+EngineArtifactsMatch engineArtifactsMatch(Directory artifactDir, String tag) {
+  final String? stamped = readEngineVersionStamp(artifactDir);
+  if (stamped == null) {
+    return EngineArtifactsMatch.unverifiable;
+  }
+  return stamped == tag
+      ? EngineArtifactsMatch.stamped
+      : EngineArtifactsMatch.mismatched;
+}
+
+/// Whether [artifactDir] can be reused for [tag] at all.
+bool engineArtifactsMatchTag(Directory artifactDir, String tag) =>
+    engineArtifactsMatch(artifactDir, tag) != EngineArtifactsMatch.mismatched;
 
 /// The zips still owed to this artifact directory, newline-separated in the
 /// marker file. Unknown names are ignored so a stale or hand-edited marker
@@ -372,7 +406,21 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         await _fetchPendingZips(pending, fileSystem, operatingSystemUtils);
         return;
       }
-      _logger.printTrace('Using pre-extracted watchOS engine artifacts at ${location.path}');
+      if (engineArtifactsMatch(location, releaseTag) ==
+          EngineArtifactsMatch.unverifiable) {
+        // Reused, but nobody checked it. Said at warning level because the
+        // failure it precedes is silent: the wrong engine runs, everything
+        // reports success, and the symptom shows up somewhere else entirely.
+        _logger.printWarning(
+          'Using an unstamped watchOS engine at ${location.path}.\n'
+          'It carries no .engine_version, so there is no way to tell whether it '
+          'is $releaseTag. If it came from a build, re-package it — '
+          'package_artifacts.sh stamps what it writes. To fetch $releaseTag '
+          'instead, delete that directory and re-run precache.',
+        );
+      } else {
+        _logger.printTrace('Using pre-extracted watchOS engine artifacts at ${location.path}');
+      }
       return;
     }
 
