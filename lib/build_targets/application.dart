@@ -700,7 +700,9 @@ class NativeWatchosBundle extends Target {
   /// Stages the embedder engine bits into the watchos project's `Flutter/`
   /// directory: the engine dylib as `Flutter.framework/Flutter`,
   /// `flutter_embedder.h`, `clang_arm64/icudtl.dat`, and the core snapshots
-  /// (`gen/flutter/lib/snapshot/{vm_isolate_snapshot,isolate_snapshot}.bin`).
+  /// (`gen/flutter/lib/snapshot/{vm_isolate_snapshot,isolate_snapshot}.bin`) —
+  /// the last of these only in debug, since AOT reads its snapshots out of
+  /// `App.dylib`; see the comment at the copy itself.
   ///
   /// watchOS consumes the Flutter **embedder C API** (software rendering, driven
   /// by `Runner/FlutterRunner.swift`), but the engine ships as a real
@@ -791,29 +793,67 @@ class NativeWatchosBundle extends Target {
     }
     copyInto(globals.fs.path.join(engineDir, 'flutter_embedder.h'), 'flutter_embedder.h');
     copyInto(globals.fs.path.join(engineDir, 'clang_arm64', 'icudtl.dat'), 'icudtl.dat');
-    copyInto(
-      globals.fs.path.join(
-        simEngineDir,
-        'gen',
-        'flutter',
-        'lib',
-        'snapshot',
-        'vm_isolate_snapshot.bin',
+    final ({List<File> inputs, List<File> outputs}) snapshots = stageJitCoreSnapshots(
+      snapshotSource: globals.fs.directory(
+        globals.fs.path.join(simEngineDir, 'gen', 'flutter', 'lib', 'snapshot'),
       ),
-      'vm_isolate_snapshot.bin',
+      flutterDir: flutterDir,
+      isDebug: buildInfo.buildInfo.isDebug,
     );
-    copyInto(
-      globals.fs.path.join(
-        simEngineDir,
-        'gen',
-        'flutter',
-        'lib',
-        'snapshot',
-        'isolate_snapshot.bin',
-      ),
-      'isolate_snapshot.bin',
-    );
+    _stagedEngineInputs.addAll(snapshots.inputs);
+    _stagedEngineOutputs.addAll(snapshots.outputs);
     globals.logger.printTrace('Copied watchOS embedder engine into ${flutterDir.path}');
+  }
+
+  /// The Dart core snapshots the JIT engine loads from the bundle root.
+  static const List<String> _jitCoreSnapshots = <String>[
+    'vm_isolate_snapshot.bin',
+    'isolate_snapshot.bin',
+  ];
+
+  /// Stages [_jitCoreSnapshots] into [flutterDir], returning the sources read
+  /// and the files written so the caller can record them in the depfile.
+  ///
+  /// These blobs are read by exactly one branch of the engine's host
+  /// bootstrap — the one `FlutterEngineRunsAOTCompiledDartCode()` does NOT
+  /// take. An AOT app resolves `kDartIsolateSnapshotData` out of `App.dylib`
+  /// and never opens them, so copying them into a profile/release bundle ships
+  /// dead weight: 11 MB of `isolate_snapshot.bin` reached the App Store inside
+  /// a 46 MB watch app. It is the same mistake [copyFlutterAssetsTree] already
+  /// guards against for the JIT payload one layer up, in flutter_assets.
+  ///
+  /// They cannot simply be left unstaged. Both are Copy Bundle Resources
+  /// entries in the project template and in every app already created, and a
+  /// missing build input fails the Xcode build — so an AOT build writes empty
+  /// placeholders, which is what `vm_isolate_snapshot.bin` has been in
+  /// practice all along. The placeholder is rewritten on every AOT build, so a
+  /// bundle staged by an earlier debug build loses the real blob rather than
+  /// keeping it.
+  @visibleForTesting
+  static ({List<File> inputs, List<File> outputs}) stageJitCoreSnapshots({
+    required Directory snapshotSource,
+    required Directory flutterDir,
+    required bool isDebug,
+  }) {
+    final inputs = <File>[];
+    final outputs = <File>[];
+    for (final String name in _jitCoreSnapshots) {
+      final File dest = flutterDir.childFile(name);
+      if (isDebug) {
+        final File source = snapshotSource.childFile(name);
+        // An engine drop without the blob is not fatal here; the JIT engine
+        // reports a missing snapshot far more clearly than a copy failure.
+        if (!source.existsSync()) {
+          continue;
+        }
+        source.copySync(dest.path);
+        inputs.add(source);
+      } else {
+        dest.writeAsBytesSync(const <int>[]);
+      }
+      outputs.add(dest);
+    }
+    return (inputs: inputs, outputs: outputs);
   }
 
   /// Assembles flutter_assets from the build output into

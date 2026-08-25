@@ -166,4 +166,91 @@ void main() {
       );
     });
   });
+
+  // The JIT core snapshots ship at the bundle root, referenced by Copy Bundle
+  // Resources entries the app cannot lose. Only the JIT engine reads them, so
+  // an AOT build must reduce them to placeholders rather than carrying 11 MB
+  // of `isolate_snapshot.bin` into the App Store.
+  group('stageJitCoreSnapshots', () {
+    late MemoryFileSystem fs;
+    late Directory snapshotSource;
+    late Directory flutterDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      snapshotSource = fs.directory('/engine/gen/flutter/lib/snapshot')
+        ..createSync(recursive: true);
+      flutterDir = fs.directory('/watchos/Flutter')..createSync(recursive: true);
+      snapshotSource.childFile('vm_isolate_snapshot.bin').writeAsStringSync('vm');
+      snapshotSource.childFile('isolate_snapshot.bin').writeAsStringSync('isolate-blob');
+    });
+
+    test('debug stages the real blobs and records them as inputs', () {
+      final ({List<File> inputs, List<File> outputs}) result =
+          NativeWatchosBundle.stageJitCoreSnapshots(
+        snapshotSource: snapshotSource,
+        flutterDir: flutterDir,
+        isDebug: true,
+      );
+
+      expect(flutterDir.childFile('isolate_snapshot.bin').readAsStringSync(), 'isolate-blob');
+      expect(flutterDir.childFile('vm_isolate_snapshot.bin').readAsStringSync(), 'vm');
+      expect(result.inputs.map((File f) => f.basename), <String>[
+        'vm_isolate_snapshot.bin',
+        'isolate_snapshot.bin',
+      ]);
+      expect(result.outputs, hasLength(2));
+    });
+
+    test('AOT writes empty placeholders and reads no source', () {
+      final ({List<File> inputs, List<File> outputs}) result =
+          NativeWatchosBundle.stageJitCoreSnapshots(
+        snapshotSource: snapshotSource,
+        flutterDir: flutterDir,
+        isDebug: false,
+      );
+
+      for (final name in <String>['vm_isolate_snapshot.bin', 'isolate_snapshot.bin']) {
+        final File staged = flutterDir.childFile(name);
+        expect(staged.existsSync(), isTrue, reason: '$name is a Copy Bundle Resources input');
+        expect(staged.lengthSync(), 0);
+      }
+      expect(result.inputs, isEmpty);
+      expect(result.outputs, hasLength(2));
+    });
+
+    test('a release build empties the blob a previous debug build staged', () {
+      NativeWatchosBundle.stageJitCoreSnapshots(
+        snapshotSource: snapshotSource,
+        flutterDir: flutterDir,
+        isDebug: true,
+      );
+      NativeWatchosBundle.stageJitCoreSnapshots(
+        snapshotSource: snapshotSource,
+        flutterDir: flutterDir,
+        isDebug: false,
+      );
+
+      expect(
+        flutterDir.childFile('isolate_snapshot.bin').lengthSync(),
+        0,
+        reason: 'switching to an AOT mode must not leave the JIT blob behind',
+      );
+    });
+
+    test('debug tolerates an engine drop without the blobs', () {
+      snapshotSource.childFile('isolate_snapshot.bin').deleteSync();
+
+      final ({List<File> inputs, List<File> outputs}) result =
+          NativeWatchosBundle.stageJitCoreSnapshots(
+        snapshotSource: snapshotSource,
+        flutterDir: flutterDir,
+        isDebug: true,
+      );
+
+      expect(flutterDir.childFile('isolate_snapshot.bin').existsSync(), isFalse);
+      expect(result.inputs, hasLength(1));
+      expect(result.outputs, hasLength(1));
+    });
+  });
 }
