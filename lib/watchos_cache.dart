@@ -253,7 +253,7 @@ class WatchosFlutterCache extends FlutterCache {
 ///
 /// The GitHub Releases base URL can be overridden with the
 /// `WATCHOS_ENGINE_BASE_URL` environment variable. The release tag comes from
-/// `bin/internal/engine.version` (e.g. `engine-76856972325c`).
+/// `bin/internal/engine.version` (e.g. `engine-cf45e013db7c`).
 class WatchosEngineArtifacts extends EngineCachedArtifact {
   WatchosEngineArtifacts(
     Cache cache, {
@@ -289,7 +289,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   }
 
   /// The engine id the artifacts are stored under, e.g.
-  /// `engine-76856972325c`, from `bin/internal/engine.version`.
+  /// `engine-cf45e013db7c`, from `bin/internal/engine.version`.
   ///
   /// It names WHAT WAS BUILT rather than the Flutter version it happened to be
   /// built for, which is the same choice flutter-tvos makes and for the same
