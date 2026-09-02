@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.1.0-beta.11 (closed beta)
+
+Three things the watch knew and your app did not — that memory is running out,
+what language the wearer reads, and when the first frame is ready — now reach
+Dart. Apps also stop launching onto the words "Starting Flutter…".
+
+- **Your app is told when the watch is running out of memory.** watchOS kills a
+  process that crosses its per-process limit (300 MB on a Series 10) with a bare
+  SIGKILL — no exception, no crash dialog, often not even a jetsam report. Until
+  now this platform was the only one where no low-memory signal arrived by any
+  route, so `WidgetsBindingObserver.didHaveMemoryPressure` never fired, Flutter's
+  image cache was never dropped, and no package holding GPU resources could be
+  asked to shed.
+
+  Three things now raise it: the kernel's memory-pressure source, a poll of the
+  remaining headroom, and **backgrounding** — the last matching what the iOS
+  embedder does, and the one that matters most, because jetsam picks background
+  processes first and orders them by footprint.
+
+  The thresholds are measured rather than chosen. On a Series 10, `watchos_demo`
+  loading its assets fell from 281 MB of headroom to 23 MB inside one second, so
+  the poll runs every 250 ms and acts below 64 MB; it now reports 63 MB left,
+  three quarters of a second before the kernel's own critical notice, where the
+  first attempt noticed at 23 MB and arrived after it. A burst is a different
+  matter: a probe allocating flat out went from 283 MB to killed in 1.7 seconds,
+  and nothing a poll can do saves that. The engine says at launch which paths are
+  live, so a run can be told apart from a hope.
+
+- **Apps see the watch's language.** `PlatformDispatcher.locales` was never
+  populated on watchOS, so `Localizations`, `MaterialApp.localizationsDelegates`,
+  `intl` and `DateFormat` all resolved against the framework default — a silent
+  wrong answer for every user whose watch is not in English. The full preferred-
+  language list is now sent at startup and again whenever it changes, including
+  the case that actually happens: the user leaves for Settings, changes the
+  language, and comes back.
+
+- **The engine reloads system fonts** when the set of registered fonts changes,
+  instead of keeping the collection it built at startup.
+
+- **A host can wait for Flutter's first frame.** `FlutterWatchOSHostSetFirstFrameCallback`
+  fires once, on the main thread, when Flutter has **rasterised** its first
+  frame. Registering after that has already happened invokes the callback
+  immediately rather than never. The engine also logs the launch-to-first-frame
+  time (396 ms for `watchos_demo` on a Series 10).
+
+  It reports rasterisation, not presentation, so it is not the cue for taking a
+  launch placeholder down — see the next entry. It was originally justified by
+  Metal producing no `CGImage`; that is not so on this engine, where Impeller
+  renders into an `MTLTexture` read back through a shared `MTLBuffer` and
+  presented through the same frame callback as software. Both renderers publish
+  frames today.
+
+- **Apps no longer come up on "Starting Flutter…".** That literal string was on
+  screen for the ~700 ms the engine takes to reach its first frame, in every app
+  this CLI has ever built. `FlutterHostView` now holds a launch placeholder and
+  cross-fades it out over 0.2 s once the first frame is on screen — the watchOS
+  shape of `FlutterViewController.splashScreenView` on iOS, which
+  `onFirstFrameRendered` takes down with the same 0.2 s alpha animation.
+
+  `FlutterHostView()` is unchanged at the call site and fills in plain black,
+  which is what watchOS draws behind the app icon while launching, so the
+  handover from the system launch screen is invisible. Supply your own with
+  `FlutterHostView { MyLaunchScreen() }`, or `FlutterHostView { EmptyView() }`
+  to opt out. watchOS has no launch storyboard, so there is nothing to load a
+  default from the way iOS does from `UILaunchStoryboardName`.
+
+  The cue is the frame reaching SwiftUI, not the callback above. Measured on a
+  simulator at 30 fps, mean luminance per sample: driven by the callback, one
+  hard step from black to the app; driven by the frame, the intended six-sample
+  ramp.
+
+- **`package:flutter_watchos` 0.1.0-beta.8** adds `WatchMemory`: how much the
+  process may still allocate before watchOS kills it
+  (`os_proc_available_memory()`), and its resident footprint as the kernel
+  accounts it (`phys_footprint`, which includes the GPU memory
+  `ProcessInfo.currentRss` omits). See [doc/memory.md](doc/memory.md).
+
+- **Watch-only apps get their plugin symbols again.** An app with no `ios/` or
+  `android/` directory, whose plugins are all watchOS-only, resolved *no*
+  plugins at all. `flutter pub get` writes its `dependencyGraph` only once it
+  recognises a plugin for a platform it knows about, and it does not know
+  watchOS — so the file it left behind was empty, plugin discovery walked that
+  empty list, no plugin archive was built, nothing was `-force_load`ed, and the
+  app binary shipped without a single FFI export. Every
+  `DynamicLibrary.process().lookup` then failed at runtime: one affected app
+  linked 0 of its 23 symbols and came up on a red `Failed to lookup symbol`
+  screen. Discovery now falls back to `.dart_tool/package_config.json`, which
+  pub writes for every resolved package whatever the platform.
+
 ## 0.1.0-beta.10 (closed beta)
 
 Moves to Flutter 3.47.1, renders on the watch GPU by default, and gives the
