@@ -1,3 +1,19 @@
+## 0.1.0-beta.8
+
+* **New:** `WatchMemory` — how much memory the process has left before watchOS
+  kills it. watchOS enforces a hard per-process limit and terminates with a
+  bare SIGKILL on the way past it, and Dart's `ProcessInfo.currentRss` cannot
+  see it coming: RSS omits the GPU and IOKit allocations the kernel charges to
+  the process. A run measured at 111 MB of RSS was killed by jetsam at
+  302.4 MB.
+
+  `WatchMemory.available` is `os_proc_available_memory()`, the figure that
+  actually governs; `WatchMemory.footprint` is `phys_footprint`, the quantity
+  jetsam compares against the limit. `available` returns 0 where the platform
+  cannot answer — the Simulator has no jetsam limit to report against — so
+  check `WatchMemory.availableIsSupported` to tell "no headroom" apart from
+  "no answer".
+
 ## 0.1.0-beta.7
 
 * **Fix:** the package is now Web-safe. `FlutterWatchosPlatform` is the guard

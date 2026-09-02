@@ -146,6 +146,7 @@ Apps render with **Impeller on Metal**, the same renderer Flutter uses on iOS â€
 - [Supported commands](doc/commands.md)
 - [Debugging apps](doc/debug-app.md)
 - [Measuring performance on a watch](doc/benchmarking.md)
+- [The 300 MB memory ceiling](doc/memory.md)
 - [Fragment shaders](doc/shaders.md)
 - [Accessibility](doc/accessibility.md)
 - [Publishing to the App Store](doc/publish-app.md)

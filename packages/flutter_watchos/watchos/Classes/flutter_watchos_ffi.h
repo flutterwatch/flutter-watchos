@@ -135,4 +135,29 @@ FLUTTER_WATCHOS_EXPORT int32_t flutter_watchos_crown_detent_haptics(void);
 FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_set_detent_haptics(
     int32_t enabled);
 
+#pragma mark - Memory
+
+// watchOS enforces a hard per-process memory limit and kills the app with
+// SIGKILL the moment it is crossed, leaving nothing in the run log. Dart's
+// ProcessInfo.currentRss cannot see this coming: it does not count GPU
+// allocations, which watchOS charges to the process. A run measured at 111 MB
+// of RSS was killed by jetsam at 302.4 MB.
+//
+// os_proc_available_memory() is the number that actually governs, and it is
+// the only one an app can read while it is still alive.
+
+/// Bytes the process may still allocate before watchOS kills it, or 0 where
+/// the platform cannot answer (the Simulator, or watchOS older than 6.0).
+FLUTTER_WATCHOS_EXPORT uint64_t flutter_watchos_available_memory(void);
+
+/// Whether [flutter_watchos_available_memory] reports a real figure on this
+/// device (1) or is unavailable (0).
+FLUTTER_WATCHOS_EXPORT int32_t flutter_watchos_available_memory_supported(void);
+
+/// Resident footprint of the process in bytes as the kernel accounts it —
+/// the quantity jetsam compares against the limit — or 0 if it cannot be
+/// read. Unlike Dart's RSS this includes memory the GPU driver holds on the
+/// process's behalf.
+FLUTTER_WATCHOS_EXPORT uint64_t flutter_watchos_memory_footprint(void);
+
 #endif /* FLUTTER_WATCHOS_FFI_H */

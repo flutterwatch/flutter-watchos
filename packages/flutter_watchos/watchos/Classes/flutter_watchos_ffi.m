@@ -8,6 +8,11 @@
 #include <sys/sysctl.h>
 #include <string.h>
 #include <os/lock.h>
+#include <mach/mach.h>
+#if __has_include(<os/proc.h>)
+#include <os/proc.h>
+#define FLUTTER_WATCHOS_HAS_OS_PROC 1
+#endif
 
 // Static buffers for string results (device info doesn't change at runtime).
 static char s_system_version[64] = {0};
@@ -241,4 +246,42 @@ void flutter_watchos_crown_set_detent_haptics(int32_t enabled) {
     os_unfair_lock_lock(&s_crown_lock);
     s_crown_detent_haptics = enabled ? 1 : 0;
     os_unfair_lock_unlock(&s_crown_lock);
+}
+
+
+#pragma mark - Memory
+
+uint64_t flutter_watchos_available_memory(void) {
+#if defined(FLUTTER_WATCHOS_HAS_OS_PROC) && TARGET_OS_WATCH && !TARGET_OS_SIMULATOR
+    if (@available(watchOS 6.0, *)) {
+        return (uint64_t)os_proc_available_memory();
+    }
+#endif
+    // The Simulator has no jetsam limit to report against, so callers get 0
+    // rather than a figure that would read as "plenty of room" on a device
+    // where the answer is meaningless.
+    return 0;
+}
+
+int32_t flutter_watchos_available_memory_supported(void) {
+#if defined(FLUTTER_WATCHOS_HAS_OS_PROC) && TARGET_OS_WATCH && !TARGET_OS_SIMULATOR
+    if (@available(watchOS 6.0, *)) {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+uint64_t flutter_watchos_memory_footprint(void) {
+    // phys_footprint is what jetsam judges: it includes IOKit/GPU memory
+    // charged to the process, which task_basic_info's resident_size and Dart's
+    // ProcessInfo.currentRss both omit.
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
+                                 (task_info_t)&info, &count);
+    if (kr != KERN_SUCCESS) {
+        return 0;
+    }
+    return (uint64_t)info.phys_footprint;
 }

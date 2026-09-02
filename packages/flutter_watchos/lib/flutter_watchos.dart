@@ -29,6 +29,7 @@ export 'src/watchos_ffi_bindings.dart' show WatchOSNativeBindings;
 // meant to be public.
 export 'src/platform_extension.dart';
 export 'src/haptics.dart' show WatchHaptics, WatchHapticType;
+export 'src/memory.dart' show WatchMemory;
 export 'src/status_bar.dart' show WatchStatusBar;
 export 'src/always_on.dart' show WatchAlwaysOn, WatchAlwaysOnBuilder;
 export 'src/scroll_physics.dart' show WatchScrollPhysics, WatchScrollBehavior;

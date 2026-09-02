@@ -61,6 +61,18 @@ class WatchOSNativeBindings {
       .lookupFunction<Float Function(), double Function()>(
           'flutter_watchos_screen_scale');
 
+  late final int Function() _availableMemory = _lib!
+      .lookupFunction<Uint64 Function(), int Function()>(
+          'flutter_watchos_available_memory');
+
+  late final int Function() _availableMemorySupported = _lib!
+      .lookupFunction<Int32 Function(), int Function()>(
+          'flutter_watchos_available_memory_supported');
+
+  late final int Function() _memoryFootprint = _lib!
+      .lookupFunction<Uint64 Function(), int Function()>(
+          'flutter_watchos_memory_footprint');
+
   late final void Function(int) _playHaptic = _lib!
       .lookupFunction<Void Function(Int32), void Function(int)>(
           'flutter_watchos_play_haptic');
@@ -185,6 +197,12 @@ class WatchOSNativeBindings {
 
   /// Plays a Taptic Engine haptic by raw `WKHapticType` value.
   void playHaptic(int type) => _playHaptic(type);
+
+  int availableMemory() => _availableMemory();
+
+  bool availableMemorySupported() => _availableMemorySupported() != 0;
+
+  int memoryFootprint() => _memoryFootprint();
 
   // --- System status bar (the time overlay) ---
   // Null-safe against [WatchOSNativeBindings.forTesting] (no linked library):

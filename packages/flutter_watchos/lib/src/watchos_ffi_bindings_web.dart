@@ -22,6 +22,12 @@ class WatchOSNativeBindings {
 
   void playHaptic(int type) {}
 
+  int availableMemory() => 0;
+
+  bool availableMemorySupported() => false;
+
+  int memoryFootprint() => 0;
+
   bool get statusBarHidden => false;
   set statusBarHidden(bool hidden) {}
 
