@@ -55,6 +55,31 @@ const String kWatchosPendingDownloadsFileName = '.pending_downloads';
 /// treated as stale, because there is no tag it could be compared against.
 const String kWatchosEngineVersionFileName = '.engine_version';
 
+/// Curl arguments that send the bearer token, WITHOUT putting it in argv.
+///
+/// `--header 'Authorization: Bearer …'` leaks the token twice over: argv is
+/// world-readable, so any user on the machine sees it in `ps` for as long as
+/// the download runs, and `precache -v` prints the command it is about to run —
+/// which is exactly the output people paste into bug reports. curl reads the
+/// same header from a `--config` file, whose contents it never echoes.
+///
+/// The file is written inside [tempDir] (already 0700 from `createTempSync`),
+/// narrowed to owner-only, and goes when the caller deletes that directory.
+/// Returns no arguments at all when there is no token — the anonymous case.
+List<String> curlAuthArgs(
+  String? token,
+  Directory tempDir,
+  OperatingSystemUtils operatingSystemUtils,
+) {
+  if (token == null || token.isEmpty) {
+    return const <String>[];
+  }
+  final File config = tempDir.childFile('auth.curl');
+  config.writeAsStringSync('header = "Authorization: Bearer $token"\n');
+  operatingSystemUtils.chmod(config, 'go-rwx');
+  return <String>['--config', config.path];
+}
+
 /// The engine tag [artifactDir] was downloaded from, or null when unstamped.
 String? readEngineVersionStamp(Directory artifactDir) {
   final File stamp = artifactDir.childFile(kWatchosEngineVersionFileName);
@@ -472,7 +497,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             // can be surfaced with the server's message instead of a bare
             // curl failure.
             if (apiMode) ...<String>['--write-out', '%{http_code}'],
-            if (token != null) ...<String>['--header', 'Authorization: Bearer $token'],
+            ...curlAuthArgs(token, tempDir, operatingSystemUtils),
             '--output', tempZip.path,
             url,
           ]);
@@ -577,7 +602,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             '--silent',
             '--show-error',
             '--write-out', '%{http_code}',
-            if (token != null) ...<String>['--header', 'Authorization: Bearer $token'],
+            ...curlAuthArgs(token, tempDir, operatingSystemUtils),
             '--output', tempZip.path,
             url,
           ]);

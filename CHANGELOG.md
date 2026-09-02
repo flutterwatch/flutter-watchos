@@ -77,6 +77,15 @@ Dart. Apps also stop launching onto the words "Starting Flutter…".
   accounts it (`phys_footprint`, which includes the GPU memory
   `ProcessInfo.currentRss` omits). See [doc/memory.md](doc/memory.md).
 
+- **`precache` no longer puts your API token in the process list.** The
+  download sent it as `--header "Authorization: Bearer …"`, and argv is not
+  private: any user on the machine could read the token out of `ps` for as long
+  as a download ran, and `precache -v` printed it verbatim — which is exactly
+  the output that gets pasted into a bug report. curl reads the same header
+  from a `--config` file now, written owner-only inside the temporary directory
+  the download already deletes. If a verbose log of yours ever left your
+  machine, run `flutter-watchos login` again to replace the token in it.
+
 - **Watch-only apps get their plugin symbols again.** An app with no `ios/` or
   `android/` directory, whose plugins are all watchOS-only, resolved *no*
   plugins at all. `flutter pub get` writes its `dependencyGraph` only once it

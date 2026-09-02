@@ -10,6 +10,7 @@ import 'package:flutter_watchos/commands/precache.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
 
 import '../src/common.dart';
+import '../src/fakes.dart';
 
 /// All features either enabled or disabled, depending on [enabled]; every other
 /// FeatureFlags member returns false.
@@ -184,6 +185,62 @@ void main() {
       artifactDir.childFile(kWatchosEngineVersionFileName).writeAsStringSync('  \n');
       expect(engineArtifactsMatch(artifactDir, 'engine-ddc777be435e'),
           EngineArtifactsMatch.unverifiable);
+    });
+  });
+
+  group('curlAuthArgs', () {
+    // The token must never reach argv. argv is world-readable — any user on
+    // the machine can read it out of `ps` while a download runs — and
+    // `precache -v` prints the command it is about to run, which is exactly
+    // the output that gets pasted into bug reports.
+    late MemoryFileSystem fs;
+    late Directory tempDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      tempDir = fs.directory('/tmp/dl')..createSync(recursive: true);
+    });
+
+    testWithoutContext('never returns the token as an argument', () {
+      const token = 'fw_secret_value_that_must_not_leak';
+      final List<String> args =
+          curlAuthArgs(token, tempDir, FakeOperatingSystemUtils());
+      expect(args.join(' '), isNot(contains(token)));
+      expect(args.join(' '), isNot(contains('Bearer')));
+      expect(args.first, '--config');
+    });
+
+    testWithoutContext('puts the header in a config file curl can read', () {
+      const token = 'fw_abc123';
+      final List<String> args =
+          curlAuthArgs(token, tempDir, FakeOperatingSystemUtils());
+      final File config = fs.file(args[1]);
+      expect(config.existsSync(), isTrue);
+      // curl's own config syntax: `header = "..."`.
+      expect(config.readAsStringSync().trim(),
+          'header = "Authorization: Bearer $token"');
+    });
+
+    testWithoutContext("writes the file inside the caller's temp dir", () {
+      // That directory is created 0700 and deleted when the download ends, so
+      // the token neither outlives the run nor is readable by anyone else.
+      final List<String> args =
+          curlAuthArgs('fw_x', tempDir, FakeOperatingSystemUtils());
+      expect(args[1], startsWith(tempDir.path));
+    });
+
+    testWithoutContext('narrows the file to the owner', () {
+      final os = FakeOperatingSystemUtils();
+      final List<String> args = curlAuthArgs('fw_x', tempDir, os);
+      expect(os.chmods, <List<String>>[
+        <String>[args[1], 'go-rwx'],
+      ]);
+    });
+
+    testWithoutContext('sends nothing at all when there is no token', () {
+      expect(curlAuthArgs(null, tempDir, FakeOperatingSystemUtils()), isEmpty);
+      expect(curlAuthArgs('', tempDir, FakeOperatingSystemUtils()), isEmpty);
+      expect(tempDir.childFile('auth.curl').existsSync(), isFalse);
     });
   });
 
