@@ -11,7 +11,11 @@ import SwiftUI
 /// Displays the running Flutter app: the engine-rendered frames plus the
 /// native overlays that ride them (text-input proxies, platform views) and
 /// the input plumbing (touches, Digital Crown).
-public struct FlutterHostView: View {
+///
+/// While the engine boots — around 600 ms on a watch — the view shows a launch
+/// placeholder and fades it out once Flutter's first frame is on screen. See
+/// `init(splashScreen:)`.
+public struct FlutterHostView<Splash: View>: View {
     @ObservedObject var runner = FlutterRunner.shared
     // The engine publishes the text-field rects; this is a pure mirror of them.
     @ObservedObject var textInput = WatchTextInput.shared
@@ -30,8 +34,26 @@ public struct FlutterHostView: View {
     // Per-gesture cache of the frame drag's ownership decision (nil = no
     // active drag). See the simultaneousGesture below.
     @State private var dragOwnedByNative: Bool?
+    /// Drives the placeholder's removal. Separate from
+    /// `runner.displayingFlutterUI` so the fade can be opened explicitly with
+    /// `withAnimation`: the flag flips inside the display-tick update that
+    /// also publishes the first frame, and an implicit `.animation(_:value:)`
+    /// does not reliably animate across that transaction — measured as a hard
+    /// cut on device-shaped content rather than a fade.
+    @State private var splashVisible = true
+    /// Held over the screen until the engine's first frame lands.
+    private let splashScreen: Splash
 
-    public init() {}
+    /// Shows `splashScreen` from launch and cross-fades it away once Flutter
+    /// has drawn its first frame — the watchOS shape of
+    /// `FlutterViewController.splashScreenView` on iOS.
+    ///
+    ///     FlutterHostView { MyLaunchScreen() }
+    ///
+    /// Pass `EmptyView()` to opt out and let the app come up on bare black.
+    public init(@ViewBuilder splashScreen: () -> Splash) {
+        self.splashScreen = splashScreen()
+    }
 
     public var body: some View {
         GeometryReader { _ in
@@ -41,7 +63,10 @@ public struct FlutterHostView: View {
                         .resizable()
                         .frame(width: runner.sizePoints.width, height: runner.sizePoints.height)
                 } else {
-                    Text("Starting Flutter…")
+                    // Nothing rendered yet. The launch placeholder at the
+                    // bottom of this chain covers the gap; this is only the
+                    // ground beneath it.
+                    Color.black
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
@@ -251,6 +276,41 @@ public struct FlutterHostView: View {
             }
             .allowsHitTesting(false)
         }
+        // Launch placeholder. Flutter's rendering is asynchronous — the engine
+        // reaches its first frame around 600 ms after launch — so something has
+        // to hold the screen until then or the app comes up empty. This is the
+        // watchOS shape of `FlutterViewController.splashScreenView` on iOS:
+        // shown from launch, faded out over 0.2 s (iOS uses the same duration)
+        // once the first frame is on screen, then removed from the hierarchy.
+        //
+        // `FlutterHostView()` defaults to black — what watchOS itself draws
+        // behind the app icon while launching — so the handover from the system
+        // launch screen to Flutter is invisible. watchOS has no launch
+        // storyboard, so there is nothing to load a default from the way
+        // `loadDefaultSplashScreenView` does from `UILaunchStoryboardName`.
+        //
+        // Gated on `displayingFlutterUI`, never on `runner.frame`: see the
+        // property's own note for why the frame image cannot serve here.
+        .overlay {
+            ZStack {
+                if splashVisible {
+                    splashScreen
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
+                }
+            }
+            // Full-bleed like the Flutter surface itself: a launch screen
+            // inset by the clock and the display curvature would not line up
+            // with the frame it hands over to.
+            .ignoresSafeArea()
+            // A splash that covers the screen must not eat the first tap on
+            // the live app during the fade.
+            .allowsHitTesting(false)
+        }
+        .onChange(of: runner.displayingFlutterUI, initial: true) { _, displaying in
+            guard displaying, splashVisible else { return }
+            withAnimation(.easeOut(duration: 0.2)) { splashVisible = false }
+        }
         // System time visibility. Default: VISIBLE (the watchOS HIG
         // expectation). Apps opt into hiding it from Dart via
         // `WatchStatusBar.hidden = true` (package:flutter_watchos) — e.g. for
@@ -332,6 +392,17 @@ public struct FlutterHostView: View {
         } else {
             TextField("", text: text)
         }
+    }
+}
+
+extension FlutterHostView where Splash == Color {
+    /// The host view with the default launch placeholder: plain black, which
+    /// is what watchOS draws behind the app icon while the app launches, so
+    /// nothing visibly changes until Flutter's first frame arrives.
+    ///
+    ///     WindowGroup { FlutterHostView() }
+    public init() {
+        self.init { Color.black }
     }
 }
 

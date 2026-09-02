@@ -231,6 +231,78 @@ final class WatchPlatformViews: ObservableObject {
 /// Physical sharpness is unchanged (the rendered pixel count is identical);
 /// only the logical density changes. Touches, the Digital Crown, and the
 /// native overlays (text input, platform views) are converted automatically.
+/// The display's rounded-corner radius, and what it costs to stay clear of it.
+///
+/// watchOS exposes no corner-radius API — `WKInterfaceGroup.setCornerRadius`
+/// is a view's radius, not the screen's — and `ContainerRelativeShape`
+/// resolves to a plain rectangle at the top level, so there is nothing to read
+/// at runtime. These are Apple's own numbers, from the `DeviceCornerRadius`
+/// key in each simulator device type's `capabilities.plist`, in points.
+///
+/// Keyed by logical screen size because that is what a running app can
+/// actually observe. A formula would not do: 187x223 has a 44pt radius while
+/// the LARGER 198x242 has 42.5pt — newer displays are rounder, not bigger.
+enum WatchDisplayCorner {
+    private static let radiusByScreenSize: [String: Double] = [
+        "162x197": 28,     // SE 40mm, Series 4-6 40mm
+        "176x215": 38.5,   // Series 7-9 41mm
+        "184x224": 34,     // SE 44mm, Series 4-6 44mm
+        "187x223": 44,     // Series 10/11 42mm
+        "198x242": 42.5,   // Series 7-9 45mm
+        "205x251": 54,     // Ultra, Ultra 2
+        "208x248": 50,     // Series 10/11 46mm
+        "211x257": 57,     // Ultra 3
+    ]
+
+    /// Radius in points for this watch, or nil on a model that shipped after
+    /// this table. Unknown means unknown: the caller keeps watchOS's own
+    /// insets rather than guessing, because a wrong guess clips content.
+    static let radius: Double? = {
+        let b = WKInterfaceDevice.current().screenBounds
+        return radiusByScreenSize["\(Int(b.width.rounded()))x\(Int(b.height.rounded()))"]
+    }()
+
+    /// The smallest UNIFORM inset that keeps an axis-aligned rectangle clear
+    /// of the corner arc.
+    ///
+    /// The arc's centre sits at (r, r) from the corner, so an inset rectangle
+    /// whose corner is at (d, d) stays inside while √2·(r − d) ≤ r — that is,
+    /// d ≥ r(1 − 1/√2) ≈ 0.293r. On Ultra 3 that is 17pt against watchOS's own
+    /// 56.5pt top inset.
+    ///
+    /// It has to be uniform. Dropping the top to 17 while leaving the sides at
+    /// watchOS's 2pt puts the content corner at (2, 17), which is 68pt from
+    /// the arc centre against a 57pt radius — outside the display, clipped.
+    static var uniformInset: Double? {
+        guard let r = radius else { return nil }
+        return (r * (1 - 1 / 2.0.squareRoot())).rounded(.up)
+    }
+}
+
+/// Which safe area the app wants reported to Dart, from `Info.plist`:
+///
+///     <key>FlutterWatchOSSafeArea</key>
+///     <string>corners</string>
+///
+/// `platform` (the default) reports watchOS's own `safeAreaInsets`. Those keep
+/// content clear of the system clock as well as the corners, and they do it by
+/// pushing a full-width rectangle entirely below the corner arc — on Ultra 3,
+/// 56.5pt off the top and 40pt off the bottom, leaving 62% of the display.
+///
+/// `corners` reports the uniform corner inset instead: 17pt all round on Ultra
+/// 3, which is 73% of the display. It is a TRADE, not a free win — the usable
+/// area grows by about a fifth while the usable WIDTH shrinks from 207pt to
+/// 177pt, and content may sit under the system clock, which the system draws
+/// over the app. Worth it for a layout that is not a full-width scrolling
+/// list; wrong for one that is.
+enum WatchSafeAreaMode {
+    static let usesCornerInset: Bool = {
+        let value = Bundle.main.object(
+            forInfoDictionaryKey: "FlutterWatchOSSafeArea") as? String
+        return value?.lowercased() == "corners"
+    }()
+}
+
 enum WatchContentScale {
     /// Parsed once; clamped to a sane range (below ~0.3 text is unreadable).
     static let value: Double = {
@@ -258,6 +330,34 @@ final class FlutterRunner: ObservableObject {
 
     /// The latest Flutter frame, rendered by the engine.
     @Published var frame: CGImage?
+
+    /// True once Flutter's first frame is ON SCREEN — what the launch
+    /// placeholder waits on before it comes down. The watchOS spelling of
+    /// `FlutterViewController.displayingFlutterUI` on iOS.
+    ///
+    /// Set from `publish`, i.e. from the frame reaching SwiftUI, and NOT from
+    /// the engine's `FlutterWatchOSHostSetFirstFrameCallback`. That ABI exists
+    /// for this exact job and the host deliberately does not use it yet:
+    ///
+    ///  * Its premise does not hold on this engine. It was added because "on
+    ///    the Metal path frames go straight to the drawable, so the CGImage
+    ///    frame callback never fires" — but Impeller here renders to an
+    ///    MTLTexture that the engine reads back into a shared MTLBuffer and
+    ///    presents through the same CGImage callback as software. Zero-copy
+    ///    compositing is a later rung. Both renderers publish frames today.
+    ///  * It fires too early. It is armed with
+    ///    `FlutterEngineSetNextFrameCallback`, which reports RASTERISATION;
+    ///    the pixels reach SwiftUI a display tick or more later. Taking the
+    ///    placeholder down then fades it out over black and lets the content
+    ///    pop in behind it — measured on a watch simulator as a single-sample
+    ///    cut where publishing gives a clean six-sample fade.
+    ///
+    /// When a zero-copy present path does land, the host that owns the layer
+    /// knows when it has presented and should set this there.
+    ///
+    /// One-way — it never returns to false, so the placeholder cannot come
+    /// back once the app is up.
+    @Published private(set) var displayingFlutterUI = false
 
     /// The newest frame the engine has finished, waiting for a display tick.
     /// Written on the raster thread, read on the main thread, hence the lock —
@@ -341,6 +441,7 @@ final class FlutterRunner: ObservableObject {
             NSLog("FlutterWatchOSHostRun failed")
             return
         }
+
         WatchTextInput.shared.start()
         WatchPlatformViews.shared.start()
         WatchAccessibility.startMirroring()
@@ -399,6 +500,18 @@ final class FlutterRunner: ObservableObject {
     /// rectangle either way.
     func reportSafeArea(_ insets: EdgeInsets) {
         let scale = WatchContentScale.value
+
+        // `corners` mode: report only what the display's curvature costs, and
+        // let content sit under the clock. See WatchSafeAreaMode for the trade
+        // this makes, and WatchDisplayCorner for the geometry. A model this
+        // build has no radius for keeps watchOS's own insets — guessing one
+        // would clip content, which is the failure this whole path prevents.
+        if WatchSafeAreaMode.usesCornerInset, let inset = WatchDisplayCorner.uniformInset {
+            let d = inset / scale
+            FlutterWatchOSHostSetSafeAreaInsets(d, d, d, d)
+            return
+        }
+
         FlutterWatchOSHostSetSafeAreaInsets(insets.top / scale,
                                             insets.trailing / scale,
                                             insets.bottom / scale,
@@ -452,6 +565,12 @@ final class FlutterRunner: ObservableObject {
     /// request alongside it (a cheap flag read; publishes only on change).
     private func publish(_ image: CGImage) {
         frame = image
+        // The placeholder's cue: this is the moment Flutter's pixels reach
+        // SwiftUI, so the cross-fade has something to reveal. See
+        // `displayingFlutterUI` for why the engine's earlier signal is not it.
+        if !displayingFlutterUI {
+            displayingFlutterUI = true
+        }
         if let hiddenFn = Self.statusBarHiddenFn {
             let hidden = hiddenFn()
             if hidden != statusBarHidden { statusBarHidden = hidden }

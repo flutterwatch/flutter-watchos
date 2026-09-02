@@ -32,6 +32,9 @@ struct {{pascalCaseProjectName}}App: App {
             // 32-bit watches (Series 4–8 / SE) are not supported.
             UnsupportedDeviceView()
             #else
+            // Holds a black launch placeholder over the screen until Flutter's
+            // first frame is ready, then fades it out. Supply your own to
+            // replace it: `FlutterHostView { MyLaunchScreen() }`.
             FlutterHostView()
             #endif
         }

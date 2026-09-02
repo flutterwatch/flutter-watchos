@@ -209,12 +209,89 @@ void main() {
     test('export exactly the app-facing surface', () {
       // App.swift codes against FlutterHostView and the platform-view
       // registry; everything else stays internal to the module.
-      expect(hostView, contains('public struct FlutterHostView: View'));
-      expect(hostView, contains('public init()'));
+      expect(hostView, contains('public struct FlutterHostView<Splash: View>: View'));
+      expect(hostView, contains('public init(@ViewBuilder splashScreen: () -> Splash)'));
       expect(runner, contains('public enum WatchPlatformViewRegistry'));
       expect(runner, contains('public static func register('));
       // The mirrors and the runner are implementation detail.
       expect(runner, isNot(contains('public final class')));
+    });
+
+    test('FlutterHostView() still resolves, with the default placeholder', () {
+      // Every app ever created writes `FlutterHostView()`; the generic
+      // parameter must not break them, so the no-argument init survives as a
+      // constrained extension that fills in the default black placeholder.
+      expect(hostView, contains('extension FlutterHostView where Splash == Color'));
+      expect(hostView, contains('public init()'));
+      expect(hostView, contains('self.init { Color.black }'));
+    });
+  });
+
+  group('launch placeholder', () {
+    final String runner = readHostSource('FlutterRunner.swift');
+    final String hostView = readHostSource('FlutterHostView.swift');
+
+    test('comes down when the frame reaches SwiftUI, not when it rasterises', () {
+      // `publish` is the moment the pixels are on screen, so the cross-fade
+      // has something to reveal. Verified against the Metal (Impeller) engine
+      // on a watch simulator: six 30 fps samples of ramp.
+      expect(runner, contains('displayingFlutterUI = true'));
+      expect(hostView, contains('onChange(of: runner.displayingFlutterUI'));
+      final int publishAt = runner.indexOf('private func publish(');
+      expect(publishAt, greaterThan(-1));
+      expect(runner.indexOf('displayingFlutterUI = true'), greaterThan(publishAt));
+    });
+
+    test('does not arm the engine first-frame callback', () {
+      // The ABI exists for this job and is deliberately unused. Its premise —
+      // "the Metal path produces no CGImage" — does not hold on this engine
+      // (Impeller reads its texture back through the same CGImage callback),
+      // and being armed with FlutterEngineSetNextFrameCallback it reports
+      // RASTERISATION, a display tick or more before the pixels reach SwiftUI.
+      // Measured: taking the placeholder down there faded it out over black
+      // and let content pop in behind it — one hard sample instead of a ramp.
+      // The name still appears in prose explaining the choice; what must not
+      // exist is a call site.
+      expect(runner, isNot(contains('FlutterWatchOSHostSetFirstFrameCallback(')));
+      expect(runner, isNot(contains('setFirstFrameCallbackFn')));
+    });
+
+    test('first-frame state is one-way and runner-owned', () {
+      // Nothing outside the runner may lower it: a placeholder that can come
+      // back would flash over a running app.
+      expect(runner, contains('@Published private(set) var displayingFlutterUI = false'));
+      expect(runner, isNot(contains('displayingFlutterUI = false\n        ')));
+    });
+
+    test("fades out over iOS's 0.2 s rather than cutting", () {
+      // FlutterViewController.removeSplashScreenWithCompletion animates alpha
+      // to 0 over 0.2 s; matching it keeps the two platforms feeling the same.
+      expect(hostView, contains('.transition(.opacity)'));
+      expect(hostView, contains('withAnimation(.easeOut(duration: 0.2))'));
+    });
+
+    test('opens the fade explicitly, not with an implicit .animation', () {
+      // The flag flips inside the display-tick update that also publishes the
+      // first frame. `.animation(_:value:)` does not animate across that
+      // transaction: measured on a real app it cut straight from black to the
+      // first frame in a single 30 fps sample, where `withAnimation` gives the
+      // intended six-frame ramp.
+      expect(hostView, isNot(contains('.animation(.easeOut')));
+      expect(hostView, contains('withAnimation(.easeOut'));
+    });
+
+    test('never swallows touches and is full-bleed', () {
+      // A splash covering the screen must not eat the first tap on the live
+      // app during the fade, and one inset by the clock would not line up with
+      // the full-bleed frame it hands over to. Both modifiers belong to the
+      // placeholder's own overlay, so scope the search to it.
+      final int gate = hostView.indexOf('if splashVisible {');
+      expect(gate, greaterThan(-1));
+      final String block =
+          hostView.substring(gate, hostView.indexOf('// System time visibility'));
+      expect(block, isNotEmpty);
+      expect(block, contains('.allowsHitTesting(false)'));
+      expect(block, contains('.ignoresSafeArea()'));
     });
   });
 

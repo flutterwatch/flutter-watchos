@@ -21,6 +21,9 @@ typedef void (*FlutterWatchOSFrameCallback)(void* context, CGImageRef frame);
 // Request for one detent click.
 typedef void (*FlutterWatchOSCrownTickCallback)(void* context);
 
+// Flutter has drawn its first frame. Invoked once, on the main thread.
+typedef void (*FlutterWatchOSFirstFrameCallback)(void* context);
+
 // Boot and run the Flutter engine for the app bundle. Idempotent; returns
 // false if the engine failed to start. Call on the main thread.
 bool FlutterWatchOSHostRun(const char* bundle_path,
@@ -50,6 +53,23 @@ void FlutterWatchOSCrownSetTickCallback(FlutterWatchOSCrownTickCallback callback
 // Forward one raw Digital Crown sample (the change in SwiftUI's
 // crown-rotation binding since the previous sample).
 void FlutterWatchOSCrownDelta(double delta);
+
+// Register a one-shot callback for the moment Flutter has RASTERISED its first
+// frame. Registering after that has already happened invokes the callback
+// immediately rather than never. Call on the main thread; the callback arrives
+// there too.
+//
+// NOT the cue for taking down a launch placeholder, despite being added for
+// one. Rasterisation precedes presentation: the pixels reach the host's SwiftUI
+// view a display tick or more after this fires, so a placeholder dismissed here
+// fades out over an empty surface and the content pops in behind it. Wait for
+// the frame callback above instead — both renderers produce CGImages today,
+// Metal included (Impeller reads its texture back through a shared buffer and
+// presents through that same callback). The host module does exactly that; see
+// FlutterRunner.displayingFlutterUI.
+void FlutterWatchOSHostSetFirstFrameCallback(
+    FlutterWatchOSFirstFrameCallback callback,
+    void* context);
 
 // One display refresh. The host calls this from a display-synced tick
 // (SwiftUI's `TimelineView(.animation)` — watchOS has no CADisplayLink) and

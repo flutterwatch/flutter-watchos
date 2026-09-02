@@ -53,6 +53,15 @@ and CLI updates without touching your app project:
 - **Lifecycle & channels.** Standard platform messages and
   `WidgetsBindingObserver` lifecycle events work; plugins use Dart FFI or the
   platform messenger.
+- **Launch placeholder.** The engine takes a few hundred milliseconds to reach
+  its first frame, so `FlutterHostView` holds a placeholder over the screen and
+  cross-fades it out over 0.2 s once that frame is on screen — the watchOS
+  shape of `FlutterViewController.splashScreenView` on iOS. `FlutterHostView()`
+  fills in plain black, which is what watchOS draws behind the app icon while
+  launching, so the handover is invisible; pass your own with
+  `FlutterHostView { MyLaunchScreen() }`, or `FlutterHostView { EmptyView() }`
+  to opt out. watchOS has no launch storyboard, so unlike iOS there is nothing
+  to load a default from.
 
 ## Platform identity
 
