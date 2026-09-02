@@ -135,9 +135,37 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
     }
   }
 
-  for (final dynamic dep in depGraph) {
-    final depMap = dep as Map<String, dynamic>;
-    final pluginName = depMap['name'] as String;
+  // Which packages to inspect. `dependencyGraph` is written by stock
+  // `flutter pub get`, which emits one only once it recognises at least one
+  // plugin for a platform IT knows — and it does not know watchOS. An app
+  // whose plugins are all watchOS-only, with no ios/ or android/ directory to
+  // resolve against, therefore gets `dependencyGraph: []` and every watchOS
+  // plugin in it goes undiscovered: no archive is built, nothing is
+  // force-loaded, and the FFI symbols the Dart side reaches by dlsym are
+  // absent from the app binary. (Crown Breaker, whose plugins are exactly
+  // flutter_watchos + the *_watchos federated implementations, failed this
+  // way; wonderous did not, only because its iOS plugins caused a graph to be
+  // written at all.)
+  //
+  // `package_config.json` is written by pub itself, lists every resolved
+  // package whatever the platform, and is already parsed just above for the
+  // paths. Fall back to it — the watchos block in each pubspec is the real
+  // filter either way, so a superset of candidates costs only a pubspec read.
+  final Iterable<String> candidateNames;
+  if (depGraph.isEmpty) {
+    globals.logger.printTrace(
+      'No dependencyGraph in .flutter-plugins-dependencies; discovering watchOS '
+      'plugins from .dart_tool/package_config.json instead.',
+    );
+    candidateNames = packagePaths.keys.toList();
+  } else {
+    candidateNames = [
+      for (final dynamic dep in depGraph)
+        if (dep is Map<String, dynamic> && dep['name'] is String) dep['name'] as String,
+    ];
+  }
+
+  for (final pluginName in candidateNames) {
     final String? pluginPath = packagePaths[pluginName];
     if (pluginPath == null) {
       continue;

@@ -347,4 +347,70 @@ flutter:
       },
     );
   });
+  group('discovery without a dependencyGraph', () {
+    // Stock `flutter pub get` writes a dependencyGraph only once it recognises
+    // at least one plugin for a platform IT knows, and it does not know
+    // watchOS. An app whose plugins are all watchOS-only, with no ios/ or
+    // android/ directory to resolve against, gets `dependencyGraph: []` — the
+    // shape that silently produced an app binary with none of the plugin's FFI
+    // symbols in it, because no archive was built and nothing force-loaded.
+    testUsingContext(
+      'falls back to package_config.json and still finds the plugin',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+        final Directory pkgDir = fileSystem.directory('/pubcache/watch_only')
+          ..createSync(recursive: true);
+        pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: watch_only
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+        ffiSymbols:
+          - watch_only_init
+''');
+        pkgDir.childDirectory('watchos').createSync();
+
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            json.encode(<String, dynamic>{
+              'packages': <Map<String, String>>[
+                <String, String>{
+                  'name': 'watch_only',
+                  'rootUri': 'file:///pubcache/watch_only',
+                },
+              ],
+            }),
+          );
+        // The crown_breaker shape: pub found nothing it considered a plugin.
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'plugins': <String, dynamic>{'watchos': <dynamic>[]},
+            'dependencyGraph': <dynamic>[],
+          }),
+        );
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForWatchosTooling(project);
+
+        final decoded = json.decode(
+          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        final plugins = (decoded['plugins'] as Map<String, dynamic>)['watchos']! as List<dynamic>;
+        expect(
+          plugins.map((dynamic p) => (p as Map<String, dynamic>)['name']),
+          contains('watch_only'),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
 }
