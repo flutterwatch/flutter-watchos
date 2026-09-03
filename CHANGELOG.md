@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.12 (closed beta)
 
 - **`xcodebuild` can authenticate with an App Store Connect API key.**
   `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
