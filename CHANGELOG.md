@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.0-beta.12 (closed beta)
+
+- **`xcodebuild` can authenticate with an App Store Connect API key.**
+  `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
+  profile, but on its own it can only do so through a signed-in Xcode account.
+  Where there is no usable one — CI, or a machine that only has an API key —
+  xcodebuild cannot fetch the profile and quietly settles for a cached
+  *wildcard* one instead. Any app with an entitlement then fails with a message
+  naming the capability the wildcard lacks rather than the credential that is
+  actually missing, which sends you auditing the App ID in the developer
+  portal, where everything is already correct.
+
+  Set all three and the key is forwarded:
+
+  ```sh
+  export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXX.p8
+  export APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
+  export APP_STORE_CONNECT_ISSUER_ID=<issuer-uuid>
+  ```
+
+  Absent or incomplete, nothing is added and a machine with a working Xcode
+  account behaves exactly as before. Set but pointing at a file that does not
+  exist earns a warning rather than a silent fallback — staying quiet there is
+  indistinguishable from never having configured it, and the build goes on to
+  fail with that misleading capability message minutes later, nowhere near the
+  cause. Only the key *id* is ever logged; the key's contents are read by
+  xcodebuild, never by the CLI.
+
 ## 0.1.0-beta.10 (closed beta)
 
 Moves to Flutter 3.47.1 and gives the engine the display's own clock, which is
