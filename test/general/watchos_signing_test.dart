@@ -9,6 +9,8 @@
 // team the developer never chose and xcodebuild fails with "No Account for
 // Team" naming an id that appears nowhere in their project.
 
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_watchos/build_targets/application.dart';
 
 import '../src/common.dart';
@@ -153,6 +155,120 @@ void main() {
         NativeWatchosBundle.parseKeychainTeams(output),
         <String>['5JRCVYT8MY'],
       );
+    });
+  });
+
+  group('resolveAuthenticationArgs', () {
+    // `-allowProvisioningUpdates` can only create a profile through a
+    // signed-in Xcode account. Without one, xcodebuild settles for a cached
+    // wildcard profile and any entitled app fails complaining about the
+    // capability the wildcard lacks -- never about the credential that is
+    // actually missing. An API key is the supported alternative.
+    late MemoryFileSystem fileSystem;
+    late BufferLogger logger;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      logger = BufferLogger.test();
+    });
+
+    Map<String, String> env({String? path, String? id, String? issuer}) {
+      return <String, String>{
+        if (path != null) 'APP_STORE_CONNECT_KEY_PATH': path,
+        if (id != null) 'APP_STORE_CONNECT_KEY_ID': id,
+        if (issuer != null) 'APP_STORE_CONNECT_ISSUER_ID': issuer,
+      };
+    }
+
+    testWithoutContext('forwards the key when all three are set', () {
+      fileSystem.file('/keys/AuthKey_ABC.p8').createSync(recursive: true);
+
+      expect(
+        resolveAuthenticationArgs(
+          env(path: '/keys/AuthKey_ABC.p8', id: 'ABC1234567', issuer: 'issuer-uuid'),
+          fileSystem,
+          logger,
+        ),
+        <String>[
+          '-authenticationKeyPath',
+          '/keys/AuthKey_ABC.p8',
+          '-authenticationKeyID',
+          'ABC1234567',
+          '-authenticationKeyIssuerID',
+          'issuer-uuid',
+        ],
+      );
+    });
+
+    testWithoutContext('is inert when nothing is set', () {
+      // The common case. A machine with a working Xcode account has to behave
+      // exactly as it did before this existed.
+      expect(resolveAuthenticationArgs(<String, String>{}, fileSystem, logger), isEmpty);
+      expect(logger.warningText, isEmpty);
+    });
+
+    testWithoutContext('is inert when the trio is incomplete', () {
+      // Half a flag set is worse than none: xcodebuild rejects the key
+      // arguments unless all three are present.
+      fileSystem.file('/keys/AuthKey_ABC.p8').createSync(recursive: true);
+      expect(
+        resolveAuthenticationArgs(
+          env(path: '/keys/AuthKey_ABC.p8', id: 'ABC1234567'),
+          fileSystem,
+          logger,
+        ),
+        isEmpty,
+      );
+      expect(
+        resolveAuthenticationArgs(
+          env(path: '/keys/AuthKey_ABC.p8', issuer: 'issuer-uuid'),
+          fileSystem,
+          logger,
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('treats an empty value as unset', () {
+      expect(
+        resolveAuthenticationArgs(
+          env(path: '', id: 'ABC1234567', issuer: 'issuer-uuid'),
+          fileSystem,
+          logger,
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('warns, and falls back, when the key file is missing', () {
+      // Configured but wrong is the case worth a warning. Staying silent looks
+      // identical to never having configured it, and the build then fails much
+      // later complaining about a capability rather than a credential.
+      expect(
+        resolveAuthenticationArgs(
+          env(path: '/keys/absent.p8', id: 'ABC1234567', issuer: 'issuer-uuid'),
+          fileSystem,
+          logger,
+        ),
+        isEmpty,
+      );
+      expect(logger.warningText, contains('/keys/absent.p8'));
+    });
+
+    testWithoutContext('does not log the key contents', () {
+      // The key is a credential. xcodebuild reads the file; this process must
+      // never put it, or anything but its id, into the log.
+      fileSystem.file('/keys/AuthKey_ABC.p8')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('-----BEGIN PRIVATE KEY-----\nSECRET\n');
+      resolveAuthenticationArgs(
+        env(path: '/keys/AuthKey_ABC.p8', id: 'ABC1234567', issuer: 'issuer-uuid'),
+        fileSystem,
+        logger,
+      );
+      expect(logger.traceText, contains('ABC1234567'));
+      expect(logger.traceText, isNot(contains('SECRET')));
+      expect(logger.traceText, isNot(contains('BEGIN PRIVATE KEY')));
     });
   });
 }
