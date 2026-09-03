@@ -8,7 +8,7 @@ import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
-import 'package:flutter_tools/src/base/logger.dart' show Status;
+import 'package:flutter_tools/src/base/logger.dart' show Logger, Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/depfile.dart';
@@ -45,6 +45,65 @@ import 'watchos_plugin_views.dart';
 /// entries Flutter would otherwise emit (since `Platform.isIOS` is true under
 /// our Dart VM patch, and the `watchos` platform key is unknown to upstream
 /// `generateMainDartWithPluginRegistrant`).
+/// App Store Connect API credentials for `xcodebuild`, read from [environment].
+///
+/// `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
+/// profile, but on its own it can only do so through a signed-in Xcode
+/// account. Where there is no usable one — CI, or a machine that only has an
+/// API key — xcodebuild cannot fetch the profile and quietly settles for a
+/// cached wildcard one instead. Any app with an entitlement then fails with a
+/// message naming the *capability* the wildcard lacks rather than the
+/// credential that is actually missing, which sends you looking in the wrong
+/// place entirely.
+///
+/// xcodebuild accepts an API key as the alternative, so forward one when all
+/// three variables are present and the key file exists:
+///
+///   APP_STORE_CONNECT_KEY_PATH   the .p8 private key
+///   APP_STORE_CONNECT_KEY_ID     its key id
+///   APP_STORE_CONNECT_ISSUER_ID  the issuer id
+///
+/// Returns an empty list otherwise, so a machine with a working Xcode account
+/// behaves exactly as before. Only the key *id* is ever logged; the key's
+/// contents are read by xcodebuild, never by this process.
+@visibleForTesting
+List<String> resolveAuthenticationArgs(
+  Map<String, String> environment,
+  FileSystem fileSystem,
+  Logger logger,
+) {
+  final String? keyPath = environment['APP_STORE_CONNECT_KEY_PATH'];
+  final String? keyId = environment['APP_STORE_CONNECT_KEY_ID'];
+  final String? issuerId = environment['APP_STORE_CONNECT_ISSUER_ID'];
+  if (keyPath == null ||
+      keyId == null ||
+      issuerId == null ||
+      keyPath.isEmpty ||
+      keyId.isEmpty ||
+      issuerId.isEmpty) {
+    return const <String>[];
+  }
+  if (!fileSystem.file(keyPath).existsSync()) {
+    // Set but wrong is worth saying out loud: falling back silently looks
+    // identical to never having configured it, and the build then fails much
+    // later with the misleading capability error described above.
+    logger.printWarning(
+      'APP_STORE_CONNECT_KEY_PATH is set but $keyPath does not exist; '
+      'falling back to the Xcode account for provisioning.',
+    );
+    return const <String>[];
+  }
+  logger.printTrace('Authenticating xcodebuild with App Store Connect API key $keyId.');
+  return <String>[
+    '-authenticationKeyPath',
+    fileSystem.path.absolute(keyPath),
+    '-authenticationKeyID',
+    keyId,
+    '-authenticationKeyIssuerID',
+    issuerId,
+  ];
+}
+
 class WatchosDartPluginRegistrantTarget extends Target {
   const WatchosDartPluginRegistrantTarget();
 
@@ -535,6 +594,13 @@ class NativeWatchosBundle extends Target {
         if (buildInfo.simulator) 'ARCHS=arm64',
         ...signingArgs,
         if (!buildInfo.simulator) '-allowProvisioningUpdates',
+        // ...and give it something to authenticate *with*.
+        if (!buildInfo.simulator)
+          ...resolveAuthenticationArgs(
+            globals.platform.environment,
+            globals.fs,
+            globals.logger,
+          ),
         'build',
       ], workingDirectory: watchosProjectDir.path);
     } finally {
