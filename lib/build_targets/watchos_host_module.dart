@@ -81,9 +81,26 @@ List<String> collectHostModuleSources(Directory hostDir) {
 /// without it.
 const String kVmBridgeSwiftDefine = 'FLUTTER_WATCHOS_VM_BRIDGE';
 
+/// Compilation condition that admits the status-bar SPI (`_statusBarHidden`).
+///
+/// Defined only when the app depends on package:flutter_watchos, the one way
+/// Dart can ask for the system clock to be hidden (`WatchStatusBar.hidden`).
+/// Without the define the host module never references the SwiftUI SPI, so an
+/// app that cannot opt in does not carry the symbol a private-API scan would
+/// find. See `host/FlutterHostView.swift`.
+const String kStatusBarSpiSwiftDefine = 'FLUTTER_WATCHOS_STATUS_BAR_SPI';
+
 /// The `swiftc` command line that compiles the host module for one
 /// architecture: emits the `.swiftmodule` (what `import FlutterWatchOS`
 /// resolves) and the object file that becomes the linked archive.
+///
+/// [optimize] selects `-O` (profile and release) or `-Onone` (debug). swiftc
+/// defaults to `-Onone` when neither is given, and the host module's frame
+/// path, gesture handling and overlay mirrors used to ship unoptimised in
+/// release apps because of it — while the app's own dozen-line `App.swift`
+/// got `-O` from Xcode. `-g` is always on: the debug info lands in the app's
+/// dSYM, not in the shipped binary, and a crash log without it names no host
+/// frame.
 List<String> hostModuleSwiftcArgs({
   required String sdkName,
   required bool simulator,
@@ -94,6 +111,8 @@ List<String> hostModuleSwiftcArgs({
   required String cModuleSearchPath,
   required List<String> sources,
   required bool enableVmBridge,
+  required bool optimize,
+  required bool enableStatusBarSpi,
 }) {
   final suffix = simulator ? '-simulator' : '';
   return <String>[
@@ -104,6 +123,8 @@ List<String> hostModuleSwiftcArgs({
     '-target',
     '$arch-apple-watchos$deploymentTarget$suffix',
     '-parse-as-library',
+    if (optimize) '-O' else '-Onone',
+    '-g',
     '-whole-module-optimization',
     '-module-name',
     'FlutterWatchOS',
@@ -117,6 +138,7 @@ List<String> hostModuleSwiftcArgs({
     '-I',
     cModuleSearchPath,
     if (enableVmBridge) ...<String>['-D', kVmBridgeSwiftDefine],
+    if (enableStatusBarSpi) ...<String>['-D', kStatusBarSpiSwiftDefine],
     ...sources,
   ];
 }

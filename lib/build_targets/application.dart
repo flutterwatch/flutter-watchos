@@ -460,7 +460,7 @@ class NativeWatchosBundle extends Target {
     //    frame display, input forwarding, native overlays) into a static
     //    archive + .swiftmodule under watchos/Flutter/, unless this is a
     //    legacy project that still compiles the glue as app source.
-    final String? hostArchive = await _buildHostModule(watchosProjectDir);
+    final String? hostArchive = await _buildHostModule(project, watchosProjectDir);
 
     // 7. Compile federated watchOS plugin native code (FFI plugins) into a
     //    static archive, then wire the watch-scoped force-load flags for both
@@ -1279,7 +1279,10 @@ class NativeWatchosBundle extends Target {
   /// resolve for both. The glue is `#if !arch(arm64_32)`-guarded throughout,
   /// so the arm64_32 slice compiles to an empty module — mirroring the app
   /// template, whose arm64_32 slice shows only the fallback screen.
-  Future<String?> _buildHostModule(Directory watchosProjectDir) async {
+  Future<String?> _buildHostModule(
+    FlutterProject project,
+    Directory watchosProjectDir,
+  ) async {
     if (isLegacyRunnerProject(watchosProjectDir)) {
       globals.logger.printTrace(
         'Legacy watchOS project (Runner/FlutterRunner.swift present): '
@@ -1323,6 +1326,16 @@ class NativeWatchosBundle extends Target {
         flutterDir.childDirectory('FlutterWatchOS.swiftmodule')
           ..createSync(recursive: true);
 
+    // The status-bar SPI is reachable only through package:flutter_watchos
+    // (WatchStatusBar), so an app without it gets a host module that never
+    // references the symbol at all. See kStatusBarSpiSwiftDefine.
+    final PackageConfig packageConfig = await loadPackageConfigWithLogging(
+      findPackageConfigFileOrDefault(project.directory),
+      logger: globals.logger,
+    );
+    final bool linksFlutterWatchos =
+        packageConfig.packages.any((Package p) => p.name == 'flutter_watchos');
+
     final objects = <String>[];
     for (final arch in archs) {
       final String object =
@@ -1344,6 +1357,10 @@ class NativeWatchosBundle extends Target {
           // code at all — not merely leave it dormant. Without this define the
           // bridge compiles to an empty stub.
           enableVmBridge: buildInfo.buildInfo.mode != BuildMode.release,
+          // Optimised like the app itself: Xcode compiles App.swift with -O
+          // outside Debug, and the frame path lives here, not there.
+          optimize: buildInfo.buildInfo.mode != BuildMode.debug,
+          enableStatusBarSpi: linksFlutterWatchos,
         ),
       );
       if (r.exitCode != 0) {
@@ -1939,6 +1956,12 @@ class NativeWatchosBundle extends Target {
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
     xcconfig.writeln('FLUTTER_BUILD_NAME=$buildName');
     xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
+    // The mode the staged engine and App.framework were built for. Xcode's
+    // Product → Archive builds whatever the last `flutter-watchos build`
+    // staged, so a Release archive after `build --profile` ships the profile
+    // engine and the VM Service bridge; a Run Script phase can compare this
+    // against $(CONFIGURATION) and refuse (see doc/publish-app.md).
+    xcconfig.writeln('FLUTTER_WATCHOS_BUILD_MODE=${buildInfo.buildInfo.mode.cliName}');
 
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
 

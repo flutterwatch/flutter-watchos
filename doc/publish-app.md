@@ -13,6 +13,20 @@ The version comes from `pubspec.yaml` (`version: 1.2.0+3` → `1.2.0` /
 build `3`), so a release is: bump the pubspec, `build watchos --release`,
 archive in Xcode, distribute.
 
+**Archive what you built.** Xcode's archive embeds whatever the last
+`flutter-watchos build` staged into `watchos/Flutter/` — it does not rebuild
+the Dart side. A Release archive taken after `build watchos --profile` ships
+the profile engine and the VM Service bridge. `Flutter/Generated.xcconfig`
+records the staged mode as `FLUTTER_WATCHOS_BUILD_MODE`; to make Xcode refuse
+the mismatch, add a Run Script phase to the `Runner` target with:
+
+```sh
+if [ "$CONFIGURATION" = Release ] && [ "$FLUTTER_WATCHOS_BUILD_MODE" != release ]; then
+  echo "error: the staged Flutter build is '$FLUTTER_WATCHOS_BUILD_MODE'; run 'flutter-watchos build watchos --release' first" >&2
+  exit 1
+fi
+```
+
 ## How submission works
 
 App Store submission wraps a watch-only app in a thin iOS container

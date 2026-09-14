@@ -106,6 +106,8 @@ void main() {
         cModuleSearchPath: '/f',
         sources: <String>['/cli/host/FlutterRunner.swift'],
         enableVmBridge: true,
+        optimize: true,
+        enableStatusBarSpi: false,
       );
       expect(args, containsAllInOrder(<String>['xcrun', '-sdk', 'watchos', 'swiftc']));
       expect(args, contains('-target'));
@@ -133,6 +135,8 @@ void main() {
         cModuleSearchPath: '/f',
         sources: <String>['/s.swift'],
         enableVmBridge: true,
+        optimize: true,
+        enableStatusBarSpi: false,
       );
       expect(args, containsAllInOrder(<String>['-D', kVmBridgeSwiftDefine]));
     });
@@ -148,6 +152,8 @@ void main() {
         cModuleSearchPath: '/f',
         sources: <String>['/s.swift'],
         enableVmBridge: false,
+        optimize: true,
+        enableStatusBarSpi: false,
       );
       // Only the bridge define is the contract here. Asserting release emits
       // no `-D` at all would fail the day an unrelated one is added, which
@@ -166,8 +172,73 @@ void main() {
         cModuleSearchPath: '/f',
         sources: <String>['/s.swift'],
         enableVmBridge: true,
+        optimize: true,
+        enableStatusBarSpi: false,
       );
       expect(args, contains('arm64-apple-watchos26.0-simulator'));
+    });
+  });
+
+  group('hostModuleSwiftcArgs optimisation', () {
+    List<String> argsFor({required bool optimize}) => hostModuleSwiftcArgs(
+      sdkName: 'watchos',
+      simulator: false,
+      arch: 'arm64',
+      deploymentTarget: '26.0',
+      moduleOutputPath: '/f/m.swiftmodule',
+      objectOutputPath: '/f/o.o',
+      cModuleSearchPath: '/f',
+      sources: <String>['/s.swift'],
+      enableVmBridge: false,
+      optimize: optimize,
+      enableStatusBarSpi: false,
+    );
+
+    // swiftc defaults to -Onone when neither flag is given. The host module
+    // — the frame path, gesture handling, every overlay mirror — shipped
+    // unoptimised in release apps for exactly that reason, while Xcode
+    // compiled the app's own App.swift with -O.
+    testWithoutContext('compiles with -O outside debug', () {
+      final List<String> args = argsFor(optimize: true);
+      expect(args, contains('-O'));
+      expect(args, isNot(contains('-Onone')));
+    });
+
+    testWithoutContext('compiles with -Onone for debug', () {
+      final List<String> args = argsFor(optimize: false);
+      expect(args, contains('-Onone'));
+      expect(args, isNot(contains('-O')));
+    });
+
+    testWithoutContext('always emits debug info, for the dSYM', () {
+      expect(argsFor(optimize: true), contains('-g'));
+      expect(argsFor(optimize: false), contains('-g'));
+    });
+  });
+
+  group('hostModuleSwiftcArgs status-bar SPI', () {
+    List<String> argsFor({required bool enableStatusBarSpi}) => hostModuleSwiftcArgs(
+      sdkName: 'watchos',
+      simulator: false,
+      arch: 'arm64',
+      deploymentTarget: '26.0',
+      moduleOutputPath: '/f/m.swiftmodule',
+      objectOutputPath: '/f/o.o',
+      cModuleSearchPath: '/f',
+      sources: <String>['/s.swift'],
+      enableVmBridge: false,
+      optimize: true,
+      enableStatusBarSpi: enableStatusBarSpi,
+    );
+
+    // The SwiftUI `_statusBarHidden` SPI is only reachable through
+    // package:flutter_watchos, so an app without that package must not
+    // carry a reference to it at all — a private-API scan does not care
+    // whether the code path is taken.
+    testWithoutContext('is compiled in only for apps that depend on flutter_watchos', () {
+      expect(argsFor(enableStatusBarSpi: true),
+          containsAllInOrder(<String>['-D', kStatusBarSpiSwiftDefine]));
+      expect(argsFor(enableStatusBarSpi: false), isNot(contains(kStatusBarSpiSwiftDefine)));
     });
   });
 
