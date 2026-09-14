@@ -64,6 +64,15 @@ class WatchosPrecacheCommand extends PrecacheCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Everything below writes into the cache, so hold its lock for all of it.
+    // The framework's `verifyThenRunCommand` released the lock it took before
+    // handing over here (PrecacheCommand opts out of the automatic artifact
+    // update), which left two concurrent `precache` runs free to delete and
+    // extract into the same engine directory at the same time.
+    if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
+      await globals.cache.lock();
+    }
+
     if (boolArg('watchos')) {
       final Directory artifactDir = watchosArtifactDirectory(globals.fs);
       if (boolArg('force')) {
@@ -85,9 +94,6 @@ class WatchosPrecacheCommand extends PrecacheCommand {
     // universal artifacts and the engine stamp, on top of the watchOS engine
     // set fetched above. So drive the cache ourselves instead of delegating to
     // `super.runCommand()`, while still honouring the stock per-platform flags.
-    if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
-      await globals.cache.lock();
-    }
     if (boolArg('force')) {
       globals.cache.clearStampFiles();
     }

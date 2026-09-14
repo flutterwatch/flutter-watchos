@@ -438,10 +438,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         // reports success, and the symptom shows up somewhere else entirely.
         _logger.printWarning(
           'Using an unstamped watchOS engine at ${location.path}.\n'
-          'It carries no .engine_version, so there is no way to tell whether it '
-          'is $releaseTag. If it came from a build, re-package it — '
-          'package_artifacts.sh stamps what it writes. To fetch $releaseTag '
-          'instead, delete that directory and re-run precache.',
+          'It carries no $kWatchosEngineVersionFileName file, so there is no '
+          'way to tell whether it is $releaseTag. If you built it yourself, '
+          'write that file with the engine id it was built from. To fetch '
+          '$releaseTag instead, delete the directory and re-run '
+          '`flutter-watchos precache`.',
         );
       } else {
         _logger.printTrace('Using pre-extracted watchOS engine artifacts at ${location.path}');
@@ -461,13 +462,18 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       return;
     }
 
-    // --- Strategy 3: download from GitHub Releases ---
+    // --- Strategy 3: download from the artifact service ---
     final String tag = releaseTag;
 
-    if (location.existsSync()) {
-      location.deleteSync(recursive: true);
-    }
-    location.createSync(recursive: true);
+    // Every zip is extracted into a staging directory beside `location`, and
+    // the tree moves into place in one rename after the last zip is in and
+    // the stamp is written. Until then whatever engine `location` already
+    // holds keeps working, and a run that dies halfway — Ctrl-C, a dropped
+    // connection, a full disk — leaves nothing the next run could mistake for
+    // an engine. Extracting straight into `location` did exactly that: the
+    // stamp is written last, so an interrupted download left an unstamped
+    // tree that Strategy 1b then reused as though it were hand-built.
+    final Directory staging = _createStagingDirectory();
 
     final Directory tempDir = fileSystem.systemTempDirectory.createTempSync(
       'flutter_watchos_artifacts.',
@@ -477,6 +483,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     final String? token = apiMode ? readWatchosToken(globals.fs, _platform) : null;
 
     final skippedZips = <String>[];
+    var installed = false;
     try {
       var index = 0;
       for (final String zipName in _artifactZipNames) {
@@ -542,7 +549,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             '-q',
             tempZip.path,
             '-d',
-            location.path,
+            staging.path,
           ]);
 
           if (unzipResult.exitCode != 0) {
@@ -553,20 +560,54 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           status.stop();
         }
       }
+
+      writePendingEngineZips(staging, skippedZips);
+      // Stamp last: only a download that got this far is the tag it claims.
+      writeEngineVersionStamp(staging, tag);
+      _finalizeExtractedTree(staging, operatingSystemUtils);
+      _installStagedTree(staging);
+      installed = true;
     } finally {
       tempDir.deleteSync(recursive: true);
+      if (!installed && staging.existsSync()) {
+        staging.deleteSync(recursive: true);
+      }
     }
+  }
 
-    writePendingEngineZips(location, skippedZips);
-    // Stamp last: only a download that got this far is the tag it claims.
-    writeEngineVersionStamp(location, tag);
+  /// A fresh, empty staging directory beside [location] — on the same file
+  /// system, so moving it into place is a rename rather than a copy.
+  Directory _createStagingDirectory() {
+    final Directory staging =
+        location.parent.childDirectory('.${location.basename}.staging');
+    if (staging.existsSync()) {
+      // Left by a run that was killed before (or during) its cleanup.
+      staging.deleteSync(recursive: true);
+    }
+    staging.createSync(recursive: true);
+    return staging;
+  }
 
-    final Directory macOsMetaDir = location.childDirectory('__MACOSX');
+  /// Drops the Finder metadata a zip made on macOS carries and marks the
+  /// host tools executable, on a fully extracted tree.
+  void _finalizeExtractedTree(
+    Directory tree,
+    OperatingSystemUtils operatingSystemUtils,
+  ) {
+    final Directory macOsMetaDir = tree.childDirectory('__MACOSX');
     if (macOsMetaDir.existsSync()) {
       macOsMetaDir.deleteSync(recursive: true);
     }
+    _makeFilesExecutable(tree, operatingSystemUtils);
+  }
 
-    _makeFilesExecutable(location, operatingSystemUtils);
+  /// Replaces whatever [location] holds with the finished [staging] tree.
+  /// The previous engine is gone only once its replacement is complete.
+  void _installStagedTree(Directory staging) {
+    if (location.existsSync()) {
+      location.deleteSync(recursive: true);
+    }
+    staging.renameSync(location.path);
   }
 
   /// Retries the zips a previous download was not entitled to, on top of an
@@ -690,40 +731,42 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     FileSystem fileSystem,
     OperatingSystemUtils operatingSystemUtils,
   ) async {
-    if (location.existsSync()) {
-      location.deleteSync(recursive: true);
-    }
-    location.createSync(recursive: true);
-
-    var index = 0;
-    for (final zip in zips) {
-      index++;
-      final Status status = _logger.startProgress(
-        _treeLine(index, zips.length, _friendlyName(zip.basename)),
-      );
-      try {
-        final RunResult result = await _processUtils.run(<String>[
-          'unzip',
-          '-q',
-          zip.path,
-          '-d',
-          location.path,
-        ]);
-        if (result.exitCode != 0) {
-          status.cancel();
-          throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
+    // Staged and renamed into place for the same reason the download is (see
+    // updateInner): a failed extraction must not leave a half-populated tree
+    // where an engine is expected.
+    final Directory staging = _createStagingDirectory();
+    var installed = false;
+    try {
+      var index = 0;
+      for (final zip in zips) {
+        index++;
+        final Status status = _logger.startProgress(
+          _treeLine(index, zips.length, _friendlyName(zip.basename)),
+        );
+        try {
+          final RunResult result = await _processUtils.run(<String>[
+            'unzip',
+            '-q',
+            zip.path,
+            '-d',
+            staging.path,
+          ]);
+          if (result.exitCode != 0) {
+            status.cancel();
+            throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
+          }
+        } finally {
+          status.stop();
         }
-      } finally {
-        status.stop();
+      }
+      _finalizeExtractedTree(staging, operatingSystemUtils);
+      _installStagedTree(staging);
+      installed = true;
+    } finally {
+      if (!installed && staging.existsSync()) {
+        staging.deleteSync(recursive: true);
       }
     }
-
-    final Directory macOsMetaDir = location.childDirectory('__MACOSX');
-    if (macOsMetaDir.existsSync()) {
-      macOsMetaDir.deleteSync(recursive: true);
-    }
-
-    _makeFilesExecutable(location, operatingSystemUtils);
   }
 
   /// Formats one zip's progress line as a child of the framework-printed
