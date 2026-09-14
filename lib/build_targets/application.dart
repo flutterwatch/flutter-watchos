@@ -423,7 +423,7 @@ class NativeWatchosBundle extends Target {
 
     if (!watchosProjectDir.existsSync()) {
       globals.logger.printError('watchOS project not found. Did you run flutter-watchos create?');
-      throw Exception('Missing watchOS project directory');
+      throwToolExit('Missing watchOS project directory');
     }
 
     // 1. Stage the engine into watchos/Flutter/ as Flutter.framework, alongside
@@ -486,7 +486,7 @@ class NativeWatchosBundle extends Target {
           environment: <String, String>{'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8'},
         );
         if (podResult.exitCode != 0) {
-          throw Exception('pod install failed:\n${podResult.stderr}');
+          throwToolExit('pod install failed:\n${podResult.stderr}');
         }
       } finally {
         podStatus.stop();
@@ -545,7 +545,7 @@ class NativeWatchosBundle extends Target {
       globals.logger.printError('Xcode build failed:');
       globals.logger.printError(result.stdout as String);
       globals.logger.printError(result.stderr as String);
-      throw Exception('Xcode build failed');
+      throwToolExit('Xcode build failed');
     }
     globals.logger.printStatus('Xcode build done.');
 
@@ -1120,7 +1120,7 @@ class NativeWatchosBundle extends Target {
       kernelSnapshot = environment.outputDir.childFile('app.dill');
     }
     if (!kernelSnapshot.existsSync()) {
-      throw Exception(
+      throwToolExit(
         'Kernel snapshot (app.dill) not found at ${kernelSnapshot.path}.\n'
         'The Dart compilation step may have failed.',
       );
@@ -1147,7 +1147,7 @@ class NativeWatchosBundle extends Target {
     if (genSnapshotResult.exitCode != 0) {
       globals.logger.printError('gen_snapshot failed:');
       globals.logger.printError(genSnapshotResult.stderr as String);
-      throw Exception('gen_snapshot failed');
+      throwToolExit('gen_snapshot failed');
     }
 
     const clangTarget = 'arm64-apple-watchos9.0';
@@ -1167,7 +1167,7 @@ class NativeWatchosBundle extends Target {
     if (ccResult.exitCode != 0) {
       globals.logger.printError('Assembly compilation failed:');
       globals.logger.printError(ccResult.stderr as String);
-      throw Exception('Assembly compilation failed');
+      throwToolExit('Assembly compilation failed');
     }
 
     final File appBinary =
@@ -1189,7 +1189,7 @@ class NativeWatchosBundle extends Target {
     if (linkResult.exitCode != 0) {
       globals.logger.printError('Linking App.framework failed:');
       globals.logger.printError(linkResult.stderr as String);
-      throw Exception('Linking App.framework failed');
+      throwToolExit('Linking App.framework failed');
     }
     _finalizeAppFramework(appBinary.parent);
     globals.logger.printTrace('AOT App.framework built: ${appBinary.path}');
@@ -1250,7 +1250,7 @@ class NativeWatchosBundle extends Target {
       ]);
       if (r.exitCode != 0) {
         globals.logger.printError('Building JIT stub App.framework failed: ${r.stderr}');
-        throw Exception('Building JIT stub App.framework failed');
+        throwToolExit('Building JIT stub App.framework failed');
       }
       _finalizeAppFramework(appBinary.parent);
       globals.logger.printTrace('JIT stub App.framework built: ${appBinary.path}');
@@ -1349,7 +1349,7 @@ class NativeWatchosBundle extends Target {
         globals.logger.printError(
           'Compiling the FlutterWatchOS host module ($arch) failed:\n${r.stderr}',
         );
-        throw Exception('Compiling the FlutterWatchOS host module failed');
+        throwToolExit('Compiling the FlutterWatchOS host module failed');
       }
       objects.add(object);
     }
@@ -1370,7 +1370,7 @@ class NativeWatchosBundle extends Target {
         globals.logger.printError(
           'Combining host module slices failed:\n${lipoR.stderr}',
         );
-        throw Exception('Combining host module slices failed');
+        throwToolExit('Combining host module slices failed');
       }
     }
     final String archive =
@@ -1393,7 +1393,7 @@ class NativeWatchosBundle extends Target {
       globals.logger.printError(
         'Linking the FlutterWatchOS host archive failed:\n${libR.stderr}',
       );
-      throw Exception('Linking the FlutterWatchOS host archive failed');
+      throwToolExit('Linking the FlutterWatchOS host archive failed');
     }
     globals.logger.printTrace(
       'Built the FlutterWatchOS host module ($archive, ${archs.join('+')}).',
@@ -1544,7 +1544,7 @@ class NativeWatchosBundle extends Target {
       ]);
       if (r.exitCode != 0) {
         globals.logger.printError('Compiling watchOS plugin source $src failed:\n${r.stderr}');
-        throw Exception('Compiling watchOS plugin source failed');
+        throwToolExit('Compiling watchOS plugin source failed');
       }
       objects.add(obj);
     }
@@ -1580,7 +1580,7 @@ class NativeWatchosBundle extends Target {
           globals.logger.printError(
             'Compiling watchOS plugin view sources for ${entry.key} failed:\n${r.stderr}',
           );
-          throw Exception('Compiling watchOS plugin view sources failed');
+          throwToolExit('Compiling watchOS plugin view sources failed');
         }
         objects.add(obj);
       }
@@ -1603,7 +1603,7 @@ class NativeWatchosBundle extends Target {
     ]);
     if (libR.exitCode != 0) {
       globals.logger.printError('Linking watchOS plugin archive failed:\n${libR.stderr}');
-      throw Exception('Linking watchOS plugin archive failed');
+      throwToolExit('Linking watchOS plugin archive failed');
     }
     globals.logger.printTrace(
       'Built watchOS plugin archive ($archive) from ${objects.length} object(s); '
@@ -1895,7 +1895,7 @@ class NativeWatchosBundle extends Target {
         'Building watchOS plugin ${plugin.name} via SwiftPM failed:\n'
         '${result.stdout}\n${result.stderr}',
       );
-      throw Exception('Building watchOS plugin SwiftPM package failed');
+      throwToolExit('Building watchOS plugin SwiftPM package failed');
     }
 
     final Directory productsDir = derivedData
@@ -1903,7 +1903,7 @@ class NativeWatchosBundle extends Target {
         .childDirectory('Products')
         .childDirectory('$configuration-${buildInfo.sdkName}');
     if (!productsDir.existsSync()) {
-      throw Exception(
+      throwToolExit(
         'SwiftPM build for ${plugin.name} produced no products directory at '
         '${productsDir.path}',
       );
@@ -1913,7 +1913,7 @@ class NativeWatchosBundle extends Target {
         if (e is File && e.path.endsWith('.o')) e.path,
     ];
     if (objects.isEmpty) {
-      throw Exception(
+      throwToolExit(
         'SwiftPM build for ${plugin.name} produced no object files in '
         '${productsDir.path}',
       );
