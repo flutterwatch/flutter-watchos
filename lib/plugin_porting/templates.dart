@@ -121,8 +121,9 @@ String renderPubspec({required PluginSource source, required String licenseHolde
     ..writeln('        # so this is the supported plugin model.')
     ..writeln('        ffiPlugin: true')
     ..writeln('        dartPluginClass: $dartClass')
-    ..writeln('        # C symbols exported for dart:ffi lookup. The CLI emits a')
-    ..writeln('        # forced reference for each so they survive the static link.')
+    ..writeln('        # C symbols exported for dart:ffi lookup. They survive the')
+    ..writeln('        # static link because the CLI force-loads the plugin archive')
+    ..writeln('        # and each export is marked used + default-visibility.')
     ..writeln('        # TODO(porter): list every C function you export here.')
     ..writeln('        ffiSymbols:')
     ..writeln('          - ${exampleSymbolName(source)}');
@@ -148,8 +149,9 @@ String renderFfiHeader({required PluginSource source, required String licenseHol
 // table, where `DynamicLibrary.process()` / dlsym can resolve it. The watch
 // app links this archive statically, so without the attributes the linker
 // would drop these (FFI has no compile-time caller). The CLI additionally
-// emits a forced reference for each symbol listed under
-// `flutter.plugin.platforms.watchos.ffiSymbols`.
+// force-loads the plugin archive and keeps global symbols through the App
+// Store strip; `flutter.plugin.platforms.watchos.ffiSymbols` documents the
+// symbols that contract covers.
 #define $exportMacro \\
   __attribute__((visibility("default"))) __attribute__((used))
 

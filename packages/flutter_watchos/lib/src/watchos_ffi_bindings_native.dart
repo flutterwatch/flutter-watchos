@@ -8,10 +8,11 @@ import 'package:ffi/ffi.dart';
 /// FFI bindings to the native flutter_watchos C functions.
 ///
 /// On watchOS, the native code is statically linked into the app process, so
-/// we use [DynamicLibrary.process()] to look up symbols. The CLI emits a
-/// forced reference for each exported symbol (declared under
-/// `flutter.plugin.platforms.watchos.ffiSymbols` in pubspec.yaml) so they
-/// survive the static link and stay resolvable via dlsym.
+/// we use [DynamicLibrary.process()] to look up symbols. They survive the
+/// static link because the CLI force-loads the plugin archive, each export is
+/// marked `used` + default-visibility, and global symbols are kept through the
+/// App Store strip; `flutter.plugin.platforms.watchos.ffiSymbols` in
+/// pubspec.yaml documents which symbols that contract covers.
 ///
 /// For testing, subclass this and override the getters. Use the
 /// [WatchOSNativeBindings.forTesting] named constructor to skip FFI init.

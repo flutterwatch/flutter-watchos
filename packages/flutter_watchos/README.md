@@ -138,9 +138,10 @@ safe to leave in cross-platform code.
 This is an **FFI plugin** (`ffiPlugin: true`). The native C functions in
 `watchos/Classes/flutter_watchos_ffi.{h,m}` are statically linked into the
 watch app. Because FFI symbols have no compile-time caller, each one is listed
-under `flutter.plugin.platforms.watchos.ffiSymbols` in `pubspec.yaml`; the
-flutter-watchos CLI emits a forced reference so they survive `-dead_strip` and
-remain resolvable via `DynamicLibrary.process()`.
+under `flutter.plugin.platforms.watchos.ffiSymbols` in `pubspec.yaml`, marked
+`used` + default-visibility in the header, force-loaded into the app by the
+flutter-watchos CLI, and kept through the App Store strip, so they survive
+`-dead_strip` and remain resolvable via `DynamicLibrary.process()`.
 
 On non-Apple platforms (Web, Android, desktop) every API returns a safe
 default and performs no FFI lookup.

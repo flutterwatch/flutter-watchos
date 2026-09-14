@@ -12,9 +12,10 @@
 // the linker's `-dead_strip` and lands in the executable's dynamic symbol
 // table, where `DynamicLibrary.process()` / dlsym can resolve it. The watch
 // app links this archive statically, so without `used` the linker would drop
-// these (FFI has no compile-time caller). The CLI additionally emits a forced
-// reference for each symbol listed under `flutter.plugin.platforms.watchos.
-// ffiSymbols` in pubspec.yaml — see the "FFI plugins over SPM" notes.
+// these (FFI has no compile-time caller). The CLI additionally force-loads
+// the whole plugin archive and keeps global symbols through the App Store
+// strip (STRIP_STYLE = non-global); the `ffiSymbols` list in pubspec.yaml
+// documents the contract rather than driving a per-symbol linker flag.
 #define FLUTTER_WATCHOS_EXPORT \
   __attribute__((visibility("default"))) __attribute__((used))
 

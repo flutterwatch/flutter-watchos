@@ -19,9 +19,10 @@ import 'watchos_cache.dart';
 ///   - `watchos_profile_arm64`        — Profile device (arm64)
 ///   - `watchos_release_arm64`        — Release device (arm64)
 ///
-/// The watchOS engine renders in software (no GPU path on Apple Watch), so —
-/// unlike tvOS — there are no Metal shader libraries to ship; `Flutter.framework`
-/// carries the embedder + Dart VM only.
+/// The watchOS engine renders with Impeller on Metal (software Skia as the
+/// fallback), with its shaders compiled into the engine dylib itself, so there
+/// is no separate Metal shader library to ship: `Flutter.framework` carries
+/// the embedder + renderer + Dart VM only.
 class WatchosArtifacts extends CachedArtifacts {
   WatchosArtifacts({
     required super.fileSystem,

@@ -30,9 +30,12 @@ flutter:
     platforms:
       watchos:
         ffiPlugin: true
-        # C symbols this FFI plugin exports. The flutter-watchos CLI emits a
-        # forced reference for each so they survive the static link into the
-        # watch app binary and stay resolvable via dlsym / DynamicLibrary.process().
+        # C symbols this FFI plugin exports. The flutter-watchos CLI keeps
+        # them alive by force-loading the plugin archive into the watch app,
+        # by marking each export `used` + default-visibility (see
+        # watchos/Classes/flutter_watchos_ffi.h), and by keeping global
+        # symbols through the App Store strip (STRIP_STYLE = non-global), so
+        # they stay resolvable via dlsym / DynamicLibrary.process().
         ffiSymbols:
           - flutter_watchos_is_watchos
           - flutter_watchos_system_version
