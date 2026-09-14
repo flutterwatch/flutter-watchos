@@ -40,10 +40,11 @@ class WatchosLoginCommand extends FlutterCommand {
             'Could not reach the flutterwatch.dev service (HTTP $startStatus).');
       }
 
-      final deviceCode = start['device_code']! as String;
-      final userCode = start['user_code']! as String;
-      final url =
-          (start['verification_uri_complete'] ?? start['verification_uri'])! as String;
+      final String deviceCode = _requireString(start, 'device_code');
+      final String userCode = _requireString(start, 'user_code');
+      final String url = start['verification_uri_complete'] is String
+          ? start['verification_uri_complete']! as String
+          : _requireString(start, 'verification_uri');
       final int interval = (start['interval'] as num?)?.toInt() ?? 5;
       final int expiresIn = (start['expires_in'] as num?)?.toInt() ?? 900;
 
@@ -72,10 +73,15 @@ class WatchosLoginCommand extends FlutterCommand {
           continue; // authorization_pending
         }
         if (status == 200) {
-          final token = body['token']! as String;
+          final String token = _requireString(body, 'token');
           final login = body['login'] as String?;
-          writeWatchosCredentials(globals.fs, globals.platform, token: token, login: login);
-          globals.os.chmod(watchosCredentialsFile(globals.fs, globals.platform), '600');
+          writeWatchosCredentials(
+            globals.fs,
+            globals.platform,
+            token: token,
+            login: login,
+            operatingSystemUtils: globals.os,
+          );
           globals.printStatus(
             '\nLogged in${login != null ? ' as $login' : ''}. '
             'Credentials stored in ${watchosCredentialsFile(globals.fs, globals.platform).path}.',
@@ -85,8 +91,10 @@ class WatchosLoginCommand extends FlutterCommand {
         throwToolExit(_serverMessage(body) ?? 'Login failed (HTTP $status).');
       }
       throwToolExit('Login timed out. Run `flutter-watchos login` again.');
-    } on SocketException catch (e) {
-      throwToolExit('Could not reach $api: ${e.message}');
+    } on IOException catch (e) {
+      // SocketException, HandshakeException and HttpException alike: none of
+      // them is a bug in this tool, so none deserves a crash report.
+      throwToolExit('Could not reach $api: $e');
     } finally {
       client.close(force: true);
     }
@@ -109,6 +117,21 @@ class WatchosLogoutCommand extends FlutterCommand {
     globals.printStatus(removed ? 'Logged out.' : 'Not logged in.');
     return FlutterCommandResult.success();
   }
+}
+
+/// A non-empty string field of a service reply, or a tool exit that names the
+/// missing field — a service that changes shape must not read as a crash in
+/// this tool.
+String _requireString(Map<String, Object?> body, String key) {
+  final Object? value = body[key];
+  if (value is String && value.isNotEmpty) {
+    return value;
+  }
+  throwToolExit(
+    'The flutterwatch.dev service sent an unexpected reply (no "$key"). '
+    'Try again in a moment; if it keeps happening, report it with the output '
+    'of `flutter-watchos login -v`.',
+  );
 }
 
 String? _serverMessage(Map<String, Object?> body) {
