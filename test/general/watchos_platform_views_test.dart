@@ -90,14 +90,14 @@ void main() {
       // image so the Flutter scene's transparent hole reveals them; overlay
       // slots keep the classic above-the-frame composition.
       expect(app,
-          contains(r'platformViewGroup(platformViews.slots.filter(\.belowFrame))'));
+          contains('platformViewGroup(platformViews.underlaySlots)'));
       expect(
           app,
           contains(
-              r'platformViewGroup(platformViews.slots.filter { !$0.belowFrame })'));
+              'platformViewGroup(platformViews.overlaySlots)'));
       final int background = app.indexOf('.background {');
       final int overlay = app.indexOf(
-          r'platformViewGroup(platformViews.slots.filter { !$0.belowFrame })');
+          'platformViewGroup(platformViews.overlaySlots)');
       expect(background, greaterThan(-1));
       expect(overlay, greaterThan(background));
     });
@@ -106,7 +106,7 @@ void main() {
       // Touch routing must stay deterministic: the frame image above an
       // underlay view owns all touches (interaction is handled in Dart).
       final int underlay = app
-          .indexOf(r'platformViewGroup(platformViews.slots.filter(\.belowFrame))');
+          .indexOf('platformViewGroup(platformViews.underlaySlots)');
       final int hitTestingOff = app.indexOf('.allowsHitTesting(false)');
       expect(underlay, greaterThan(-1));
       expect(hitTestingOff, greaterThan(underlay));
@@ -135,7 +135,7 @@ void main() {
       // overlays sit on top), so a text field over a platform view still
       // raises the keyboard.
       final int platformViewOverlay = app.indexOf(
-          r'platformViewGroup(platformViews.slots.filter { !$0.belowFrame })');
+          'platformViewGroup(platformViews.overlaySlots)');
       final int textInputOverlay = app.indexOf('ForEach(textInput.fields');
       expect(platformViewOverlay, greaterThan(-1));
       expect(textInputOverlay, greaterThan(platformViewOverlay));

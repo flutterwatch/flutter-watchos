@@ -179,7 +179,7 @@ void main() {
       // The text-input overlay already places a real native TextField there;
       // a synthesized element on top would shadow it, and the proxy alone
       // would read as an anonymous "text field".
-      expect(a11y, contains(r'elements.filter { !$0.isTextField }'));
+      expect(a11y, contains(r'placedElements = next.filter { !$0.isTextField }'));
       expect(view, contains('accessibility.placedElements'));
       expect(view, contains('A11yTextFieldSemantics'));
     });

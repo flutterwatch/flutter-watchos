@@ -103,6 +103,14 @@ final class WatchAccessibility: ObservableObject {
     /// callback registered in `start()`.
     @Published var elements: [WatchA11yElement] = []
 
+    /// The elements the host places itself: everything except the text fields,
+    /// which VoiceOver reaches through the text-input overlay's native proxy.
+    /// Derived once per change, not filtered per body evaluation.
+    private(set) var placedElements: [WatchA11yElement] = []
+
+    /// `elements` by node id, for the text-input overlay's lookups.
+    private var elementsById: [Int32: WatchA11yElement] = [:]
+
     /// Generation last copied from the engine; unchanged means skip the copy.
     private var lastGeneration: UInt64 = 0
 
@@ -184,7 +192,14 @@ final class WatchAccessibility: ObservableObject {
         }
         // Rebuilt from the live set, so vanished nodes do not accumulate.
         stringCache = cache
-        if next != elements { elements = next }
+        if next != elements {
+            // The derived views first: the `elements` assignment is what
+            // SwiftUI observes, and the body it schedules reads these.
+            placedElements = next.filter { !$0.isTextField }
+            elementsById = Dictionary(
+                next.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            elements = next
+        }
     }
 
     // The handlers are pure pass-throughs to the engine, which validates every
@@ -200,16 +215,10 @@ final class WatchAccessibility: ObservableObject {
         FlutterWatchOSA11yPerformCustomAction(id, Int32(index))
     }
 
-    /// The elements the host places itself: everything except the text fields,
-    /// which VoiceOver reaches through the text-input overlay's native proxy.
-    var placedElements: [WatchA11yElement] {
-        elements.filter { !$0.isTextField }
-    }
-
     /// The element for a semantics node, when one is published. Used by the
     /// text-input overlay to name its proxy field.
     func element(for nodeId: Int32) -> WatchA11yElement? {
-        elements.first { $0.id == nodeId }
+        elementsById[nodeId]
     }
 
     /// Called by FlutterRunner once the engine is up.

@@ -57,19 +57,10 @@ public struct FlutterHostView<Splash: View>: View {
 
     public var body: some View {
         GeometryReader { _ in
-            Group {
-                if let frame = runner.frame {
-                    Image(decorative: frame, scale: runner.pixelRatio)
-                        .resizable()
-                        .frame(width: runner.sizePoints.width, height: runner.sizePoints.height)
-                } else {
-                    // Nothing rendered yet. The launch placeholder at the
-                    // bottom of this chain covers the gap; this is only the
-                    // ground beneath it.
-                    Color.black
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
+            // The frame itself lives in its own leaf view, which is the only
+            // thing that observes the 60 Hz frame store — see
+            // FlutterFrameStore for why this body must not.
+            FlutterFrameView(sizePoints: runner.sizePoints, pixelRatio: runner.pixelRatio)
             // MUST be simultaneous, not exclusive: on real hardware an
             // exclusive zero-distance drag wins the gesture arena against the
             // internal gestures of overlaid native controls (a SwiftUI Toggle
@@ -144,7 +135,7 @@ public struct FlutterHostView<Splash: View>: View {
             // owns them; interaction is handled in Dart), so hit-testing is
             // disabled outright to keep routing deterministic.
             .background {
-                platformViewGroup(platformViews.slots.filter(\.belowFrame))
+                platformViewGroup(platformViews.underlaySlots)
                     .allowsHitTesting(false)
             }
             // Platform views (overlay layer, the default). The native view
@@ -154,7 +145,7 @@ public struct FlutterHostView<Splash: View>: View {
             // Flutter content and consume touches inside their rect; the
             // text-input proxies (next overlay) stay above them.
             .overlay {
-                platformViewGroup(platformViews.slots.filter { !$0.belowFrame })
+                platformViewGroup(platformViews.overlaySlots)
             }
             // Text entry. A near-transparent native field is overlaid on each
             // Flutter text field (`textInput.fields`). Because it is present
@@ -395,6 +386,32 @@ public struct FlutterHostView<Splash: View>: View {
     }
 }
 
+/// The engine's frame, as a SwiftUI image — the one view that observes
+/// `FlutterFrameStore`, so a new frame re-evaluates this and nothing else.
+private struct FlutterFrameView: View {
+    @ObservedObject private var frames = FlutterFrameStore.shared
+    let sizePoints: CGSize
+    let pixelRatio: Double
+
+    init(sizePoints: CGSize, pixelRatio: Double) {
+        self.sizePoints = sizePoints
+        self.pixelRatio = pixelRatio
+    }
+
+    var body: some View {
+        if let frame = frames.frame {
+            Image(decorative: frame, scale: pixelRatio)
+                .resizable()
+                .frame(width: sizePoints.width, height: sizePoints.height)
+        } else {
+            // Nothing rendered yet. The host's launch placeholder covers the
+            // gap; this is only the ground beneath it.
+            Color.black
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
 extension FlutterHostView where Splash == Color {
     /// The host view with the default launch placeholder: plain black, which
     /// is what watchOS draws behind the app icon while the app launches, so
@@ -466,14 +483,24 @@ private struct EngineVsyncClock: View {
 /// watchOS has no public API for this; `_statusBarHidden()` is SwiftUI SPI,
 /// so it is applied ONLY on explicit opt-in (`WatchStatusBar.hidden = true`)
 /// — the default path never touches it and keeps the time visible.
+///
+/// The reference to the SPI is also compiled in only when the app can reach
+/// it: `WatchStatusBar` lives in package:flutter_watchos, and the CLI defines
+/// `FLUTTER_WATCHOS_STATUS_BAR_SPI` only for an app that depends on that
+/// package. A runtime `if` would leave the symbol in every app's binary,
+/// opted in or not, which is what a private-API scan sees.
 private struct SystemTimeHidden: ViewModifier {
     let hidden: Bool
     func body(content: Content) -> some View {
+        #if FLUTTER_WATCHOS_STATUS_BAR_SPI
         if hidden {
             content._statusBarHidden()
         } else {
             content
         }
+        #else
+        content
+        #endif
     }
 }
 #endif  // !arch(arm64_32)

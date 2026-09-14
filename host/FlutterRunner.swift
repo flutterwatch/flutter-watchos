@@ -172,6 +172,11 @@ final class WatchPlatformViews: ObservableObject {
     /// change callback registered in `start()`.
     @Published var slots: [WatchPlatformViewSlot] = []
 
+    /// `slots` split by layer, computed once per change rather than filtered
+    /// on every evaluation of the host view's body.
+    private(set) var underlaySlots: [WatchPlatformViewSlot] = []
+    private(set) var overlaySlots: [WatchPlatformViewSlot] = []
+
     /// Generation last copied from the engine; unchanged means skip the copy.
     private var lastGeneration: UInt64 = 0
 
@@ -212,7 +217,13 @@ final class WatchPlatformViews: ObservableObject {
                 visible: s.visible,
                 belowFrame: FlutterWatchOSPlatformViewGetBelowFrame(s.view_id))
         }
-        if next != slots { slots = next }
+        if next != slots {
+            // The derived lists first: the `slots` assignment is what SwiftUI
+            // observes, and the body it schedules reads these.
+            underlaySlots = next.filter(\.belowFrame)
+            overlaySlots = next.filter { !$0.belowFrame }
+            slots = next
+        }
     }
 }
 
@@ -322,14 +333,30 @@ enum WatchContentScale {
     }
 }
 
+/// The engine's latest frame, and nothing else — kept apart from the rest of
+/// the runner's state on purpose.
+///
+/// SwiftUI re-evaluates every view that observes an object whenever ANY of
+/// that object's published properties changes. The frame changes sixty times
+/// a second, so publishing it from `FlutterRunner` — which `FlutterHostView`
+/// observes for its rarely-changing status-bar flag — re-ran the whole host
+/// body on every refresh: the text-field proxies, the platform-view slots
+/// (re-invoking their factories) and the accessibility elements were all
+/// rebuilt for a picture that only `FlutterFrameView` shows. With the frame
+/// here, that one leaf view is the only observer, and the overlays are
+/// evaluated when their own mirrors change.
+final class FlutterFrameStore: ObservableObject {
+    static let shared = FlutterFrameStore()
+
+    /// The latest Flutter frame, rendered by the engine.
+    @Published fileprivate(set) var frame: CGImage?
+}
+
 /// Generic glue around the Flutter engine — identical for every app. It starts
 /// the engine, forwards touch and Digital Crown input, displays the frames the
 /// engine produces, and plays the crown detent haptic on request.
 final class FlutterRunner: ObservableObject {
     static let shared = FlutterRunner()
-
-    /// The latest Flutter frame, rendered by the engine.
-    @Published var frame: CGImage?
 
     /// True once Flutter's first frame is ON SCREEN — what the launch
     /// placeholder waits on before it comes down. The watchOS spelling of
@@ -564,7 +591,7 @@ final class FlutterRunner: ObservableObject {
     /// Main thread: publish the frame and mirror the plugin's status-bar
     /// request alongside it (a cheap flag read; publishes only on change).
     private func publish(_ image: CGImage) {
-        frame = image
+        FlutterFrameStore.shared.frame = image
         // The placeholder's cue: this is the moment Flutter's pixels reach
         // SwiftUI, so the cross-fade has something to reveal. See
         // `displayingFlutterUI` for why the engine's earlier signal is not it.
