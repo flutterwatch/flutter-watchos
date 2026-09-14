@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased
+
+Pre-launch fixes from a review of the engine, the host module and the CLI.
+
+- **Flutter 3.47.4.** The pinned SDK moves from 3.47.1 to 3.47.4, which rolled
+  the Dart SDK twice. The engine is rebuilt at the same commit and re-pinned
+  (see the engine id in `bin/internal/engine.version`); one `flutter_tools`
+  change (LLDB now wants a device-support context) is absorbed in
+  `watchos_device.dart`.
+
+- **The host module is compiled optimised.** It was passed
+  `-whole-module-optimization` but never `-O`, so every release app shipped the
+  frame path, gesture handling and overlay mirrors at `-Onone`. Profile and
+  release now get `-O`, debug `-Onone`, and all of them `-g` so a crash log can
+  name a host frame.
+
+- **The 60 Hz frame no longer re-evaluates the whole host view.** The frame
+  image was published from the same object the text-field, platform-view and
+  accessibility overlays observe, so every display tick rebuilt all of them —
+  and re-invoked every platform-view factory. The frame now has its own store,
+  observed by one leaf view.
+
+- **Text input.** Keyboard submit delivers the field's configured
+  `TextInputAction` (`next`, `search`, `send`, …) instead of always `done`; text
+  typed before the framework's attach is no longer erased locally by the
+  attach's own `setEditingState`; and a session the framework closes itself
+  (route pop, `unfocus()`, `TextInput.hide`) ends, so the next keystroke starts
+  a fresh one instead of being buffered forever. The engine wakes the host only
+  when a field rect or value actually changed.
+
+- **HTTP on a watch.** The URLSession-backed `HttpClient` is installed for
+  every isolate, so `compute()`/`Isolate.run()` can fetch; `abort()` cancels the
+  underlying task; no cookie jar (dart:io never had one); and
+  `badCertificateCallback` says once that it is not applied rather than
+  silently dropping certificate pinning.
+
+- **Engine robustness.** Metal.framework is weak-linked, with a runtime check
+  before the first Metal call, so a watchOS that changes a framework the SDK
+  never declared falls back to software instead of failing to launch. An
+  accessibility action mask that is not exactly one bit, and a non-finite crown
+  delta, are rejected before they reach the framework.
+
+- **CLI.** Native build failures (xcodebuild, gen_snapshot, clang, libtool) exit
+  the tool instead of printing a crash; the engine download extracts into a
+  staging directory and is renamed into place only when complete, under the
+  cache lock; the login token is written owner-only from the start;
+  `WATCHOS_ARTIFACTS_API` must be https (localhost excepted); archive paths in
+  `Generated.xcconfig` are quoted so a project directory with a space links;
+  plugin objects are named by plugin so two `plugin.m` no longer collide; and
+  `doctor`, the launcher and the README say that an Apple Silicon Mac in a
+  native shell is required. `Generated.xcconfig` records
+  `FLUTTER_WATCHOS_BUILD_MODE` so a Run Script phase can refuse a Release
+  archive taken after `build --profile` (see the publishing doc).
+
+- **App Review surface.** SwiftUI's `_statusBarHidden` SPI is compiled into the
+  host module only for apps that depend on `package:flutter_watchos`, the one
+  way Dart can ask for the clock to be hidden.
+
+- Stale claims corrected: README versions, three "software rendering" comments,
+  and the promise of a per-symbol forced reference for `ffiSymbols`, which the
+  CLI never emitted (the archive is force-loaded and global symbols survive the
+  strip instead).
+
 ## 0.1.0-beta.11 (closed beta)
 
 Three things the watch knew and your app did not — that memory is running out,

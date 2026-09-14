@@ -11,7 +11,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 ## Current version
 
 - flutter-watchos: `0.1.0-beta.11`
-- Flutter SDK: `3.47.1` (`6655482ec06e547f90abf8ae7590466f4415978d`)
+- Flutter SDK: `3.47.4` (`9584c6713b324636289d067944a46fd6b49df14b`)
 - watchOS engine artifacts: `engine-7526eb698613`
 
 ## Installation

@@ -16,6 +16,7 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/ios/device_support.dart';
 import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
 import 'package:flutter_tools/src/ios/xcodeproj.dart';
@@ -475,6 +476,25 @@ class WatchosDevice extends Device {
   LLDB? _lldb;
   LLDBLogForwarder? _lldbLogForwarder;
 
+  /// What LLDB (since Flutter 3.47.4) reports against when an attach takes
+  /// longer than a minute: the iOS DeviceSupport symbols for this device. A
+  /// paired watch has no such folder of its own, so this carries the device id
+  /// and leaves model, OS version and architecture unknown — the warning then
+  /// stays generic instead of naming a folder that cannot exist.
+  IOSDeviceSupport? _deviceSupport;
+  IOSDeviceSupport get _lldbDeviceSupport => _deviceSupport ??= IOSDeviceSupport(
+    logger: logger,
+    processUtils: globals.processUtils,
+    xcode: globals.xcode,
+    deviceId: id,
+    homeDirectory: globals.fsUtils.homeDirPath == null
+        ? null
+        : globals.fs.directory(globals.fsUtils.homeDirPath),
+    modelCode: null,
+    operatingSystemVersion: null,
+    cpuArchitectureString: null,
+  );
+
   XcodeDebug? _xcodeDebug;
 
   /// Mac half of the VM Service relay for a profile run on a physical watch.
@@ -895,6 +915,7 @@ class WatchosDevice extends Device {
               appProcessId: pid,
               lldbLogForwarder: lldbForwarder,
               mode: debuggingOptions.buildInfo.mode,
+              deviceSupport: _lldbDeviceSupport,
             )
             .timeout(
               timeout,
