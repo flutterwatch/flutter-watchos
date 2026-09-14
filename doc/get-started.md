@@ -6,7 +6,8 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 
 ## Requirements
 
-- **macOS** with **Xcode 26+** and the watchOS SDK (`xcodebuild -showsdks`
+- **macOS on an Apple Silicon Mac**, in a native (not Rosetta) terminal — the
+  watchOS engine tools are arm64-only — with **Xcode 26+** and the watchOS SDK (`xcodebuild -showsdks`
   should list `watchos` and `watchsimulator`). Accept the license once:
 
   ```sh
@@ -55,7 +56,7 @@ download automatically.
 ```
 $ flutter-watchos doctor
 Doctor summary (to see all details, run flutter-watchos doctor -v):
-[✓] Flutter (3.47.1, on macOS)
+[✓] Flutter (3.47.4, on macOS)
 [✓] Xcode - develop for iOS and watchOS
 [✓] Connected device (1 available)
 ```
