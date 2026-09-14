@@ -4,7 +4,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 `flutter-watchos` is a drop-in CLI companion to the Flutter SDK — same commands, same hot reload (on the Simulator), same DevTools — targeting watchOS instead of iOS.
 
-> **macOS only.** Xcode is required.
+> **Apple Silicon Mac only.** Xcode is required. The watchOS engine tools are arm64-only, so an Intel Mac, or a terminal running under Rosetta, cannot build for the watch.
 
 > **Closed beta.** The watchOS engine ships as pre-built binaries tied to your account. Joining is self-serve and instant — sign in with GitHub at [flutterwatch.dev](https://flutterwatch.dev), then `flutter-watchos login`.
 

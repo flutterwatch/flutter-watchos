@@ -19,6 +19,10 @@ import '../src/fakes.dart';
 FakePlatform _makePlatform() =>
     FakePlatform(script: Uri.file('/cli/bin/cache/flutter-watchos.snapshot'));
 
+// The hardware every other test assumes: an arm64 Mac in a native shell.
+FakeOperatingSystemUtils _appleSilicon() =>
+    FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_arm64);
+
 MemoryFileSystem _makeEngineFs({bool artifactsPresent = true}) {
   final fs = MemoryFileSystem.test();
   if (artifactsPresent) {
@@ -61,6 +65,7 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -84,6 +89,7 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -106,6 +112,7 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -129,6 +136,7 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -148,6 +156,7 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -162,11 +171,52 @@ void main() {
         processManager: processManager,
         fileSystem: _makeEngineFs(artifactsPresent: false),
         platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
       );
 
       final ValidationResult result = await validator.validate();
       expect(result.type, equals(ValidationType.success));
       expect(_texts(result), contains(contains('engine artifacts not found')));
+    });
+
+    // The engine's host tools are arm64-only Mach-O. Before this check the
+    // first sign on an Intel Mac was "bad CPU type" from gen_snapshot, a
+    // gigabyte of SDK download later.
+    testWithoutContext('an Intel Mac is an error', () async {
+      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+
+      final validator = WatchosValidator(
+        processManager: processManager,
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
+        operatingSystemUtils: FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_x64),
+      );
+
+      final ValidationResult result = await validator.validate();
+      expect(result.type, equals(ValidationType.partial));
+      expect(_texts(result), contains(contains('Apple Silicon Mac')));
+    });
+
+    // hostPlatform reports the hardware, so an arm64 Mac whose shell runs
+    // under Rosetta passes that check and still cannot exec the tools: its
+    // bootstrap downloaded an x86_64 Dart SDK. The VM's version string is
+    // what gives that away.
+    testWithoutContext('a Rosetta shell on Apple Silicon is an error', () async {
+      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+
+      final validator = WatchosValidator(
+        processManager: processManager,
+        fileSystem: _makeEngineFs(),
+        platform: FakePlatform(
+          script: Uri.file('/cli/bin/cache/flutter-watchos.snapshot'),
+          version: '3.11.0 (stable) (Tue Sep 1 00:00:00 2026 +0000) on "macos_x64"',
+        ),
+        operatingSystemUtils: _appleSilicon(),
+      );
+
+      final ValidationResult result = await validator.validate();
+      expect(result.type, equals(ValidationType.partial));
+      expect(_texts(result), contains(contains('Rosetta')));
     });
   });
 

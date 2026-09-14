@@ -33,6 +33,22 @@ if [[ "$OS" != "Darwin" ]]; then
   exit 1
 fi
 
+# The watchOS engine's host tools (gen_snapshot, the Simulator engine) are
+# arm64-only, and the bootstrap below would pick an x86_64 Dart SDK for an
+# x86_64 shell — which cannot exec them either. Say so before downloading a
+# gigabyte of SDK that cannot work.
+ARCH="$(uname -m)"
+if [[ "$ARCH" != "arm64" ]]; then
+  cat >&2 <<EOF
+flutter-watchos needs an Apple Silicon Mac running a native arm64 shell;
+this shell reports "$ARCH".
+  * On an Intel Mac the watchOS engine tools cannot run at all.
+  * On Apple Silicon this shell is running under Rosetta: open a native
+    terminal (or run \`arch -arm64 zsh\`) and try again.
+EOF
+  exit 1
+fi
+
 source "$BIN_DIR/internal/shared.sh"
 
 # Clone or update the flutter repo.

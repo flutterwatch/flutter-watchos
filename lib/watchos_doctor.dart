@@ -36,14 +36,17 @@ class WatchosValidator extends DoctorValidator {
     required ProcessManager processManager,
     FileSystem? fileSystem,
     Platform? platform,
+    OperatingSystemUtils? operatingSystemUtils,
   }) : _processManager = processManager,
        _fileSystem = fileSystem,
        _platform = platform,
+       _operatingSystemUtils = operatingSystemUtils,
        super('watchOS toolchain - develop for Apple Watch devices');
 
   final ProcessManager _processManager;
   final FileSystem? _fileSystem;
   final Platform? _platform;
+  final OperatingSystemUtils? _operatingSystemUtils;
 
   @override
   Future<ValidationResult> validate() async {
@@ -55,6 +58,9 @@ class WatchosValidator extends DoctorValidator {
     if (!xcodeOk) {
       return ValidationResult(ValidationType.missing, messages);
     }
+
+    // 1b. Check the host architecture
+    _checkHostArchitecture(messages);
 
     // 2. Check watchOS SDK
     await _checkWatchosSdk(messages);
@@ -104,6 +110,45 @@ class WatchosValidator extends DoctorValidator {
       ),
     );
     return false;
+  }
+
+  /// Checks that this is an Apple Silicon Mac running a native shell.
+  ///
+  /// The engine's host tools — `gen_snapshot`, the `frontend_server`
+  /// snapshot's Dart, the Simulator engine — ship as arm64-only Mach-O, so
+  /// an Intel Mac cannot use them at all. An Apple Silicon Mac whose shell
+  /// runs under Rosetta fails the same way one step later: the bootstrap
+  /// picks the x86_64 Dart SDK for an x86_64 shell, and that VM cannot exec
+  /// the arm64 tools either. Both used to surface as "bad CPU type" from deep
+  /// inside an AOT build.
+  void _checkHostArchitecture(List<ValidationMessage> messages) {
+    final OperatingSystemUtils os = _operatingSystemUtils ?? globals.os;
+    final Platform platform = _platform ?? globals.platform;
+    if (os.hostPlatform == HostPlatform.darwin_x64) {
+      messages.add(
+        const ValidationMessage.error(
+          'flutter-watchos needs an Apple Silicon Mac. The watchOS engine '
+          'tools it downloads (gen_snapshot, the Simulator engine) are '
+          'arm64-only and do not run on Intel.',
+        ),
+      );
+      return;
+    }
+    // `hostPlatform` reports the hardware; the VM's own version string names
+    // the architecture it was built for, which is what a Rosetta shell gets
+    // wrong.
+    if (platform.version.contains('macos_x64')) {
+      messages.add(
+        const ValidationMessage.error(
+          'This shell runs under Rosetta (the Dart VM is x86_64), so the '
+          'arm64-only watchOS engine tools cannot run from it. Open a native '
+          'arm64 terminal (for example `arch -arm64 zsh`), delete '
+          'flutter/bin/cache, and run flutter-watchos again.',
+        ),
+      );
+      return;
+    }
+    messages.add(const ValidationMessage('Apple Silicon host (arm64)'));
   }
 
   /// Checks that the watchOS SDK is available in Xcode.
