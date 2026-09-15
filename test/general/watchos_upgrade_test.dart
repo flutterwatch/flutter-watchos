@@ -92,7 +92,7 @@ void main() {
       // SHA, but `<tag>^{commit}` must resolve to the commit so the result is
       // comparable to `git rev-parse HEAD`.
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'v3.44.1-watchos.1.2.0\nv3.44.0-watchos.1.1.1\n',
@@ -112,7 +112,7 @@ void main() {
 
     test('skips non-release tags when choosing the newest', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\nv3.44.0-watchos.1.1.1\nv3.41.4-watchos.1.0.0\n',
@@ -132,7 +132,7 @@ void main() {
 
     test('throws a tool exit when no release tags exist', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\n',
@@ -214,7 +214,7 @@ void main() {
       'reports already up to date when HEAD is the latest (annotated) release',
       () async {
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',
@@ -249,7 +249,7 @@ void main() {
       'refuses to upgrade a dirty checkout without --force',
       () async {
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',
@@ -292,7 +292,7 @@ void main() {
         // can't be evaluated, the upgrade must abort rather than treat the tree
         // as clean — otherwise uncommitted work would be silently destroyed.
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', '-c', 'versionsort.suffix=-alpha', '-c', 'versionsort.suffix=-beta', '-c', 'versionsort.suffix=-rc', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-watchos.1.2.0\n',

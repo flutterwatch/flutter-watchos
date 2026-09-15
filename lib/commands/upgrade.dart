@@ -158,7 +158,10 @@ class WatchosUpgradeCommandRunner {
     String hash;
     try {
       await _git.run(
-        <String>['git', 'fetch', '--tags'],
+        // `--force`: without it a tag that was moved upstream after this
+        // checkout fetched it is refused ("would clobber existing tag"), git
+        // exits non-zero, and upgrade fails from then on.
+        <String>['git', 'fetch', '--tags', '--force'],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );

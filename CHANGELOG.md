@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`upgrade` survives a moved release tag.** It fetched tags without
+  `--force`, so a tag re-pointed upstream after a checkout had fetched it was
+  refused as "would clobber existing tag", and every later `upgrade` failed.
+  It now fetches with `--force`. (Checkouts that already hit this: run
+  `git fetch --tags --force` in the flutter-watchos directory once.)
+
 ## 0.1.0-beta.13 (closed beta)
 
 - **`xcodebuild` can authenticate with an App Store Connect API key.**
