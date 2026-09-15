@@ -1,47 +1,11 @@
 # Changelog
 
-## Unreleased
-
-- **`upgrade` survives a moved release tag.** It fetched tags without
-  `--force`, so a tag re-pointed upstream after a checkout had fetched it was
-  refused as "would clobber existing tag", and every later `upgrade` failed.
-  It now fetches with `--force`. (Checkouts that already hit this: run
-  `git fetch --tags --force` in the flutter-watchos directory once.)
-
-## 0.1.0-beta.13 (closed beta)
-
-- **`xcodebuild` can authenticate with an App Store Connect API key.**
-  `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
-  profile, but on its own it can only do so through a signed-in Xcode account.
-  Where there is no usable one — CI, or a machine that only has an API key —
-  xcodebuild cannot fetch the profile and quietly settles for a cached
-  *wildcard* one instead. Any app with an entitlement then fails with a message
-  naming the capability the wildcard lacks rather than the credential that is
-  actually missing, which sends you auditing the App ID in the developer
-  portal, where everything is already correct.
-
-  Set all three and the key is forwarded:
-
-  ```sh
-  export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXX.p8
-  export APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
-  export APP_STORE_CONNECT_ISSUER_ID=<issuer-uuid>
-  ```
-
-  With none of them set, nothing is added and a machine with a working Xcode
-  account behaves exactly as before. Only some of them set, or a path to a file
-  that does not exist, earns a warning rather than a silent fallback — staying
-  quiet there is indistinguishable from never having configured it, and the
-  build goes on to fail with that misleading capability message minutes later,
-  nowhere near the cause. A leading `~/` in the path is expanded, for values
-  that reach the CLI unexpanded from a quoted export or a CI config. Only the key *id* is ever logged; the key's contents are read by
-  xcodebuild, never by the CLI.
-
 ## 0.1.0-beta.12 (closed beta)
 
-Flutter 3.47.4; native views placed by the engine the way iOS places them; and
-an app that stops waking the watch when its screen is still. The rest are fixes
-from a review of the engine, the host module and the CLI, checked on a Series 10.
+Flutter 3.47.4; native views placed by the engine the way iOS places them; an
+app that stops waking the watch when its screen is still; and `xcodebuild`
+signing with an App Store Connect API key. The rest are fixes from a review of
+the engine, the host module and the CLI, checked on a Series 10.
 
 - **Flutter 3.47.4.** The pinned SDK moves from 3.47.1 to 3.47.4, which rolled
   the Dart SDK twice. The engine is rebuilt at the same commit and re-pinned
@@ -159,6 +123,39 @@ from a review of the engine, the host module and the CLI, checked on a Series 10
 - **App Review surface.** SwiftUI's `_statusBarHidden` SPI is compiled into the
   host module only for apps that depend on `package:flutter_watchos`, the one
   way Dart can ask for the clock to be hidden.
+
+- **`xcodebuild` can authenticate with an App Store Connect API key.**
+  `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
+  profile, but on its own it can only do so through a signed-in Xcode account.
+  Where there is no usable one — CI, or a machine that only has an API key —
+  xcodebuild cannot fetch the profile and quietly settles for a cached
+  *wildcard* one instead. Any app with an entitlement then fails with a message
+  naming the capability the wildcard lacks rather than the credential that is
+  actually missing, which sends you auditing the App ID in the developer
+  portal, where everything is already correct.
+
+  Set all three and the key is forwarded:
+
+  ```sh
+  export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXX.p8
+  export APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
+  export APP_STORE_CONNECT_ISSUER_ID=<issuer-uuid>
+  ```
+
+  With none of them set, nothing is added and a machine with a working Xcode
+  account behaves exactly as before. Only some of them set, or a path to a file
+  that does not exist, earns a warning rather than a silent fallback — staying
+  quiet there is indistinguishable from never having configured it, and the
+  build goes on to fail with that misleading capability message minutes later,
+  nowhere near the cause. A leading `~/` in the path is expanded, for values
+  that reach the CLI unexpanded from a quoted export or a CI config. Only the key *id* is ever logged; the key's contents are read by
+  xcodebuild, never by the CLI.
+
+- **`upgrade` survives a moved release tag.** It fetched tags without
+  `--force`, so a tag re-pointed upstream after a checkout had fetched it was
+  refused as "would clobber existing tag", and every later `upgrade` failed.
+  It now fetches with `--force`. (Checkouts that already hit this: run
+  `git fetch --tags --force` in the flutter-watchos directory once.)
 
 - Stale claims corrected: README versions, three "software rendering" comments,
   and the promise of a per-symbol forced reference for `ffiSymbols`, which the
