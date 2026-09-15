@@ -937,3 +937,35 @@ Future<String?> resolveMacLanAddress({
   }
   return tethered ?? private ?? routable;
 }
+
+/// Waits for the watch's bridge to check in with the relay.
+///
+/// Returns true once [bridgeReady] completes, false if [appExited] completes
+/// first. After [patience] without either, [onSlow] runs once and the wait
+/// goes on: the watch reaches the Mac through its paired iPhone, which can be
+/// asleep, locked or on another network for a while, and the bridge keeps
+/// dialling until it gets through. Giving up at that point would end `run`,
+/// and the app's log stream with it, over a network hiccup the app itself
+/// never noticed.
+Future<bool> awaitRelayBridge({
+  required Future<void> bridgeReady,
+  required Future<void> appExited,
+  required Duration patience,
+  required void Function() onSlow,
+}) {
+  final result = Completer<bool>();
+  void finish(bool bridged) {
+    if (!result.isCompleted) {
+      result.complete(bridged);
+    }
+  }
+
+  final slow = Timer(patience, () {
+    if (!result.isCompleted) {
+      onSlow();
+    }
+  });
+  bridgeReady.then((_) => finish(true), onError: (Object _) => finish(false));
+  appExited.then((_) => finish(false), onError: (Object _) => finish(false));
+  return result.future.whenComplete(slow.cancel);
+}

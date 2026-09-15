@@ -134,6 +134,13 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
 
   Process? _logProcess;
 
+  Future<void>? _consoleEnded;
+
+  /// Completes when the console session of the newest launch ends: the app
+  /// exited or was stopped, or devicectl lost the watch (`--console` blocks
+  /// for as long as the app runs). Never completes before a launch.
+  Future<void> get consoleEnded => _consoleEnded ?? Completer<void>().future;
+
   @override
   final String name;
 
@@ -202,6 +209,7 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
     ];
     _log.printTrace('launching: ${cmd.join(' ')}');
     _logProcess = await globals.processManager.start(cmd);
+    _consoleEnded = _logProcess!.exitCode.then((_) {});
 
     _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
       String line,
@@ -1005,32 +1013,25 @@ class WatchosDevice extends Device {
     // with nothing behind it.
     final WatchosVmRelay? relay = _vmRelay;
     if (relay != null) {
-      final bool ready = await relay.bridgeReady
-          .timeout(const Duration(seconds: 45))
-          .then((_) => true, onError: (Object _) => false);
-      if (ready) {
+      // Wait for as long as the app runs. flutter_tools ends `run` when a
+      // debuggable launch hands back no VM Service, so giving up here would
+      // stop the app's log stream too. After 45s, say why DevTools is late.
+      final bool bridged = await awaitRelayBridge(
+        bridgeReady: relay.bridgeReady,
+        appExited: logReader.consoleEnded,
+        patience: const Duration(seconds: 45),
+        onSlow: () => _warnRelayLate(logReader),
+      );
+      if (bridged) {
         logger.printTrace('VM Service relay bridged; serving at ${relay.vmServiceUri}');
         return LaunchResult.succeeded(vmServiceUri: relay.vmServiceUri);
       }
-      // Which half failed matters: the app not reaching the Mac is a network
-      // problem, the VM Service never coming up is not.
-      final cause = logReader.deviceVmServiceUri == null
-          ? 'The Dart VM Service did not start on the watch.'
-          : 'The Dart VM Service started on the watch '
-                '(${logReader.deviceVmServiceUri}) but the app did not reach '
-                'this Mac.';
-      logger.printWarning(
-        'The app did not connect back to the DevTools relay within 45s, so '
-        'DevTools will be unavailable. $cause The watch reaches the Mac '
-        'through its paired iPhone — check the iPhone is nearby, unlocked, and '
-        'on the same network as this Mac.'
-        '${_relayAdvertisedHost == null ? '' : ' The watch was told to dial '
-              '$_relayAdvertisedHost; if the iPhone cannot reach that address '
-              '(a Mac on several networks at once has more than one, and only '
-              'some are reachable), set FLUTTER_WATCHOS_RELAY_HOST to the '
-              'right one.'}',
+      logger.printError(
+        'The session with the app on the watch ended before the app connected '
+        'back to this Mac: the app exited, or this Mac lost the watch (asleep, '
+        'off the wrist, or out of range).',
       );
-      return LaunchResult.succeeded();
+      return LaunchResult.failed();
     }
 
     // Discover the Mac-reachable VM service URI: scrape the console for the
@@ -1647,6 +1648,30 @@ class WatchosDevice extends Device {
     // Physical device: the log reader dispose() above already terminates the
     // launch console session (which unlocks the app).
     return true;
+  }
+
+  /// Tells the user why DevTools has not arrived yet, while `run` goes on
+  /// waiting for the watch to reach this Mac.
+  void _warnRelayLate(WatchosPhysicalDeviceLogReader logReader) {
+    // Which half failed matters: the app not reaching the Mac is a network
+    // problem, the VM Service never coming up is not.
+    final cause = logReader.deviceVmServiceUri == null
+        ? 'The Dart VM Service did not start on the watch.'
+        : 'The Dart VM Service started on the watch '
+              '(${logReader.deviceVmServiceUri}) but the app did not reach '
+              'this Mac.';
+    logger.printWarning(
+      'The app has not connected back to the DevTools relay after 45s. '
+      'App logs keep streaming, and DevTools connects if the watch reaches '
+      'this Mac later; press Ctrl+C to stop. $cause The watch reaches the Mac '
+      'through its paired iPhone — check the iPhone is nearby, unlocked, and '
+      'on the same network as this Mac.'
+      '${_relayAdvertisedHost == null ? '' : ' The watch was told to dial '
+            '$_relayAdvertisedHost; if the iPhone cannot reach that address '
+            '(a Mac on several networks at once has more than one, and only '
+            'some are reachable), set FLUTTER_WATCHOS_RELAY_HOST to the '
+            'right one.'}',
+    );
   }
 
   /// Brings up the Mac half of the VM Service relay.

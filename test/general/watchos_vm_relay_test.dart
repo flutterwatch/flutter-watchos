@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_watchos/watchos_vm_relay.dart';
 
 import '../src/common.dart';
@@ -753,6 +754,66 @@ void main() {
       await vmService.dropConnections();
       // Must complete rather than hang: flutter_tools needs to see the drop.
       await done.timeout(const Duration(seconds: 5));
+    });
+  });
+  group('awaitRelayBridge', () {
+    testWithoutContext('returns true as soon as the bridge checks in', () {
+      FakeAsync().run((FakeAsync time) {
+        final bridge = Completer<void>();
+        var slow = 0;
+        bool? result;
+        awaitRelayBridge(
+          bridgeReady: bridge.future,
+          appExited: Completer<void>().future,
+          patience: const Duration(seconds: 45),
+          onSlow: () => slow++,
+        ).then((bool bridged) => result = bridged);
+        time.elapse(const Duration(seconds: 10));
+        bridge.complete();
+        time.flushMicrotasks();
+        expect(result, isTrue);
+        time.elapse(const Duration(minutes: 1));
+        expect(slow, 0, reason: 'no warning once the bridge is up');
+      });
+    });
+
+    testWithoutContext('keeps waiting past its patience, warning once', () {
+      FakeAsync().run((FakeAsync time) {
+        final bridge = Completer<void>();
+        var slow = 0;
+        bool? result;
+        awaitRelayBridge(
+          bridgeReady: bridge.future,
+          appExited: Completer<void>().future,
+          patience: const Duration(seconds: 45),
+          onSlow: () => slow++,
+        ).then((bool bridged) => result = bridged);
+        time.elapse(const Duration(minutes: 5));
+        expect(slow, 1);
+        expect(result, isNull, reason: 'a late bridge must still be accepted');
+        bridge.complete();
+        time.flushMicrotasks();
+        expect(result, isTrue);
+      });
+    });
+
+    testWithoutContext('returns false when the app exits first', () {
+      FakeAsync().run((FakeAsync time) {
+        final exited = Completer<void>();
+        var slow = 0;
+        bool? result;
+        awaitRelayBridge(
+          bridgeReady: Completer<void>().future,
+          appExited: exited.future,
+          patience: const Duration(seconds: 45),
+          onSlow: () => slow++,
+        ).then((bool bridged) => result = bridged);
+        time.elapse(const Duration(seconds: 50));
+        exited.complete();
+        time.flushMicrotasks();
+        expect(result, isFalse);
+        expect(slow, 1);
+      });
     });
   });
 }

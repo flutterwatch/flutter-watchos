@@ -30,6 +30,14 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
   a fresh one instead of being buffered forever. The engine wakes the host only
   when a field rect or value actually changed.
 
+- **`run` on a watch survives a late DevTools connection.** When the watch
+  could not reach this Mac within 45 seconds, `run` warned that DevTools would
+  be unavailable, then ended anyway, and the app's log stream with it.
+  flutter_tools ends a profile or debug run that gets no VM Service back. `run`
+  now keeps waiting while the app runs, with its logs still streaming, and
+  connects DevTools if the watch gets through later. It ends when the session
+  with the app does.
+
 - **HTTP on a watch.** The URLSession-backed `HttpClient` is installed for
   every isolate, so `compute()`/`Isolate.run()` can fetch; `abort()` cancels the
   underlying task; no cookie jar (dart:io never had one); and
