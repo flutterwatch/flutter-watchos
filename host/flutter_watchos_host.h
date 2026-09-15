@@ -41,11 +41,12 @@ typedef void (*FlutterWatchOSTextureFrameCallback)(void* context,
                                                    void* lease);
 
 // ---------------------------------------------------------------------------
-// Composited frames. The engine composites platform views from the layer
-// tree (FlutterCompositor): each frame is an ordered list of layers, bottom
-// first — Flutter content rendered into an image, or a native view the host
-// places at the geometry the layer tree gave it. A frame without platform
-// views is one Flutter layer.
+// Composited frames. The engine places platform views from the layer tree
+// (its own view embedder, the iOS shape): each frame is an ordered list of
+// layers, bottom first — Flutter content rendered into an image, or a native
+// view the host places at the geometry the layer tree gave it. A frame
+// without platform views is one Flutter layer, and costs what it did before
+// platform views existed.
 // ---------------------------------------------------------------------------
 
 typedef enum {

@@ -47,21 +47,22 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
 - **Platform views are composited by the engine.** A `WatchPlatformView`
   used to be a native view the host overlaid on (or slid under) the single
   frame image, positioned from the semantics tree, with a transparent hole
-  punched in the scene for the underlay case. The engine now runs Flutter's
-  own compositor (`FlutterCompositor`): the widget paints a
-  `PlatformViewLayer`, and each frame reaches the host as an ordered list of
-  layers — the Flutter content painted before a native view, the view with
-  the clips, transforms and opacity the layer tree applied, the Flutter
-  content painted after it. So a dialog, snackbar or badge draws over a
-  native control and the control still takes its own taps; a native view
-  hides when it is not painted (scrolled out, under an opaque route) and
-  keeps its state meanwhile. Touch ownership is decided by the engine
-  against the frame on screen, looking through transparent Flutter pixels;
-  `layer: .belowFlutter` now means only "touches go to Flutter". The
-  software renderer goes through the same path, and its frames are no longer
-  copied. Older engines keep the previous behaviour (the host detects which
-  it has at runtime); older hosts on this engine get the bottom Flutter
-  layer plus positioned overlays, as before.
+  punched in the scene for the underlay case. The engine now places them
+  the way the iOS shell does: its own view embedder sees the widget's
+  `PlatformViewLayer` as the frame is painted, and each frame reaches the
+  host as an ordered list of layers — the Flutter content painted before a
+  native view, the view with the clips, transforms and opacity the layer
+  tree applied, the Flutter content painted after it. A frame with no
+  platform view is the scene alone, at exactly its previous cost. So a
+  dialog, snackbar or badge draws over a native control and the control
+  still takes its own taps; a native view hides when it is not painted
+  (scrolled out, under an opaque route) and keeps its state meanwhile.
+  Touch ownership is decided by the engine against the frame on screen,
+  looking through transparent Flutter pixels; `layer: .belowFlutter` now
+  means only "touches go to Flutter". The software renderer goes through
+  the same path. Older engines keep the previous behaviour (the host
+  detects which it has at runtime); older hosts on this engine get the
+  bottom Flutter layer plus positioned overlays, as before.
 
 - **Experimental texture present.** Opt-in (`FlutterWatchOSPresent` =
   `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` for a run),
