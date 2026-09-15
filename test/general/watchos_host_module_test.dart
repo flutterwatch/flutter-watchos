@@ -319,7 +319,8 @@ void main() {
       final String present = runner.substring(presentAt, publishAt);
       expect(present, contains('store.layers = image'));
       expect(present, contains('FlutterTexturePresenter.shared.present(texture)'));
-      expect('didPublish()'.allMatches(present).length, 2);
+      expect(present, contains('FlutterTexturePresenter.shared.present(texture: texture'));
+      expect('didPublish()'.allMatches(present).length, 3);
     });
 
     test('does not arm the engine first-frame callback', () {

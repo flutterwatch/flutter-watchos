@@ -430,15 +430,20 @@ private struct FlutterFrameView: View {
             // The ground beneath everything. Before the first frame the host's
             // launch placeholder covers it; after, a frame's bottom layer does.
             Color.black
-            if FlutterRunner.presentsTextures {
-                // EXPERIMENTAL zero-copy path: a one-layer frame's render
-                // target is sampled on the GPU by a SceneKit material. Images
-                // still win if they arrive — the software fallback, and any
-                // frame with platform views, produce nothing else.
+            if FlutterRunner.presentsTextures && !FlutterRunner.presentsTextureLayers {
+                // EXPERIMENTAL zero-copy path on an engine that sends only
+                // one-layer frames as textures. Images still win if they
+                // arrive: the software fallback and any frame with platform
+                // views produce nothing else.
                 FlutterTextureFrameView(sizePoints: sizePoints)
             }
             ForEach(frames.layers) { layer in
-                if let image = layer.image {
+                if layer.isTexture {
+                    // EXPERIMENTAL zero-copy path: the bottom layer's render
+                    // target, sampled on the GPU. Layers above platform views
+                    // arrive as images; see FlutterTexturePresenter.
+                    FlutterTextureFrameView(sizePoints: sizePoints)
+                } else if let image = layer.image {
                     Image(decorative: image, scale: pixelRatio)
                         .resizable()
                         .frame(width: sizePoints.width, height: sizePoints.height)
@@ -548,7 +553,7 @@ private struct FrameLayerClip: Shape {
 }
 
 /// `WatchPresentMode.texture`: SwiftUI's SceneKit view showing the engine's
-/// render targets (see FlutterTexturePresenter). Not `rendersContinuously`:
+/// render target (see FlutterTexturePresenter). Not `rendersContinuously`:
 /// SceneKit redraws when the scene changes, which is exactly when a frame
 /// lands, so an idle app costs no GPU pass per refresh.
 private struct FlutterTextureFrameView: View {

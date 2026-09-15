@@ -204,6 +204,32 @@ void main() {
       expect(app.substring(imageAt, imageAt + 500), contains('.allowsHitTesting(false)'));
     });
 
+    test('texture present shows platform views: the bottom layer as a texture', () {
+      // Registered before Run, like the image layers callback, and only when
+      // the engine has the ABI; an engine that predates it keeps the
+      // single-texture path.
+      final int registerAt = runner.indexOf('Self.setTextureLayersCallbackFn?(');
+      final int runAt = runner.indexOf('let running = FlutterWatchOSHostRun(');
+      expect(registerAt, greaterThan(-1));
+      expect(runAt, greaterThan(registerAt));
+      expect(runner, contains('"FlutterWatchOSHostSetTextureLayersCallback"'));
+      expect(runner, contains('"FlutterWatchOSHostReleaseFrameTextures"'));
+      // The lease goes back when the last reference to the frame does, so a
+      // stashed frame the display tick never collected cannot starve the pool.
+      expect(runner, contains('deinit { release(lease) }'));
+    });
+
+    test('only the bottom layer is a SceneView; layers above views stay images', () {
+      // SceneView is opaque on watchOS, and blending extra SceneViews for the
+      // layers above native views flashed white on a watch while scrolling.
+      expect(app, isNot(contains('.blendMode(')));
+      expect('SceneView('.allMatches(app).length, 1);
+      final int textureAt = app.indexOf('if layer.isTexture {');
+      final int imageAt = app.indexOf('} else if let image = layer.image {');
+      expect(textureAt, greaterThan(-1));
+      expect(imageAt, greaterThan(textureAt));
+    });
+
     test('places a view at the layer geometry, clipped and faded as told', () {
       expect(app, contains('.frame(width: layer.rect.width, height: layer.rect.height)'));
       expect(app, contains('.clipShape(FrameLayerClip('));

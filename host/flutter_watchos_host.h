@@ -94,6 +94,31 @@ typedef void (*FlutterWatchOSLayersCallback)(void* context,
                                              const FlutterWatchOSLayer* layers,
                                              int32_t count);
 
+// EXPERIMENTAL. The texture twin of FlutterWatchOSLayersCallback, for a host
+// that samples render targets on the GPU: the same layer list, with the bottom
+// Flutter layer's `image` NULL and its render target in `textures[0]` instead
+// (an `id<MTLTexture>`, an sRGB view, as an opaque pointer). Every other entry
+// of `textures` is NULL: Flutter layers above a platform view keep their
+// `image`, borrowed as in the layers callback, because they need transparency.
+// Frames with platform views come this way too. The `lease` keeps the texture
+// valid until the host passes it to FlutterWatchOSHostReleaseFrameTextures,
+// which is also what lets the engine draw into that target again, so hold at
+// most the two most recent frames. `layers` and `textures` are valid during
+// the callback only; the lease outlives it. Delivered on a GPU completion thread. Only the Metal
+// renderer produces these; the software fallback keeps using the layers
+// callback, and a host must accept both.
+typedef void (*FlutterWatchOSTextureLayersCallback)(void* context,
+                                                    const FlutterWatchOSLayer* layers,
+                                                    void* const* textures,
+                                                    int32_t count,
+                                                    void* lease);
+
+// Its registration and release entry points are not declared here either:
+//   void FlutterWatchOSHostSetTextureLayersCallback(
+//       FlutterWatchOSTextureLayersCallback callback, void* context);
+//   void FlutterWatchOSHostReleaseFrameTextures(void* lease);
+// (see FlutterRunner.presentsTextureLayers).
+
 // Registration is deliberately NOT declared here either — the host resolves
 //   void FlutterWatchOSHostSetLayersCallback(FlutterWatchOSLayersCallback, void*);
 //   int64_t FlutterWatchOSHostHitTest(double x_points, double y_points);

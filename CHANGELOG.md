@@ -79,8 +79,14 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
   public route on watchOS that puts a Metal texture on screen — no copy
   between rasterising and scanout. The engine side is a new pair of exported
   entry points the host resolves with `dlsym`, so an older engine simply keeps
-  the image path. Verified on the simulator, unmeasured on hardware, and not
-  yet through App Review; SceneKit itself is deprecated.
+  the image path. Frames with platform views go the same way for their bottom
+  layer, which covers the screen; Flutter content above a native view stays an
+  image, because `SceneView` is always opaque on watchOS. (Drawing those layers
+  as blended SceneViews too matched the image path on the simulator but
+  flashed white while scrolling fast on a Series 10.) On a Series 10, frames
+  without platform views rasterise in about a third of the image path's time.
+  Not yet through App Review; SceneKit is soft-deprecated, though still the
+  only 3D framework on watchOS.
 
 - **Engine robustness.** Metal.framework is weak-linked, with a runtime check
   before the first Metal call, so a watchOS that changes a framework the SDK
