@@ -146,9 +146,23 @@ class WatchOSNativeBindings {
         ),
         create2: _resolveCreate2(lib),
         setSize: _resolveSetSize(lib),
+        composited: _resolveComposited(lib),
       );
     } on ArgumentError {
       // Engine predates platform views.
+      return null;
+    }
+  }
+
+  /// Composited (layer-tree) platform views shipped after the semantics-
+  /// positioned overlay model; probe the query separately so an engine with
+  /// the registry but no compositor keeps working in the legacy mode.
+  static bool Function()? _resolveComposited(DynamicLibrary lib) {
+    try {
+      return lib.lookupFunction<Bool Function(), bool Function()>(
+        'FlutterWatchOSPlatformViewsComposited',
+      );
+    } on ArgumentError {
       return null;
     }
   }
@@ -270,7 +284,8 @@ class WatchOSNativeBindings {
 
   // --- Platform views ---
   // Null-safe against [WatchOSNativeBindings.forTesting] AND against an
-  // engine that predates the feature: all three become no-ops.
+  // engine that predates the feature: the calls become no-ops and every
+  // capability query reads false.
 
   /// Whether the running engine exposes the platform-view registry.
   bool get supportsPlatformViews => _lib != null && _platformViewFns != null;
@@ -278,6 +293,22 @@ class WatchOSNativeBindings {
   /// Whether the running engine supports the underlay layer (Create2).
   bool get supportsPlatformViewUnderlay =>
       _lib != null && _platformViewFns?.create2 != null;
+
+  /// Whether the running engine composites platform views from the layer
+  /// tree: a `PlatformViewLayer` in the scene becomes the native view at its
+  /// paint-order position, replacing the semantics-positioned overlay model.
+  ///
+  /// Queried once (the answer is fixed for the life of the process) and
+  /// cached; false under an engine without the query symbol, and off-watch.
+  bool get supportsCompositedPlatformViews => _compositedPlatformViews;
+
+  late final bool _compositedPlatformViews = _queryCompositedPlatformViews();
+
+  bool _queryCompositedPlatformViews() {
+    if (_lib == null) return false;
+    final bool Function()? composited = _platformViewFns?.composited;
+    return composited != null && composited();
+  }
 
   /// Registers platform view [viewId] with the engine registry. With
   /// [belowFrame] the view is composited under the frame image (underlay);
@@ -315,17 +346,20 @@ class WatchOSNativeBindings {
 }
 
 /// The resolved engine platform-view entry points, bundled so a single failed
-/// lookup (old engine) disables the whole feature coherently. [create2] is
-/// probed separately — null on engines that predate the underlay layer.
+/// lookup (old engine) disables the whole feature coherently. [create2],
+/// [setSize] and [composited] are probed separately — null on engines that
+/// predate the underlay layer, unclipped rects, and the compositor.
 class _PlatformViewFns {
   _PlatformViewFns(
       {required this.create,
       required this.dispose,
       this.create2,
-      this.setSize});
+      this.setSize,
+      this.composited});
 
   final void Function(int, Pointer<Utf8>, Pointer<Utf8>) create;
   final void Function(int) dispose;
   final void Function(int, Pointer<Utf8>, Pointer<Utf8>, bool)? create2;
   final void Function(int, double, double)? setSize;
+  final bool Function()? composited;
 }

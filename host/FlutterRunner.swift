@@ -444,6 +444,33 @@ final class FlutterTexturePresenter {
     }
 }
 
+/// One layer of a composited frame, in SwiftUI points: Flutter content as an
+/// image, or a platform view with the geometry the layer tree gave it. The
+/// engine hands the host a frame as an ordered list of these, bottom first;
+/// see `FlutterWatchOSLayersCallback` in the C header.
+struct FlutterFrameLayer: Identifiable {
+    /// Stable across frames for a platform view (`pv<id>`), so SwiftUI keeps
+    /// the native view — and its state — as it moves through the stack;
+    /// positional for Flutter content (`f<index>`).
+    let id: String
+    /// Flutter content; nil for a platform view.
+    let image: CGImage?
+    /// Where the image carries pixels; outside is transparent (Flutter only).
+    let paintedRects: [CGRect]
+    let viewId: Int64
+    let rect: CGRect
+    let opacity: Double
+    let clip: CGRect?
+    let clipRadius: CGFloat
+
+    var isPlatformView: Bool { image == nil }
+
+    static func flutter(index: Int, image: CGImage, painted: [CGRect], size: CGSize) -> FlutterFrameLayer {
+        FlutterFrameLayer(id: "f\(index)", image: image, paintedRects: painted, viewId: 0,
+                          rect: CGRect(origin: .zero, size: size), opacity: 1, clip: nil, clipRadius: 0)
+    }
+}
+
 /// The engine's latest frame, and nothing else — kept apart from the rest of
 /// the runner's state on purpose.
 ///
@@ -459,8 +486,15 @@ final class FlutterTexturePresenter {
 final class FlutterFrameStore: ObservableObject {
     static let shared = FlutterFrameStore()
 
-    /// The latest Flutter frame, rendered by the engine.
-    @Published fileprivate(set) var frame: CGImage?
+    /// The latest frame, bottom layer first. One Flutter layer when the app
+    /// shows no platform view (and always, on an engine that predates
+    /// composited frames).
+    @Published fileprivate(set) var layers: [FlutterFrameLayer] = []
+
+    /// Where each platform view was last placed, by id — what a view that is
+    /// not in the current frame is kept alive at (hidden) so it comes back
+    /// at the right size without a layout jump.
+    fileprivate(set) var lastRects: [Int64: CGRect] = [:]
 }
 
 /// Generic glue around the Flutter engine — identical for every app. It starts
@@ -500,7 +534,7 @@ final class FlutterRunner: ObservableObject {
     /// The newest frame the engine has finished, waiting for a display tick.
     /// Written on the raster thread, read on the main thread, hence the lock —
     /// one pointer swap per frame, uncontended in practice.
-    private var stashed: CGImage?
+    private var stashed: [FlutterFrameLayer]?
     /// The same for `WatchPresentMode.texture`. Both can be in use: the
     /// software fallback keeps producing images whatever the mode.
     private var stashedTexture: FlutterTextureFrame?
@@ -554,6 +588,43 @@ final class FlutterRunner: ObservableObject {
         WatchPresentMode.current == .texture
         && setTextureFrameCallbackFn != nil && releaseFrameTextureFn != nil
 
+    /// Composited frames (see `FlutterFrameLayer`): the engine delivers each
+    /// frame as a layer list with the platform views placed by the layer
+    /// tree, and answers which view a touch belongs to. dlsym-resolved so
+    /// this host still links against an engine that predates it — that
+    /// engine sends single images and publishes view rects through the
+    /// registry, and the host places them itself (`WatchPlatformViews`).
+    typealias LayersCallback = @convention(c) (
+        UnsafeMutableRawPointer?, UnsafePointer<FlutterWatchOSLayer>?, Int32
+    ) -> Void
+    private static let setLayersCallbackFn:
+        (@convention(c) (LayersCallback?, UnsafeMutableRawPointer?) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "FlutterWatchOSHostSetLayersCallback") else { return nil }
+        return unsafeBitCast(
+            sym, to: (@convention(c) (LayersCallback?, UnsafeMutableRawPointer?) -> Void).self)
+    }()
+    private static let hitTestFn: (@convention(c) (Double, Double) -> Int64)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "FlutterWatchOSHostHitTest") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (Double, Double) -> Int64).self)
+    }()
+
+    /// True when the engine composites platform views from the layer tree.
+    static let compositesLayers: Bool = setLayersCallbackFn != nil && hitTestFn != nil
+
+    /// The platform view that owns a touch at `location` (SwiftUI points),
+    /// or nil when Flutter does — the engine judges it against the newest
+    /// frame: the topmost layer under the point decides, and transparent
+    /// Flutter pixels are looked through. Only meaningful when
+    /// `compositesLayers`; the legacy host decides from the registry rects.
+    func platformView(owningTouchAt location: CGPoint) -> Int64? {
+        guard let hitTest = Self.hitTestFn else { return nil }
+        let id = hitTest(location.x / WatchContentScale.value,
+                         location.y / WatchContentScale.value)
+        return id == 0 ? nil : id
+    }
+
     /// Give a texture frame back to the engine. Any thread.
     static func releaseTexture(_ lease: UnsafeMutableRawPointer) {
         releaseFrameTextureFn?(lease)
@@ -594,6 +665,15 @@ final class FlutterRunner: ObservableObject {
         }, nil)
 
         let ctx = Unmanaged.passUnretained(self).toOpaque()
+        if Self.compositesLayers {
+            // Registered before Run so the very first frame comes this way.
+            Self.setLayersCallbackFn?({ context, layers, count in
+                guard let context, let layers, count > 0 else { return }
+                let runner = Unmanaged<FlutterRunner>.fromOpaque(context)
+                    .takeUnretainedValue()
+                runner.stash(layers: UnsafeBufferPointer(start: layers, count: Int(count)))
+            }, ctx)
+        }
         if Self.presentsTextures {
             // Registered before Run so the very first frame comes this way.
             Self.setTextureFrameCallbackFn?({ context, texture, lease in
@@ -714,8 +794,49 @@ final class FlutterRunner: ObservableObject {
     /// produced two frames inside one refresh, showing the older one first
     /// would add latency to display a picture that is already stale.
     func stash(_ image: CGImage) {
+        stash(frame: [.flutter(index: 0, image: image, painted: [], size: sizePoints)])
+    }
+
+    /// The composited twin: a whole frame's layers, converted from the C
+    /// structs (whose memory is valid only during the callback) into values.
+    /// Same thread and same replacement rule as above.
+    func stash(layers: UnsafeBufferPointer<FlutterWatchOSLayer>) {
+        var frame: [FlutterFrameLayer] = []
+        frame.reserveCapacity(layers.count)
+        for (index, layer) in layers.enumerated() {
+            if layer.type == kFlutterWatchOSLayerFlutter {
+                guard let image = layer.image?.takeUnretainedValue() else { continue }
+                var painted: [CGRect] = []
+                if let region = layer.region, layer.region_count > 0 {
+                    for r in 0..<Int(layer.region_count) {
+                        let q = region + r * 4
+                        painted.append(WatchContentScale.toDisplay(
+                            CGRect(x: q[0], y: q[1], width: q[2], height: q[3])))
+                    }
+                }
+                frame.append(.flutter(index: index, image: image, painted: painted, size: sizePoints))
+            } else {
+                // Engine geometry is logical points; the host places in
+                // SwiftUI points (they differ under FlutterWatchOSContentScale).
+                let rect = WatchContentScale.toDisplay(
+                    CGRect(x: layer.x, y: layer.y, width: layer.width, height: layer.height))
+                let clip = layer.has_clip
+                    ? WatchContentScale.toDisplay(CGRect(
+                        x: layer.clip_x, y: layer.clip_y,
+                        width: layer.clip_width, height: layer.clip_height))
+                    : nil
+                frame.append(FlutterFrameLayer(
+                    id: "pv\(layer.view_id)", image: nil, paintedRects: [],
+                    viewId: layer.view_id, rect: rect, opacity: layer.opacity,
+                    clip: clip, clipRadius: CGFloat(layer.clip_radius * WatchContentScale.value)))
+            }
+        }
+        stash(frame: frame)
+    }
+
+    private func stash(frame: [FlutterFrameLayer]) {
         stashLock.lock()
-        stashed = image
+        stashed = frame
         stashLock.unlock()
     }
 
@@ -761,7 +882,11 @@ final class FlutterRunner: ObservableObject {
             didPublish()
         }
         if let image {
-            FlutterFrameStore.shared.frame = image
+            let store = FlutterFrameStore.shared
+            for layer in image where layer.isPlatformView {
+                store.lastRects[layer.viewId] = layer.rect
+            }
+            store.layers = image
             didPublish()
         }
     }

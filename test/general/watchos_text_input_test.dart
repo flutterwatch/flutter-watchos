@@ -209,11 +209,18 @@ void main() {
       // `.opacity(0)` / `.hidden()` make watchOS refuse to raise the keyboard;
       // near-zero opacity plus clear text/cursor is the working combination,
       // and `contentShape` keeps the full rect tappable.
-      expect(app, contains('.opacity(0.02)'));
-      expect(app, contains('.foregroundStyle(.clear)'));
-      expect(app, contains('.tint(.clear)'));
-      expect(app, contains('.contentShape(Rectangle())'));
-      expect(app, isNot(contains('.opacity(0)\n')));
+      final int proxyAt = app.indexOf('proxy(isObscured: field.isObscured');
+      final int proxyEnd = app.indexOf('A11yTextFieldSemantics', proxyAt);
+      expect(proxyAt, greaterThan(-1));
+      expect(proxyEnd, greaterThan(proxyAt));
+      final String proxy = app.substring(proxyAt, proxyEnd);
+      expect(proxy, contains('.opacity(0.02)'));
+      expect(proxy, contains('.foregroundStyle(.clear)'));
+      expect(proxy, contains('.tint(.clear)'));
+      expect(proxy, contains('.contentShape(Rectangle())'));
+      // Elsewhere `.opacity(0)` is fine (a parked platform view uses it);
+      // on the proxy it would suppress the keyboard.
+      expect(proxy, isNot(contains('.opacity(0)\n')));
     });
 
     test('positions each proxy over its engine-computed rect', () {

@@ -40,6 +40,9 @@ channels, no async.
   gives the crown as a *raw* input (a rotation stream, or a per-frame
   `drain()`) for games, value pickers, and custom controls — without it
   driving scroll.
+- **Platform views** — `WatchPlatformView` embeds a native SwiftUI view
+  (a `Gauge`, a `Toggle`, a map, a video surface) at its slot in the Flutter
+  layout, composited at its position in paint order like any other content.
 
 ## Usage
 
@@ -132,6 +135,52 @@ WatchCrown.instance.disable();
 
 On non-watchOS platforms the stream never emits and `drain()` returns 0, so it's
 safe to leave in cross-platform code.
+
+### Platform views
+
+Register a SwiftUI factory per `viewType` in the app's `App.swift`
+initializer (`WatchPlatformViewRegistry` comes with the `FlutterWatchOS` host
+module every app imports), then place the widget like any other box:
+
+```swift
+WatchPlatformViewRegistry.register("gauge") { params in
+    AnyView(MyGaugeView(params: params))
+}
+```
+
+```dart
+SizedBox(
+  height: 64,
+  child: WatchPlatformView(
+    viewType: 'gauge',
+    creationParams: '{"value": 0.72}',
+  ),
+)
+```
+
+The native view is **composited at the widget's position in paint order**:
+Flutter content painted before the widget is below it, content painted after
+it — a badge in a `Stack`, a border in a `foregroundDecoration`, a dialog, a
+snackbar — draws over it. Ancestor clips, opacity and transforms apply, and
+the view hides whenever it is not painted (scrolled out of the viewport,
+covered by an opaque route).
+
+`layer:` decides who gets the **touches** inside the view's rect — SwiftUI
+has no event forwarding, so whichever side takes the touch-down owns the
+whole gesture:
+
+- `WatchPlatformViewLayer.aboveFlutter` (default) — the native view gets
+  them, unless Flutter content painted above it covers that point. Use for
+  interactive controls (pickers, buttons, toggles).
+- `WatchPlatformViewLayer.belowFlutter` — Flutter always gets them; wrap the
+  widget in a `GestureDetector` to handle taps in Dart. Use for display views
+  (gauges, charts).
+
+`WatchPlatformView.isSupported` is false off-watch and on engines that predate
+platform views (the widget then paints nothing), and
+`WatchPlatformView.isComposited` tells whether the engine composites from the
+layer tree — on older engines the widget falls back to an overlay/underlay
+model where `layer:` also picks the composition side (see the API docs).
 
 ## How it links
 

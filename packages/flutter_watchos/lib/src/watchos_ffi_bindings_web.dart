@@ -45,6 +45,7 @@ class WatchOSNativeBindings {
 
   bool get supportsPlatformViews => false;
   bool get supportsPlatformViewUnderlay => false;
+  bool get supportsCompositedPlatformViews => false;
   void platformViewCreate(int viewId, String viewType, String params,
       {bool belowFrame = false}) {}
   void platformViewDispose(int viewId) {}

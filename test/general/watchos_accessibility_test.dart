@@ -187,7 +187,7 @@ void main() {
     test('the frame image is never an accessibility element', () {
       // `Image(decorative:)` is what keeps VoiceOver from announcing the whole
       // Flutter UI as one picture.
-      expect(view, contains('Image(decorative: frame'));
+      expect(view, contains('Image(decorative: image'));
     });
   });
 }

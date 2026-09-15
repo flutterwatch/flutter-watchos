@@ -40,6 +40,66 @@ typedef void (*FlutterWatchOSTextureFrameCallback)(void* context,
                                                    void* texture,
                                                    void* lease);
 
+// ---------------------------------------------------------------------------
+// Composited frames. The engine composites platform views from the layer
+// tree (FlutterCompositor): each frame is an ordered list of layers, bottom
+// first — Flutter content rendered into an image, or a native view the host
+// places at the geometry the layer tree gave it. A frame without platform
+// views is one Flutter layer.
+// ---------------------------------------------------------------------------
+
+typedef enum {
+  kFlutterWatchOSLayerFlutter = 0,       // `image` and `region`
+  kFlutterWatchOSLayerPlatformView = 1,  // `view_id` and the geometry
+} FlutterWatchOSLayerType;
+
+// One layer, in logical points (SwiftUI's), origin top-left of the screen.
+typedef struct {
+  FlutterWatchOSLayerType type;
+  // Flutter: the rendered content, full-screen, BORROWED (+0, released by the
+  // engine after the callback returns) — retain it to keep it, and keep only
+  // the newest frame's: on Metal each image wraps one of the engine's render
+  // targets without copying, and releasing it is what lets the engine draw
+  // there again. NULL for a platform view.
+  CGImageRef image;
+  // Flutter: where the image carries pixels, as x, y, width, height quads;
+  // everything outside is transparent. A layer with `region_count` 0 painted
+  // nothing. Valid during the callback only.
+  const double* region;
+  int32_t region_count;
+  // Platform view: which one (FlutterWatchOSPlatformViewGetType/GetParams
+  // resolve it), and where. `x`..`height` are its bounds after every
+  // transform the layer tree applied; `opacity` is the product of the
+  // Opacity widgets above it; when `has_clip`, show only the part inside
+  // `clip_*`, with corners of `clip_radius` when that is above zero.
+  int64_t view_id;
+  double x;
+  double y;
+  double width;
+  double height;
+  double opacity;
+  bool has_clip;
+  double clip_x;
+  double clip_y;
+  double clip_width;
+  double clip_height;
+  double clip_radius;
+} FlutterWatchOSLayer;
+
+// A composited frame, delivered on an engine-managed thread like the frame
+// callback (a GPU completion thread on Metal; the raster thread for
+// software). `layers` is valid during the callback only.
+typedef void (*FlutterWatchOSLayersCallback)(void* context,
+                                             const FlutterWatchOSLayer* layers,
+                                             int32_t count);
+
+// Registration is deliberately NOT declared here either — the host resolves
+//   void FlutterWatchOSHostSetLayersCallback(FlutterWatchOSLayersCallback, void*);
+//   int64_t FlutterWatchOSHostHitTest(double x_points, double y_points);
+// with dlsym (see FlutterRunner.compositesLayers) so it still links against an
+// engine that predates composited frames, and falls back to the image callback
+// plus the platform-view slot rects below.
+
 // Boot and run the Flutter engine for the app bundle. Idempotent; returns
 // false if the engine failed to start. Call on the main thread.
 bool FlutterWatchOSHostRun(const char* bundle_path,

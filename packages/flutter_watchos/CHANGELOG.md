@@ -1,3 +1,23 @@
+## Unreleased
+
+* **Changed:** `WatchPlatformView` is now a real platform view in the layer
+  tree on engines that composite platform views (`WatchPlatformView.isComposited`).
+  The native SwiftUI view is composited at the widget's position in **paint
+  order**: Flutter content painted before the widget is below it, content
+  painted after it (dialogs, snackbars, badges, a `Stack` sibling) is above
+  it. Geometry comes from the layer tree — ancestor clips, opacity and
+  transforms apply — and the view hides whenever it is not painted (scrolled
+  out of the viewport, covered by an opaque route). `layer:` now only decides
+  touch ownership: `aboveFlutter` (default) gives the native view the touches
+  inside its rect unless Flutter content painted above it covers the point;
+  `belowFlutter` sends every touch to Flutter (handle it in Dart with a
+  `GestureDetector`). SwiftUI has no event forwarding, so whichever side owns
+  a touch owns the whole gesture. No API changes: existing apps compile
+  unchanged, and on engines that predate the compositor the previous
+  overlay/underlay behaviour still applies.
+* **New:** `WatchPlatformView.isComposited` reports whether the running engine
+  composites platform views from the layer tree.
+
 ## 0.1.0-beta.8
 
 * **New:** `WatchMemory` — how much memory the process has left before watchOS

@@ -317,7 +317,7 @@ void main() {
       final int presentAt = runner.indexOf('func presentLatestFrame()');
       expect(presentAt, greaterThan(-1));
       final String present = runner.substring(presentAt, publishAt);
-      expect(present, contains('FlutterFrameStore.shared.frame = image'));
+      expect(present, contains('store.layers = image'));
       expect(present, contains('FlutterTexturePresenter.shared.present(texture)'));
       expect('didPublish()'.allMatches(present).length, 2);
     });

@@ -127,26 +127,23 @@ public struct FlutterHostView<Splash: View>: View {
             .onChange(of: crownValue) { oldValue, newValue in
                 runner.sendCrownDelta(newValue - oldValue)
             }
-            // Platform views (underlay layer). Slots whose widget chose
-            // `layer: .belowFlutter` sit UNDER the frame image; the Flutter
-            // scene keeps a transparent hole at their rect (the frame CGImage
-            // carries alpha), so Flutter content painted above the widget —
-            // dialogs, snackbars, badges — draws ON TOP of the native view.
-            // Touches never reach an underlay view (the frame image above
-            // owns them; interaction is handled in Dart), so hit-testing is
-            // disabled outright to keep routing deterministic.
+            // Platform views on an engine that predates composited frames
+            // (`FlutterRunner.compositesLayers` false): the engine publishes
+            // each view's rect and the host overlays the native view itself,
+            // under the frame image for `layer: .belowFlutter` (the widget
+            // punched a transparent hole for it) or above it otherwise. With
+            // composited frames the views arrive inside the frame's layer
+            // list and FlutterFrameView places them; these two do nothing.
             .background {
-                platformViewGroup(platformViews.underlaySlots)
-                    .allowsHitTesting(false)
+                if !FlutterRunner.compositesLayers {
+                    platformViewGroup(platformViews.underlaySlots)
+                        .allowsHitTesting(false)
+                }
             }
-            // Platform views (overlay layer, the default). The native view
-            // registered for each slot's viewType is overlaid on the Flutter
-            // frame at the rect the engine publishes (tracking
-            // scroll/animation via semantics). Overlay views sit ABOVE all
-            // Flutter content and consume touches inside their rect; the
-            // text-input proxies (next overlay) stay above them.
             .overlay {
-                platformViewGroup(platformViews.overlaySlots)
+                if !FlutterRunner.compositesLayers {
+                    platformViewGroup(platformViews.overlaySlots)
+                }
             }
             // Text entry. A near-transparent native field is overlaid on each
             // Flutter text field (`textInput.fields`). Because it is present
@@ -333,13 +330,23 @@ public struct FlutterHostView<Splash: View>: View {
     }
 
     /// Whether a touch beginning at `point` belongs to the native side: a
-    /// visible overlay platform view (native controls own their taps) or a
+    /// platform view that takes touches (native controls own their taps) or a
     /// text-input proxy (the field handles focus itself — ending editing here
-    /// would close the keyboard the tap just opened). Underlay platform views
-    /// are NOT native-owned: they sit below the frame and their interaction
-    /// is handled in Dart.
+    /// would close the keyboard the tap just opened). A view whose widget
+    /// chose `layer: .belowFlutter` is NOT native-owned: its interaction is
+    /// handled in Dart.
+    ///
+    /// With composited frames the engine decides from the frame itself — the
+    /// topmost layer under the point, looking through transparent Flutter
+    /// pixels, so a dialog over a native view owns the taps on it and a
+    /// native view under an unpainted corner of an overlay does not lose
+    /// them. The legacy host has only the registry's rects to go on.
     private func nativeOwnsTouch(at point: CGPoint) -> Bool {
-        if platformViews.slots.contains(where: { slot in
+        if FlutterRunner.compositesLayers {
+            if runner.platformView(owningTouchAt: point) != nil {
+                return true
+            }
+        } else if platformViews.slots.contains(where: { slot in
             slot.visible && !slot.belowFrame && slot.rect.contains(point)
         }) {
             return true
@@ -387,10 +394,29 @@ public struct FlutterHostView<Splash: View>: View {
     }
 }
 
-/// The engine's frame, as a SwiftUI image — the one view that observes
-/// `FlutterFrameStore`, so a new frame re-evaluates this and nothing else.
+/// The engine's frame — the one view that observes `FlutterFrameStore`, so a
+/// new frame re-evaluates this and nothing else.
+///
+/// A frame is an ordered stack of layers (see `FlutterFrameLayer`): Flutter
+/// content as full-screen images, and platform views at the geometry the
+/// layer tree gave them, in paint order — so Flutter content painted after a
+/// `WatchPlatformView` widget draws over the native view, and content painted
+/// before it sits under it. On an engine that predates composited frames the
+/// stack is always one image, and the host's own overlays place the views.
+///
+/// Every registered platform view stays in the hierarchy even when the
+/// current frame does not place it (scrolled out of its viewport, under an
+/// opaque route): removing it would destroy the native view's `@State` — a
+/// toggle would reset while a dialog is open. Such a view is kept hidden at
+/// its last position, in a `ForEach` keyed by view id like the placed ones,
+/// which is what lets SwiftUI keep the same view instance as it moves between
+/// "placed" and "parked" and up and down the stack.
 private struct FlutterFrameView: View {
     @ObservedObject private var frames = FlutterFrameStore.shared
+    // The registry of platform views: identity (viewType, params) for the
+    // ones the frame places, and the full list for the parked ones. Changes
+    // rarely — create, dispose, params — never per frame.
+    @ObservedObject private var platformViews = WatchPlatformViews.shared
     let sizePoints: CGSize
     let pixelRatio: Double
 
@@ -400,30 +426,124 @@ private struct FlutterFrameView: View {
     }
 
     var body: some View {
-        if FlutterRunner.presentsTextures {
-            // EXPERIMENTAL zero-copy path: the render targets are sampled on
-            // the GPU by a SceneKit material. An image still wins if one
-            // arrives — the software fallback produces nothing else.
-            ZStack {
+        ZStack(alignment: .topLeading) {
+            // The ground beneath everything. Before the first frame the host's
+            // launch placeholder covers it; after, a frame's bottom layer does.
+            Color.black
+            if FlutterRunner.presentsTextures {
+                // EXPERIMENTAL zero-copy path: a one-layer frame's render
+                // target is sampled on the GPU by a SceneKit material. Images
+                // still win if they arrive — the software fallback, and any
+                // frame with platform views, produce nothing else.
                 FlutterTextureFrameView(sizePoints: sizePoints)
-                if let frame = frames.frame {
-                    image(frame)
+            }
+            ForEach(frames.layers) { layer in
+                if let image = layer.image {
+                    Image(decorative: image, scale: pixelRatio)
+                        .resizable()
+                        .frame(width: sizePoints.width, height: sizePoints.height)
+                        // Never a hit target: the host view's own gesture
+                        // reads touches, and an Image would otherwise swallow
+                        // those meant for a native view beneath it.
+                        .allowsHitTesting(false)
+                } else {
+                    placed(layer)
                 }
             }
-        } else if let frame = frames.frame {
-            image(frame)
-        } else {
-            // Nothing rendered yet. The host's launch placeholder covers the
-            // gap; this is only the ground beneath it.
-            Color.black
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if FlutterRunner.compositesLayers {
+                ForEach(parkedSlots) { slot in
+                    parked(slot)
+                }
+            }
+        }
+        .frame(width: sizePoints.width, height: sizePoints.height)
+        .clipped()
+    }
+
+    /// Registered views the current frame did not place.
+    private var parkedSlots: [WatchPlatformViewSlot] {
+        var placed = Set<Int64>()
+        for layer in frames.layers where layer.isPlatformView {
+            placed.insert(layer.viewId)
+        }
+        return platformViews.slots.filter { !placed.contains($0.id) }
+    }
+
+    /// A platform view where the frame put it. Hit-testable unless its
+    /// widget left touches to Flutter (`layer: .belowFlutter`) or Flutter
+    /// content painted above it covers it entirely — a dialog, a modal
+    /// barrier — in which case the taps are the dialog's. Content that covers
+    /// it only in part (a badge) leaves the view live; a tap on the badge
+    /// itself reaches Flutter through the host gesture and may also reach the
+    /// view, which is the one ambiguity SwiftUI's hit testing cannot resolve.
+    @ViewBuilder
+    private func placed(_ layer: FlutterFrameLayer) -> some View {
+        let slot = platformViews.slots.first { $0.id == layer.viewId }
+        if let slot,
+           let native = WatchPlatformViewRegistry.view(for: slot.viewType, params: slot.params) {
+            native
+                // The frame must match the layer's bounds exactly; clipped so
+                // an oversized native view cannot spill over Flutter content.
+                .frame(width: layer.rect.width, height: layer.rect.height)
+                .clipped()
+                // The layer tree's clip, in the view's own coordinates.
+                .clipShape(FrameLayerClip(
+                    rect: layer.clip.map { $0.offsetBy(dx: -layer.rect.minX, dy: -layer.rect.minY) },
+                    radius: layer.clipRadius))
+                // The WHOLE slot is a native hit surface (the documented
+                // contract), including any transparent parts of the view.
+                .contentShape(Rectangle())
+                .opacity(layer.opacity)
+                .position(x: layer.rect.midX, y: layer.rect.midY)
+                .allowsHitTesting(!slot.belowFrame && !coveredAbove(layer))
         }
     }
 
-    private func image(_ frame: CGImage) -> some View {
-        Image(decorative: frame, scale: pixelRatio)
-            .resizable()
-            .frame(width: sizePoints.width, height: sizePoints.height)
+    /// A registered view the frame did not place: kept alive, invisible,
+    /// inert, at the size it last had.
+    @ViewBuilder
+    private func parked(_ slot: WatchPlatformViewSlot) -> some View {
+        if let native = WatchPlatformViewRegistry.view(for: slot.viewType, params: slot.params) {
+            let rect = frames.lastRects[slot.id]
+                ?? CGRect(x: 0, y: 0, width: slot.rect.width, height: slot.rect.height)
+            native
+                .frame(width: max(rect.width, 1), height: max(rect.height, 1))
+                .clipped()
+                .opacity(0)
+                .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Whether Flutter content above `layer` in this frame painted over all
+    /// of the view's bounds.
+    private func coveredAbove(_ layer: FlutterFrameLayer) -> Bool {
+        guard let index = frames.layers.firstIndex(where: { $0.id == layer.id }) else {
+            return false
+        }
+        for above in frames.layers[(index + 1)...] where !above.isPlatformView {
+            if above.paintedRects.contains(where: { $0.contains(layer.rect) }) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// The layer tree's clip on a platform view — a rectangle, rounded when the
+/// nearest clip was — or, without one, the view's whole bounds.
+private struct FrameLayerClip: Shape {
+    let rect: CGRect?
+    let radius: CGFloat
+
+    func path(in bounds: CGRect) -> Path {
+        let clip = rect.map { $0.intersection(bounds) } ?? bounds
+        if clip.isNull || clip.isEmpty {
+            return Path()
+        }
+        return radius > 0
+            ? Path(roundedRect: clip, cornerRadius: radius)
+            : Path(clip)
     }
 }
 

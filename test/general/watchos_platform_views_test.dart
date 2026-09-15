@@ -149,6 +149,92 @@ void main() {
     });
   });
 
+  group('watchOS platform views — composited frames', () {
+    // With an engine that composites platform views from the layer tree
+    // (FlutterCompositor), each frame arrives as an ordered layer list and
+    // the host places the native views inside it, in paint order. The
+    // legacy overlay/underlay path stays for engines that predate it.
+    test('declares the layer struct and callback in the host header', () {
+      expect(bridge, contains('} FlutterWatchOSLayer;'));
+      expect(bridge, contains('kFlutterWatchOSLayerFlutter'));
+      expect(bridge, contains('kFlutterWatchOSLayerPlatformView'));
+      for (final field in <String>[
+        'CGImageRef image;',
+        'const double* region;',
+        'int64_t view_id;',
+        'double opacity;',
+        'bool has_clip;',
+        'double clip_radius;',
+      ]) {
+        expect(bridge, contains(field));
+      }
+      expect(bridge, contains('typedef void (*FlutterWatchOSLayersCallback)('));
+    });
+
+    test('resolves the layers ABI with dlsym so older engines still link', () {
+      expect(runner, contains('"FlutterWatchOSHostSetLayersCallback"'));
+      expect(runner, contains('"FlutterWatchOSHostHitTest"'));
+      expect(runner, contains('static let compositesLayers: Bool'));
+      // Never a direct reference: that would fail to link on an old engine.
+      expect(runner, isNot(contains('FlutterWatchOSHostSetLayersCallback(')));
+      expect(runner, isNot(contains('FlutterWatchOSHostHitTest(')));
+      // The header names them in a comment only; a declaration would let a
+      // direct call slip in.
+      expect(bridge, isNot(contains('\nint64_t FlutterWatchOSHostHitTest(')));
+      expect(bridge, isNot(contains('\nvoid FlutterWatchOSHostSetLayersCallback(')));
+    });
+
+    test('registers the layers callback before Run and stashes by value', () {
+      final int registerAt = runner.indexOf('Self.setLayersCallbackFn?(');
+      final int runAt = runner.indexOf('let running = FlutterWatchOSHostRun(');
+      expect(registerAt, greaterThan(-1));
+      expect(runAt, greaterThan(registerAt));
+      // The C structs live only during the callback; the host copies them.
+      expect(runner, contains('func stash(layers: UnsafeBufferPointer<FlutterWatchOSLayer>)'));
+      expect(runner, contains('takeUnretainedValue()'));
+      expect(runner, contains(r'id: "pv\(layer.view_id)"'));
+    });
+
+    test('the frame view draws the layer stack in order', () {
+      expect(app, contains('ForEach(frames.layers)'));
+      expect(app, contains('ZStack(alignment: .topLeading)'));
+      // Flutter content never swallows touches meant for a view beneath it.
+      final int imageAt = app.indexOf('Image(decorative: image, scale: pixelRatio)');
+      expect(imageAt, greaterThan(-1));
+      expect(app.substring(imageAt, imageAt + 500), contains('.allowsHitTesting(false)'));
+    });
+
+    test('places a view at the layer geometry, clipped and faded as told', () {
+      expect(app, contains('.frame(width: layer.rect.width, height: layer.rect.height)'));
+      expect(app, contains('.clipShape(FrameLayerClip('));
+      expect(app, contains('.opacity(layer.opacity)'));
+      expect(app, contains('.position(x: layer.rect.midX, y: layer.rect.midY)'));
+      expect(app, contains('.allowsHitTesting(!slot.belowFrame && !coveredAbove(layer))'));
+    });
+
+    test('keeps every registered view alive when the frame does not place it', () {
+      expect(app, contains('ForEach(parkedSlots)'));
+      final int parkedAt = app.indexOf('private func parked(');
+      expect(parkedAt, greaterThan(-1));
+      final String parked = app.substring(parkedAt, parkedAt + 800);
+      expect(parked, contains('.opacity(0)'));
+      expect(parked, contains('.allowsHitTesting(false)'));
+      expect(parked, contains('frames.lastRects[slot.id]'));
+    });
+
+    test('asks the engine who owns a touch', () {
+      expect(runner, contains('func platformView(owningTouchAt location: CGPoint) -> Int64?'));
+      expect(app, contains('runner.platformView(owningTouchAt: point)'));
+      // Content scale applies to the point going in, like touches.
+      expect(runner, contains('location.x / WatchContentScale.value'));
+    });
+
+    test('keeps the legacy overlays only for engines without layers', () {
+      expect(app, contains('if !FlutterRunner.compositesLayers {'));
+      expect(app, contains('if FlutterRunner.compositesLayers {'));
+    });
+  });
+
   group('watchOS platform views — touch routing', () {
     test('frame drag gesture is simultaneous, never exclusive', () {
       // An exclusive zero-distance drag wins the gesture arena against the

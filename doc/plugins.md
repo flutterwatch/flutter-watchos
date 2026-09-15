@@ -126,6 +126,18 @@ Dart side embeds the view with `WatchPlatformView` from
 [`video_player_watchos`](https://github.com/flutterwatch/plugins) for a
 complete worked example.
 
+The native view is composited at the widget's position in **paint order**,
+like any other Flutter content: what the app paints before the widget is
+below it, what it paints after (dialogs, snackbars, badges) is above it, and
+ancestor clips, opacity and transforms apply. The widget's `layer:` only
+decides who owns the **touches** inside its rect — SwiftUI has no event
+forwarding, so whichever side takes the touch-down owns the whole gesture:
+`aboveFlutter` (default) routes them to the native view unless Flutter
+content painted above it covers the point, `belowFlutter` always to Flutter.
+On an engine that predates the compositor (`WatchPlatformView.isComposited`
+false) the view is instead overlaid on, or underlaid beneath, the whole
+Flutter frame, and `layer:` picks which.
+
 ### Linking an external native SDK
 
 A plugin's `watchos/Package.swift` can declare external SwiftPM
