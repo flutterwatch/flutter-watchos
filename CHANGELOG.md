@@ -44,6 +44,16 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
   left is SwiftUI's own upload of the image, which watchOS gives no way around
   (there is no `CAMetalLayer` to mount).
 
+- **Experimental texture present.** Opt-in (`FlutterWatchOSPresent` =
+  `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` for a run),
+  off by default: the engine hands the host its render target itself, and the
+  host shows it through a SceneKit material in SwiftUI's `SceneView`, the one
+  public route on watchOS that puts a Metal texture on screen — no copy
+  between rasterising and scanout. The engine side is a new pair of exported
+  entry points the host resolves with `dlsym`, so an older engine simply keeps
+  the image path. Verified on the simulator, unmeasured on hardware, and not
+  yet through App Review; SceneKit itself is deprecated.
+
 - **Engine robustness.** Metal.framework is weak-linked, with a runtime check
   before the first Metal call, so a watchOS that changes a framework the SDK
   never declared falls back to software instead of failing to launch. An

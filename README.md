@@ -138,6 +138,8 @@ Text input (the system keyboard), Digital Crown scrolling and haptics, and app-l
 
 Apps render with **Impeller on Metal**, the same renderer Flutter uses on iOS — no opt-in required. If a watch cannot open a Metal device the engine falls back to Skia's software rasterizer on its own, and an app can ask for that path explicitly with `FLTEnableImpeller` set to `false` in `watchos/Runner/Info.plist`.
 
+Each frame reaches the screen as an image the engine hands to SwiftUI. An **experimental** zero-copy alternative shows the engine's render target directly through a SceneKit material (`FlutterWatchOSPresent` set to `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` in the environment for a `run`). It is off by default, unmeasured on hardware and untested with App Review; treat it as something to evaluate, not to ship.
+
 ## Docs
 
 #### App development

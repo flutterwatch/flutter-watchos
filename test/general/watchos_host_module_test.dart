@@ -303,14 +303,23 @@ void main() {
     final String hostView = readHostSource('FlutterHostView.swift');
 
     test('comes down when the frame reaches SwiftUI, not when it rasterises', () {
-      // `publish` is the moment the pixels are on screen, so the cross-fade
-      // has something to reveal. Verified against the Metal (Impeller) engine
-      // on a watch simulator: six 30 fps samples of ramp.
+      // `didPublish` runs once the pixels have reached SwiftUI (or, on the
+      // experimental texture path, the presenter), so the cross-fade has
+      // something to reveal. Verified against the Metal (Impeller) engine on
+      // a watch simulator: six 30 fps samples of ramp.
       expect(runner, contains('displayingFlutterUI = true'));
       expect(hostView, contains('onChange(of: runner.displayingFlutterUI'));
-      final int publishAt = runner.indexOf('private func publish(');
+      final int publishAt = runner.indexOf('private func didPublish(');
       expect(publishAt, greaterThan(-1));
       expect(runner.indexOf('displayingFlutterUI = true'), greaterThan(publishAt));
+      // Both delivery forms end there: the flag is set from the display tick
+      // in either case, never from the engine's threads.
+      final int presentAt = runner.indexOf('func presentLatestFrame()');
+      expect(presentAt, greaterThan(-1));
+      final String present = runner.substring(presentAt, publishAt);
+      expect(present, contains('FlutterFrameStore.shared.frame = image'));
+      expect(present, contains('FlutterTexturePresenter.shared.present(texture)'));
+      expect('didPublish()'.allMatches(present).length, 2);
     });
 
     test('does not arm the engine first-frame callback', () {

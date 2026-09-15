@@ -24,6 +24,22 @@ typedef void (*FlutterWatchOSCrownTickCallback)(void* context);
 // Flutter has drawn its first frame. Invoked once, on the main thread.
 typedef void (*FlutterWatchOSFirstFrameCallback)(void* context);
 
+// EXPERIMENTAL. A rendered frame as the engine's Metal render target itself
+// (an `id<MTLTexture>` as an opaque pointer — this SDK declares no Metal), for
+// a host that samples it on the GPU instead of showing a CGImage. Valid until
+// `lease` is passed to FlutterWatchOSHostReleaseFrameTexture, which is also
+// what lets the engine draw into that target again. Delivered on a GPU
+// completion thread. The registration and release entry points —
+//   void FlutterWatchOSHostSetTextureFrameCallback(
+//       FlutterWatchOSTextureFrameCallback callback, void* context);
+//   void FlutterWatchOSHostReleaseFrameTexture(void* lease);
+// — are deliberately NOT declared here: the host resolves them with dlsym so
+// it still links against an engine that predates them (see
+// FlutterRunner.presentsTextures).
+typedef void (*FlutterWatchOSTextureFrameCallback)(void* context,
+                                                   void* texture,
+                                                   void* lease);
+
 // Boot and run the Flutter engine for the app bundle. Idempotent; returns
 // false if the engine failed to start. Call on the main thread.
 bool FlutterWatchOSHostRun(const char* bundle_path,

@@ -10,6 +10,7 @@
 #if !arch(arm64_32)
 import Foundation
 import CoreGraphics
+import SceneKit
 import SwiftUI
 import WatchKit
 
@@ -333,6 +334,116 @@ enum WatchContentScale {
     }
 }
 
+/// How the engine's frames reach the screen. EXPERIMENTAL opt-in, off by
+/// default:
+///
+///     <key>FlutterWatchOSPresent</key>
+///     <string>texture</string>
+///
+/// (`FLUTTER_WATCHOS_PRESENT=texture` in the environment does the same for a
+/// `run`, so an app can be compared without editing its Info.plist.)
+///
+/// `image` (the default) shows each frame as a CGImage in a SwiftUI `Image`:
+/// the engine reads its Metal render target back through a shared buffer and
+/// CoreAnimation uploads the bitmap again on the way to the screen. `texture`
+/// hands the render target ITSELF to the host, which samples it on the GPU
+/// through the one public route watchOS has for that — a SceneKit material
+/// shown by SwiftUI's `SceneView` — so no pixel is copied between
+/// rasterising and scanout. See `FlutterTexturePresenter`.
+///
+/// It is an experiment: SceneKit was deprecated in 2025, a SceneKit render
+/// pass has a cost of its own, and none of it has been through App Review.
+/// Measure before shipping an app with it.
+enum WatchPresentMode: Equatable {
+    case image
+    case texture
+
+    static let current: WatchPresentMode = {
+        let raw = ProcessInfo.processInfo.environment["FLUTTER_WATCHOS_PRESENT"]
+            ?? Bundle.main.object(forInfoDictionaryKey: "FlutterWatchOSPresent") as? String
+        switch raw?.lowercased() {
+        case "texture", "scenekit": return .texture
+        default: return .image
+        }
+    }()
+}
+
+/// One frame delivered as the engine's own render target (`WatchPresentMode
+/// .texture`): the `id<MTLTexture>`, typed as `AnyObject` because the watchOS
+/// SDK declares no Metal, and the lease that gives it back to the engine.
+struct FlutterTextureFrame {
+    let texture: AnyObject
+    let lease: UnsafeMutableRawPointer
+}
+
+/// Shows the engine's render targets on the GPU, without a copy.
+///
+/// A SceneKit scene of exactly one thing: an orthographic camera looking at a
+/// screen-sized plane whose material samples the engine's texture with a
+/// constant lighting model (no lights, no shading, the texel is the pixel).
+/// SwiftUI's `SceneView` draws it — the one public view on watchOS that can
+/// put an `MTLTexture` on screen; there is no `CAMetalLayer`, no `SCNView`
+/// or `SCNRenderer`, and an `SK3DNode` inside a `SpriteView` renders nothing
+/// here (measured: a SpriteKit sprite beside it draws, the SceneKit content
+/// does not).
+///
+/// Frames arrive through `present`, on the display tick like the image path.
+/// The two most recent leases are kept: SceneKit's own render of the previous
+/// frame may still be reading that texture when the next one lands, and the
+/// engine draws into a slot again the moment its lease comes back.
+final class FlutterTexturePresenter {
+    static let shared = FlutterTexturePresenter()
+
+    /// What `FlutterTextureFrameView` shows, and the camera it shows it from.
+    let scene = SCNScene()
+    let cameraNode = SCNNode()
+
+    private let material = SCNMaterial()
+    /// Newest last; never more than two.
+    private var held: [FlutterTextureFrame] = []
+
+    private init() {
+        let size = WKInterfaceDevice.current().screenBounds.size
+        scene.background.contents = UIColor.black
+
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        material.diffuse.minificationFilter = .linear
+        material.diffuse.magnificationFilter = .linear
+        material.diffuse.mipFilter = .none
+        material.diffuse.wrapS = .clamp
+        material.diffuse.wrapT = .clamp
+        // No `contentsTransform`: SceneKit maps a Metal texture the way it
+        // maps an image, first row at the top of the plane (measured — a
+        // vertical flip here shows the app upside down).
+
+        let plane = SCNPlane(width: size.width, height: size.height)
+        plane.materials = [material]
+        scene.rootNode.addChildNode(SCNNode(geometry: plane))
+
+        // Orthographic: `orthographicScale` is half the visible height in
+        // scene units, so a plane of the view's size fills it exactly.
+        let camera = SCNCamera()
+        camera.usesOrthographicProjection = true
+        camera.orthographicScale = Double(size.height) / 2
+        camera.zNear = 1
+        camera.zFar = 100
+        cameraNode.camera = camera
+        cameraNode.position = SCNVector3(0, 0, 10)
+        scene.rootNode.addChildNode(cameraNode)
+    }
+
+    /// Main thread: show this texture from SceneKit's next render. The view
+    /// does not render continuously; a changed material is what makes it draw.
+    func present(_ frame: FlutterTextureFrame) {
+        material.diffuse.contents = frame.texture
+        held.append(frame)
+        while held.count > 2 {
+            FlutterRunner.releaseTexture(held.removeFirst().lease)
+        }
+    }
+}
+
 /// The engine's latest frame, and nothing else — kept apart from the rest of
 /// the runner's state on purpose.
 ///
@@ -390,6 +501,9 @@ final class FlutterRunner: ObservableObject {
     /// Written on the raster thread, read on the main thread, hence the lock —
     /// one pointer swap per frame, uncontended in practice.
     private var stashed: CGImage?
+    /// The same for `WatchPresentMode.texture`. Both can be in use: the
+    /// software fallback keeps producing images whatever the mode.
+    private var stashedTexture: FlutterTextureFrame?
     private let stashLock = NSLock()
 
     /// Whether the app asked (via WatchStatusBar in package:flutter_watchos)
@@ -414,6 +528,36 @@ final class FlutterRunner: ObservableObject {
                               "flutter_watchos_set_always_on_active") else { return nil }
         return unsafeBitCast(sym, to: (@convention(c) (Bool) -> Void).self)
     }()
+
+    /// The EXPERIMENTAL texture-delivery ABI (`WatchPresentMode.texture`),
+    /// dlsym-resolved so this host still links against an engine that predates
+    /// it — in which case the mode silently stays `image`.
+    typealias TextureFrameCallback = @convention(c) (
+        UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+    ) -> Void
+    private static let setTextureFrameCallbackFn:
+        (@convention(c) (TextureFrameCallback?, UnsafeMutableRawPointer?) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "FlutterWatchOSHostSetTextureFrameCallback") else { return nil }
+        return unsafeBitCast(
+            sym, to: (@convention(c) (TextureFrameCallback?, UnsafeMutableRawPointer?) -> Void).self)
+    }()
+    private static let releaseFrameTextureFn:
+        (@convention(c) (UnsafeMutableRawPointer?) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "FlutterWatchOSHostReleaseFrameTexture") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+    }()
+
+    /// Whether the texture present path is on: asked for AND the engine has it.
+    static let presentsTextures: Bool =
+        WatchPresentMode.current == .texture
+        && setTextureFrameCallbackFn != nil && releaseFrameTextureFn != nil
+
+    /// Give a texture frame back to the engine. Any thread.
+    static func releaseTexture(_ lease: UnsafeMutableRawPointer) {
+        releaseFrameTextureFn?(lease)
+    }
 
     /// Display geometry (SwiftUI points) — what the frame image is framed to.
     private(set) var sizePoints: CGSize = WKInterfaceDevice.current().screenBounds.size
@@ -450,6 +594,21 @@ final class FlutterRunner: ObservableObject {
         }, nil)
 
         let ctx = Unmanaged.passUnretained(self).toOpaque()
+        if Self.presentsTextures {
+            // Registered before Run so the very first frame comes this way.
+            Self.setTextureFrameCallbackFn?({ context, texture, lease in
+                guard let context, let texture, let lease else { return }
+                let runner = Unmanaged<FlutterRunner>.fromOpaque(context)
+                    .takeUnretainedValue()
+                // Unretained: the engine's lease is what keeps the texture
+                // alive, and the material takes its own reference when shown.
+                let object = Unmanaged<AnyObject>.fromOpaque(texture).takeUnretainedValue()
+                runner.stash(FlutterTextureFrame(texture: object, lease: lease))
+            }, ctx)
+            NSLog("FlutterWatchOS: presenting textures (experimental)")
+        } else if WatchPresentMode.current == .texture {
+            NSLog("FlutterWatchOS: texture present requested but this engine has no texture delivery; using images")
+        }
         let running = FlutterWatchOSHostRun(
             Bundle.main.bundlePath,
             flutterSize.width,
@@ -560,6 +719,17 @@ final class FlutterRunner: ObservableObject {
         stashLock.unlock()
     }
 
+    /// GPU completion thread: the texture twin of the above. A frame the tick
+    /// never collected goes straight back to the engine — holding it would
+    /// starve the ring for a picture that is already stale.
+    func stash(_ frame: FlutterTextureFrame) {
+        stashLock.lock()
+        let overtaken = stashedTexture
+        stashedTexture = frame
+        stashLock.unlock()
+        if let overtaken { Self.releaseTexture(overtaken.lease) }
+    }
+
     /// Main thread, once per display refresh: show the newest finished frame.
     ///
     /// This is the second half of giving the engine the display's clock, and
@@ -582,16 +752,24 @@ final class FlutterRunner: ObservableObject {
     func presentLatestFrame() {
         stashLock.lock()
         let image = stashed
+        let texture = stashedTexture
         stashed = nil
+        stashedTexture = nil
         stashLock.unlock()
-        guard let image else { return }
-        publish(image)
+        if let texture {
+            FlutterTexturePresenter.shared.present(texture)
+            didPublish()
+        }
+        if let image {
+            FlutterFrameStore.shared.frame = image
+            didPublish()
+        }
     }
 
-    /// Main thread: publish the frame and mirror the plugin's status-bar
-    /// request alongside it (a cheap flag read; publishes only on change).
-    private func publish(_ image: CGImage) {
-        FlutterFrameStore.shared.frame = image
+    /// Main thread, after a frame reached SwiftUI (image) or the presenter
+    /// (texture): mirror the plugin's status-bar request alongside it (a cheap
+    /// flag read; publishes only on change).
+    private func didPublish() {
         // The placeholder's cue: this is the moment Flutter's pixels reach
         // SwiftUI, so the cross-fade has something to reveal. See
         // `displayingFlutterUI` for why the engine's earlier signal is not it.

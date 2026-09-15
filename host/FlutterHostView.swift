@@ -6,6 +6,7 @@
 // 32-bit watches (Series 4–8 / SE) are unsupported; this file is compiled out
 // for that slice (the app template shows its own fallback screen instead).
 #if !arch(arm64_32)
+import SceneKit
 import SwiftUI
 
 /// Displays the running Flutter app: the engine-rendered frames plus the
@@ -399,16 +400,51 @@ private struct FlutterFrameView: View {
     }
 
     var body: some View {
-        if let frame = frames.frame {
-            Image(decorative: frame, scale: pixelRatio)
-                .resizable()
-                .frame(width: sizePoints.width, height: sizePoints.height)
+        if FlutterRunner.presentsTextures {
+            // EXPERIMENTAL zero-copy path: the render targets are sampled on
+            // the GPU by a SceneKit material. An image still wins if one
+            // arrives — the software fallback produces nothing else.
+            ZStack {
+                FlutterTextureFrameView(sizePoints: sizePoints)
+                if let frame = frames.frame {
+                    image(frame)
+                }
+            }
+        } else if let frame = frames.frame {
+            image(frame)
         } else {
             // Nothing rendered yet. The host's launch placeholder covers the
             // gap; this is only the ground beneath it.
             Color.black
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func image(_ frame: CGImage) -> some View {
+        Image(decorative: frame, scale: pixelRatio)
+            .resizable()
+            .frame(width: sizePoints.width, height: sizePoints.height)
+    }
+}
+
+/// `WatchPresentMode.texture`: SwiftUI's SceneKit view showing the engine's
+/// render targets (see FlutterTexturePresenter). Not `rendersContinuously`:
+/// SceneKit redraws when the scene changes, which is exactly when a frame
+/// lands, so an idle app costs no GPU pass per refresh.
+private struct FlutterTextureFrameView: View {
+    let sizePoints: CGSize
+
+    var body: some View {
+        SceneView(
+            scene: FlutterTexturePresenter.shared.scene,
+            pointOfView: FlutterTexturePresenter.shared.cameraNode,
+            options: [],
+            preferredFramesPerSecond: 60,
+            // A textured quad on an axis-aligned camera: nothing to smooth.
+            antialiasingMode: .none)
+        .frame(width: sizePoints.width, height: sizePoints.height)
+        // Input goes to the host view's own gesture, as on the image path.
+        .allowsHitTesting(false)
     }
 }
 
