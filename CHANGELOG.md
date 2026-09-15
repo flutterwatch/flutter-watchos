@@ -36,6 +36,14 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
   `badCertificateCallback` says once that it is not applied rather than
   silently dropping certificate pinning.
 
+- **Frames no longer wait for the GPU or get copied.** The Metal present path
+  used to render into one texture, block the raster thread until the GPU was
+  done, copy the frame, and only then build the image the host shows. It now
+  rotates four render targets, hands each frame over from the GPU's completion
+  handler, and wraps the buffer in the image without copying. The one copy
+  left is SwiftUI's own upload of the image, which watchOS gives no way around
+  (there is no `CAMetalLayer` to mount).
+
 - **Engine robustness.** Metal.framework is weak-linked, with a runtime check
   before the first Metal call, so a watchOS that changes a framework the SDK
   never declared falls back to software instead of failing to launch. An
