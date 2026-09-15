@@ -72,6 +72,17 @@ Pre-launch fixes from a review of the engine, the host module and the CLI.
   detects which it has at runtime); older hosts on this engine get the
   bottom Flutter layer plus positioned overlays, as before.
 
+- **The display tick stops while the app is idle.** The host's
+  `TimelineView(.animation)` woke the app every refresh even on a still
+  screen, to find nothing to present and no frame asked for. It now pauses
+  after about half a second of that and resumes when the engine asks for a
+  frame (a new `FlutterWatchOSHostSetVsyncRequestCallback`, resolved with
+  `dlsym`; a host on an older engine keeps ticking) or a frame lands. On a
+  watch simulator a static screen went from about 2% of a core to 0%, with
+  animation still at 60 fps. `FLUTTER_WATCHOS_DISPLAY_CLOCK=continuous` keeps
+  the old behaviour for comparisons, and `FLUTTER_WATCHOS_CPU_LOG=<seconds>`
+  logs the app's own CPU time, for measuring on a watch.
+
 - **Experimental texture present.** Opt-in (`FlutterWatchOSPresent` =
   `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` for a run),
   off by default: the engine hands the host its render target itself, and the

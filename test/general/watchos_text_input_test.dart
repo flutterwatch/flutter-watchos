@@ -98,7 +98,7 @@ void main() {
 
     test('drives the engine from the display-synced schedule, presenting first',
         () {
-      expect(app, contains('TimelineView(.animation)'));
+      expect(app, contains('TimelineView(.animation(minimumInterval: nil, paused: clock.paused))'));
       expect(app, contains('EngineVsyncClock'));
       // Order matters: show the frame that is ready for THIS refresh, then let
       // the engine start the next. The other way round delays the picture by a
@@ -108,6 +108,27 @@ void main() {
       expect(present, greaterThan(-1));
       expect(notify, greaterThan(-1));
       expect(present, lessThan(notify));
+    });
+
+    test('pauses the display tick while idle, and only when the engine can wake it',
+        () {
+      // The engine's vsync request callback is what resumes a paused tick; an
+      // engine without it would never get another frame, so the host must not
+      // pause there. Registered before Run so no request goes unannounced.
+      final int registerAt = runner.indexOf('setVsyncRequest({ _ in FlutterDisplayClock.shared.wake() }, nil)');
+      final int canPauseAt = runner.indexOf('FlutterDisplayClock.shared.canPause = true');
+      final int runAt = runner.indexOf('let running = FlutterWatchOSHostRun(');
+      expect(registerAt, greaterThan(-1));
+      expect(canPauseAt, greaterThan(registerAt));
+      expect(runAt, greaterThan(canPauseAt));
+      expect(runner, contains('"FlutterWatchOSHostSetVsyncRequestCallback"'));
+      expect(runner, contains('if canPause && !paused && idleTicks >= Self.idleTicksBeforePause'));
+      // A frame that lands while paused must still reach the screen.
+      expect('FlutterDisplayClock.shared.wake()'.allMatches(runner).length, greaterThanOrEqualTo(4));
+      // Each tick reports whether it presented, after servicing the engine.
+      final int notify = app.indexOf('FlutterRunner.shared.notifyVsync()');
+      final int didTick = app.indexOf('FlutterDisplayClock.shared.didTick(presented: presented)');
+      expect(didTick, greaterThan(notify));
     });
 
     test('hosts no bootstrap logic (that moved into the engine)', () {

@@ -126,6 +126,14 @@ typedef void (*FlutterWatchOSTextureLayersCallback)(void* context,
 // engine that predates composited frames, and falls back to the image callback
 // plus the platform-view slot rects below.
 
+// The engine wants a display refresh; invoked on an engine-managed thread. A
+// host that pauses its display tick while idle resumes on this. Registration
+// is not declared here either:
+//   void FlutterWatchOSHostSetVsyncRequestCallback(
+//       FlutterWatchOSVsyncRequestCallback callback, void* context);
+// (see FlutterDisplayClock). Without it a host must tick every refresh.
+typedef void (*FlutterWatchOSVsyncRequestCallback)(void* context);
+
 // Boot and run the Flutter engine for the app bundle. Idempotent; returns
 // false if the engine failed to start. Call on the main thread.
 bool FlutterWatchOSHostRun(const char* bundle_path,

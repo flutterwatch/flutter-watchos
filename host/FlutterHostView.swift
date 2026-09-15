@@ -618,9 +618,16 @@ extension FlutterHostView where Splash == Color {
 /// In Always-On the schedule drops to a low frequency by itself and the engine
 /// simply produces fewer frames, which is exactly right for a screen nobody is
 /// looking at.
+///
+/// While the app is idle the schedule is paused altogether, and the engine's
+/// next frame request or a finished frame starts it again; see
+/// FlutterDisplayClock.
 private struct EngineVsyncClock: View {
+    /// Paused while the app is idle; see FlutterDisplayClock.
+    @ObservedObject private var clock = FlutterDisplayClock.shared
+
     var body: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(minimumInterval: nil, paused: clock.paused)) { context in
             Color.clear
                 .onChange(of: context.date) { _, _ in
                     // Present first, then ask. Show the frame that is ready
@@ -632,8 +639,9 @@ private struct EngineVsyncClock: View {
                     // this file makes: the C module is imported by
                     // FlutterRunner, and a Swift import is per-FILE, not
                     // per-module, so calling the symbol here would not compile.
-                    FlutterRunner.shared.presentLatestFrame()
+                    let presented = FlutterRunner.shared.presentLatestFrame()
                     FlutterRunner.shared.notifyVsync()
+                    FlutterDisplayClock.shared.didTick(presented: presented)
                 }
         }
         .allowsHitTesting(false)

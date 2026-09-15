@@ -546,6 +546,100 @@ final class FlutterFrameStore: ObservableObject {
     fileprivate(set) var lastRects: [Int64: CGRect] = [:]
 }
 
+/// Whether the host's display tick runs, kept apart from the runner for the
+/// same reason as `FlutterFrameStore`: only `EngineVsyncClock` observes it.
+///
+/// The tick used to run every refresh for as long as the app was on screen,
+/// waking the app sixty times a second to find, on a still screen, nothing to
+/// present and no frame asked for. iOS stops its CADisplayLink in that case;
+/// this is the watchOS shape of it. After `idleTicksBeforePause` refreshes with
+/// no frame to show and no request from the engine, the tick pauses. It
+/// resumes the moment the engine asks for a frame (the vsync request
+/// callback) or a frame lands, so the first frame after a pause is at most one
+/// refresh late, the same as a display link being restarted.
+///
+/// Only an engine with `FlutterWatchOSHostSetVsyncRequestCallback` can wake
+/// the tick; on an older one it never pauses. `FLUTTER_WATCHOS_DISPLAY_CLOCK`
+/// set to `continuous` keeps it running, for A/B measurements.
+final class FlutterDisplayClock: ObservableObject {
+    static let shared = FlutterDisplayClock()
+
+    /// About half a second: long enough that an animation's gaps between
+    /// frames never pause it, short enough to be over before anyone notices.
+    static let idleTicksBeforePause = 30
+
+    @Published private(set) var paused = false
+
+    /// Set once the engine's request callback is registered (main thread).
+    var canPause = false
+
+    private var idleTicks = 0
+    private var requested = false
+    private let lock = NSLock()
+
+    /// Any thread: the engine asked for a frame, or one is ready to present.
+    func wake() {
+        lock.lock()
+        requested = true
+        lock.unlock()
+        if Thread.isMainThread {
+            resume()
+        } else {
+            DispatchQueue.main.async { self.resume() }
+        }
+    }
+
+    /// Main thread, once per tick, after presenting and servicing the engine.
+    /// `presented`: a frame reached the screen on this tick.
+    func didTick(presented: Bool) {
+        lock.lock()
+        let active = requested || presented
+        requested = false
+        lock.unlock()
+        if active {
+            idleTicks = 0
+            return
+        }
+        idleTicks += 1
+        if canPause && !paused && idleTicks >= Self.idleTicksBeforePause {
+            paused = true
+        }
+    }
+
+    private func resume() {
+        idleTicks = 0
+        if paused {
+            paused = false
+        }
+    }
+}
+
+/// Opt-in CPU accounting for measurements on a watch, where no profiler reads
+/// another process's CPU time: with `FLUTTER_WATCHOS_CPU_LOG` set to a number
+/// of seconds, logs this process's user+system CPU time over each such window.
+/// Off by default; the timer that samples would itself wake the app.
+enum FlutterCPULog {
+    static func startIfConfigured() {
+        guard let raw = ProcessInfo.processInfo.environment["FLUTTER_WATCHOS_CPU_LOG"],
+              let seconds = Double(raw), seconds >= 1 else { return }
+        var last = cpuSeconds()
+        Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { _ in
+            let now = cpuSeconds()
+            NSLog("FlutterWatchOS: cpu %.1f%% over %.0f s (clock %@)",
+                  (now - last) / seconds * 100, seconds,
+                  FlutterDisplayClock.shared.paused ? "paused" : "running")
+            last = now
+        }
+    }
+
+    private static func cpuSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        func secs(_ t: timeval) -> Double { Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000 }
+        return secs(usage.ru_utime) + secs(usage.ru_stime)
+    }
+}
+
 /// Generic glue around the Flutter engine — identical for every app. It starts
 /// the engine, forwards touch and Digital Crown input, displays the frames the
 /// engine produces, and plays the crown detent haptic on request.
@@ -672,6 +766,17 @@ final class FlutterRunner: ObservableObject {
         && setTextureLayersCallbackFn != nil && releaseFrameTexturesFn != nil
         && setLayersCallbackFn != nil && hitTestFn != nil
 
+    /// The engine announces each vsync request, so the display tick can pause
+    /// while nothing is asked for (see `FlutterDisplayClock`).
+    typealias VsyncRequestCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
+    private static let setVsyncRequestCallbackFn:
+        (@convention(c) (VsyncRequestCallback?, UnsafeMutableRawPointer?) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "FlutterWatchOSHostSetVsyncRequestCallback") else { return nil }
+        return unsafeBitCast(
+            sym, to: (@convention(c) (VsyncRequestCallback?, UnsafeMutableRawPointer?) -> Void).self)
+    }()
+
     /// Composited frames (see `FlutterFrameLayer`): the engine delivers each
     /// frame as a layer list with the platform views placed by the layer
     /// tree, and answers which view a touch belongs to. dlsym-resolved so
@@ -749,6 +854,13 @@ final class FlutterRunner: ObservableObject {
         }, nil)
 
         let ctx = Unmanaged.passUnretained(self).toOpaque()
+        if let setVsyncRequest = Self.setVsyncRequestCallbackFn,
+           ProcessInfo.processInfo.environment["FLUTTER_WATCHOS_DISPLAY_CLOCK"] != "continuous" {
+            // Registered before Run so the first request already wakes the tick.
+            setVsyncRequest({ _ in FlutterDisplayClock.shared.wake() }, nil)
+            FlutterDisplayClock.shared.canPause = true
+        }
+        FlutterCPULog.startIfConfigured()
         if Self.compositesLayers {
             // Registered before Run so the very first frame comes this way.
             Self.setLayersCallbackFn?({ context, layers, count in
@@ -917,6 +1029,7 @@ final class FlutterRunner: ObservableObject {
         let overtaken = stashedTextureLayers
         stashedTextureLayers = TextureLayersFrame(layers: frame, texture: texture, lease: lease)
         stashLock.unlock()
+        FlutterDisplayClock.shared.wake()
         _ = overtaken  // released here, outside the lock
     }
 
@@ -963,6 +1076,7 @@ final class FlutterRunner: ObservableObject {
         stashLock.lock()
         stashed = frame
         stashLock.unlock()
+        FlutterDisplayClock.shared.wake()
     }
 
     /// GPU completion thread: the texture twin of the above. A frame the tick
@@ -974,6 +1088,7 @@ final class FlutterRunner: ObservableObject {
         stashedTexture = frame
         stashLock.unlock()
         if let overtaken { Self.releaseTexture(overtaken.lease) }
+        FlutterDisplayClock.shared.wake()
     }
 
     /// Main thread, once per display refresh: show the newest finished frame.
@@ -995,7 +1110,10 @@ final class FlutterRunner: ObservableObject {
     ///
     /// Invalidating from the display tick means the ensuing SwiftUI render pass
     /// is the one for the refresh in progress, not an arbitrary later one.
-    func presentLatestFrame() {
+    /// Returns whether a frame was presented, which keeps the display tick
+    /// running (see `FlutterDisplayClock`).
+    @discardableResult
+    func presentLatestFrame() -> Bool {
         stashLock.lock()
         let image = stashed
         let texture = stashedTexture
@@ -1004,6 +1122,7 @@ final class FlutterRunner: ObservableObject {
         stashedTexture = nil
         stashedTextureLayers = nil
         stashLock.unlock()
+        let presented = image != nil || texture != nil || textureLayers != nil
         if let texture {
             FlutterTexturePresenter.shared.present(texture)
             // A single texture means no platform view and nothing above the
@@ -1037,6 +1156,7 @@ final class FlutterRunner: ObservableObject {
             store.layers = image
             didPublish()
         }
+        return presented
     }
 
     /// Main thread, after a frame reached SwiftUI (image) or the presenter
