@@ -412,5 +412,69 @@ flutter:
         ProcessManager: () => processManager,
       },
     );
+
+    // The graph is preserved across builds, so it goes stale: a watchOS-only
+    // plugin added after it was written is absent from it, and used to stay
+    // unregistered (MissingPluginException at runtime) until the file was
+    // deleted by hand.
+    testUsingContext(
+      'finds a plugin that a non-empty but stale graph is missing',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+        for (final name in <String>['old_watch', 'new_watch']) {
+          final Directory pkgDir = fileSystem.directory('/pubcache/$name')
+            ..createSync(recursive: true);
+          pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: $name
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+        ffiSymbols:
+          - ${name}_init
+''');
+          pkgDir.childDirectory('watchos').createSync();
+        }
+
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            json.encode(<String, dynamic>{
+              'packages': <Map<String, String>>[
+                for (final name in <String>['old_watch', 'new_watch'])
+                  <String, String>{'name': name, 'rootUri': 'file:///pubcache/$name'},
+              ],
+            }),
+          );
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'plugins': <String, dynamic>{'watchos': <dynamic>[]},
+            'dependencyGraph': <Map<String, String>>[
+              <String, String>{'name': 'old_watch'},
+            ],
+          }),
+        );
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForWatchosTooling(project);
+
+        final decoded = json.decode(
+          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        final plugins = (decoded['plugins'] as Map<String, dynamic>)['watchos']! as List<dynamic>;
+        expect(
+          plugins.map((dynamic p) => (p as Map<String, dynamic>)['name']),
+          containsAll(<String>['old_watch', 'new_watch']),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
   });
 }
