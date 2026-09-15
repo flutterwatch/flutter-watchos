@@ -149,21 +149,21 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   //
   // `package_config.json` is written by pub itself, lists every resolved
   // package whatever the platform, and is already parsed just above for the
-  // paths. Fall back to it — the watchos block in each pubspec is the real
-  // filter either way, so a superset of candidates costs only a pubspec read.
-  final Iterable<String> candidateNames;
-  if (depGraph.isEmpty) {
-    globals.logger.printTrace(
-      'No dependencyGraph in .flutter-plugins-dependencies; discovering watchOS '
-      'plugins from .dart_tool/package_config.json instead.',
-    );
-    candidateNames = packagePaths.keys.toList();
-  } else {
-    candidateNames = [
-      for (final dynamic dep in depGraph)
-        if (dep is Map<String, dynamic> && dep['name'] is String) dep['name'] as String,
-    ];
-  }
+  // paths. Add every package it lists to the graph's names — the watchos block
+  // in each pubspec is the real filter either way, so a superset of candidates
+  // costs only a pubspec read.
+  //
+  // A non-empty graph is not enough on its own either: the graph is written by
+  // stock `flutter pub get` and this tool preserves it across builds, so it
+  // can be stale. A watchOS-only plugin added to an app that already had a
+  // graph (firebase_messaging_watchos added to the firebase_auth example) was
+  // missing from it, went unregistered, and every call into it threw
+  // MissingPluginException until the file was deleted by hand.
+  final candidateNames = <String>{
+    for (final dynamic dep in depGraph)
+      if (dep is Map<String, dynamic> && dep['name'] is String) dep['name'] as String,
+    ...packagePaths.keys,
+  };
 
   for (final pluginName in candidateNames) {
     final String? pluginPath = packagePaths[pluginName];
