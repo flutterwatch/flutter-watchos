@@ -20,12 +20,13 @@
   export APP_STORE_CONNECT_ISSUER_ID=<issuer-uuid>
   ```
 
-  Absent or incomplete, nothing is added and a machine with a working Xcode
-  account behaves exactly as before. Set but pointing at a file that does not
-  exist earns a warning rather than a silent fallback — staying quiet there is
-  indistinguishable from never having configured it, and the build goes on to
-  fail with that misleading capability message minutes later, nowhere near the
-  cause. Only the key *id* is ever logged; the key's contents are read by
+  With none of them set, nothing is added and a machine with a working Xcode
+  account behaves exactly as before. Only some of them set, or a path to a file
+  that does not exist, earns a warning rather than a silent fallback — staying
+  quiet there is indistinguishable from never having configured it, and the
+  build goes on to fail with that misleading capability message minutes later,
+  nowhere near the cause. A leading `~/` in the path is expanded, for values
+  that reach the CLI unexpanded from a quoted export or a CI config. Only the key *id* is ever logged; the key's contents are read by
   xcodebuild, never by the CLI.
 
 ## 0.1.0-beta.12 (closed beta)

@@ -36,16 +36,6 @@ import 'watchos_host_module.dart';
 import 'watchos_native_link.dart';
 import 'watchos_plugin_views.dart';
 
-/// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
-/// aware plugin registrations, as a proper build target.
-///
-/// This replaces Flutter's stock `DartPluginRegistrantTarget` in our build
-/// graph (via [WatchosKernelSnapshot]) so that the file the frontend-server
-/// reads via `--source=dart_plugin_registrant.dart` contains entries for
-/// plugins declared under `flutter.plugin.platforms.watchos` — not the iOS
-/// entries Flutter would otherwise emit (since `Platform.isIOS` is true under
-/// our Dart VM patch, and the `watchos` platform key is unknown to upstream
-/// `generateMainDartWithPluginRegistrant`).
 /// App Store Connect API credentials for `xcodebuild`, read from [environment].
 ///
 /// `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
@@ -65,7 +55,8 @@ import 'watchos_plugin_views.dart';
 ///   APP_STORE_CONNECT_ISSUER_ID  the issuer id
 ///
 /// Returns an empty list otherwise, so a machine with a working Xcode account
-/// behaves exactly as before. Only the key *id* is ever logged; the key's
+/// behaves exactly as before; a partial set, or a path that does not exist,
+/// also warns. A leading `~/` in the path is expanded. Only the key *id* is ever logged; the key's
 /// contents are read by xcodebuild, never by this process.
 @visibleForTesting
 List<String> resolveAuthenticationArgs(
@@ -73,16 +64,35 @@ List<String> resolveAuthenticationArgs(
   FileSystem fileSystem,
   Logger logger,
 ) {
-  final String? keyPath = environment['APP_STORE_CONNECT_KEY_PATH'];
-  final String? keyId = environment['APP_STORE_CONNECT_KEY_ID'];
-  final String? issuerId = environment['APP_STORE_CONNECT_ISSUER_ID'];
-  if (keyPath == null ||
-      keyId == null ||
-      issuerId == null ||
-      keyPath.isEmpty ||
-      keyId.isEmpty ||
-      issuerId.isEmpty) {
+  const names = <String>[
+    'APP_STORE_CONNECT_KEY_PATH',
+    'APP_STORE_CONNECT_KEY_ID',
+    'APP_STORE_CONNECT_ISSUER_ID',
+  ];
+  final missing = <String>[
+    for (final String name in names)
+      if ((environment[name] ?? '').isEmpty) name,
+  ];
+  if (missing.length == names.length) {
     return const <String>[];
+  }
+  if (missing.isNotEmpty) {
+    // Half configured is as misleading as a wrong path: xcodebuild needs all
+    // three, and silently skipping the key looks like never having set any.
+    logger.printWarning(
+      'App Store Connect API key not used for provisioning: '
+      '${missing.join(', ')} ${missing.length == 1 ? 'is' : 'are'} not set '
+      '(all three of ${names.join(', ')} are needed).',
+    );
+    return const <String>[];
+  }
+  final String keyId = environment['APP_STORE_CONNECT_KEY_ID']!;
+  final String issuerId = environment['APP_STORE_CONNECT_ISSUER_ID']!;
+  String keyPath = environment['APP_STORE_CONNECT_KEY_PATH']!;
+  // A quoted value, or one from a CI config, reaches us with `~` unexpanded.
+  final String? home = environment['HOME'];
+  if (keyPath.startsWith('~/') && home != null && home.isNotEmpty) {
+    keyPath = fileSystem.path.join(home, keyPath.substring(2));
   }
   if (!fileSystem.file(keyPath).existsSync()) {
     // Set but wrong is worth saying out loud: falling back silently looks
@@ -105,6 +115,16 @@ List<String> resolveAuthenticationArgs(
   ];
 }
 
+/// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
+/// aware plugin registrations, as a proper build target.
+///
+/// This replaces Flutter's stock `DartPluginRegistrantTarget` in our build
+/// graph (via [WatchosKernelSnapshot]) so that the file the frontend-server
+/// reads via `--source=dart_plugin_registrant.dart` contains entries for
+/// plugins declared under `flutter.plugin.platforms.watchos` — not the iOS
+/// entries Flutter would otherwise emit (since `Platform.isIOS` is true under
+/// our Dart VM patch, and the `watchos` platform key is unknown to upstream
+/// `generateMainDartWithPluginRegistrant`).
 class WatchosDartPluginRegistrantTarget extends Target {
   const WatchosDartPluginRegistrantTarget();
 

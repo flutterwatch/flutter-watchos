@@ -226,7 +226,26 @@ void main() {
           logger,
         ),
         isEmpty,
+      );      expect(logger.warningText, contains('APP_STORE_CONNECT_ISSUER_ID'));
+      expect(logger.warningText, contains('APP_STORE_CONNECT_KEY_ID'));
+    });
+
+    testWithoutContext('expands a leading ~ in the key path', () {
+      // An unquoted `export` expands it, but a quoted one or a CI config does
+      // not, and the key would look missing.
+      fileSystem.file('/Users/dev/.appstoreconnect/AuthKey_ABC.p8').createSync(recursive: true);
+      expect(
+        resolveAuthenticationArgs(
+          <String, String>{
+            ...env(path: '~/.appstoreconnect/AuthKey_ABC.p8', id: 'ABC1234567', issuer: 'issuer-uuid'),
+            'HOME': '/Users/dev',
+          },
+          fileSystem,
+          logger,
+        ),
+        contains('/Users/dev/.appstoreconnect/AuthKey_ABC.p8'),
       );
+      expect(logger.warningText, isEmpty);
     });
 
     testWithoutContext('treats an empty value as unset', () {
