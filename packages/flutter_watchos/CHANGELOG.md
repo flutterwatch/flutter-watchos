@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.0-beta.9
 
 * **Changed:** `WatchPlatformView` is now a real platform view in the layer
   tree on engines that composite platform views (`WatchPlatformView.isComposited`).

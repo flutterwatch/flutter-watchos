@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.12 (closed beta)
 
-Pre-launch fixes from a review of the engine, the host module and the CLI.
+Flutter 3.47.4; native views placed by the engine the way iOS places them; and
+an app that stops waking the watch when its screen is still. The rest are fixes
+from a review of the engine, the host module and the CLI, checked on a Series 10.
 
 - **Flutter 3.47.4.** The pinned SDK moves from 3.47.1 to 3.47.4, which rolled
   the Dart SDK twice. The engine is rebuilt at the same commit and re-pinned
