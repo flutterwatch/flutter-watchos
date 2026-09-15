@@ -49,9 +49,11 @@ a network that routes here. Two layouts work:
 A Mac on wired ethernet alone will not work, however close the phone is: it has
 no route into that subnet.
 
-If the app cannot reach back, `run` says so, distinguishes "the VM Service
-never started" from "it started but the app could not reach this Mac", and
-names the address the watch was told to dial. When that address is the wrong
+If the app cannot reach back within 45 seconds, `run` says so, distinguishes
+"the VM Service never started" from "it started but the app could not reach
+this Mac", and names the address the watch was told to dial. It then keeps the
+session open: the app's logs keep streaming, and DevTools connects if the
+watch gets through later. When that address is the wrong
 one of several — a layout the ordering above cannot infer — override it:
 
 ```sh
@@ -187,6 +189,18 @@ is tunnelled via the iPhone. This path is occasionally flaky:
   nearby, both on the same Wi-Fi; then retry. Stubborn cases: toggle
   Developer Mode on the watch (Settings → Privacy & Security) or reboot
   watch + iPhone.
+- **Internet Sharing on the Mac** can break both installs and DevTools. It
+  turns the Mac's Wi-Fi into an access point, so the Mac is no longer on the
+  iPhone's network, and it adds a `bridge100` address that `run` prefers for
+  the DevTools relay. Turn it off in System Settings ▸ General ▸ Sharing, and
+  join the Mac to the same Wi-Fi as the iPhone.
+- **CoreDeviceError 3002 / IXRemoteErrorDomain 6 on install** — the app bundle
+  is incomplete, most often because the build ran out of disk space (look for
+  `No space left on device` in the build output). Free space, rebuild, install
+  again.
+- **The app starts in the background** when it is launched while the watch's
+  display is off; it does not render until you raise your wrist or tap the
+  screen. Wake the watch before `run`, and keep it awake for benchmarks.
 - **First install per team** needs the certificate trusted on the watch:
   Settings → General → Device Management.
 - The CLI retries transient tunnel failures automatically; `-v` shows the
