@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-beta.13 (closed beta)
+
+A watchOS plugin added to an app after its first build is now registered.
+
+- **Plugins added later are found.** The tool keeps
+  `.flutter-plugins-dependencies` between builds and took its list of plugins
+  from the dependency graph that stock `flutter pub get` writes there. That
+  graph goes stale: a watchOS-only plugin added to an app that already had one
+  was missing from it, so it was never registered and its native code never
+  linked, and every call into it threw `MissingPluginException` until the file
+  was deleted by hand. Adding `firebase_messaging_watchos` to the firebase_auth
+  example showed it. Every package pub resolved is now a candidate; the
+  `watchos:` block in each plugin's pubspec still decides which are watchOS
+  plugins.
+
+- The README's WebKit limitation now says what is possible: no embeddable web
+  view, but `url_launcher_watchos` 0.1.0 shows a page full-screen in the system
+  browser on the watch.
+
 ## 0.1.0-beta.12 (closed beta)
 
 Flutter 3.47.4; native views placed by the engine the way iOS places them; an

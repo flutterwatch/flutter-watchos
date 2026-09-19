@@ -10,7 +10,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 ## Current version
 
-- flutter-watchos: `0.1.0-beta.12`
+- flutter-watchos: `0.1.0-beta.13`
 - Flutter SDK: `3.47.4` (`9584c6713b324636289d067944a46fd6b49df14b`)
 - watchOS engine artifacts: `engine-151920b726dc`
 
@@ -131,7 +131,7 @@ if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
 - **No debug (JIT) on a physical watch.** The watchOS device SDK removes the Mach APIs the Dart JIT VM needs, so device-debug cannot even be built. **Debug + hot reload run on the Simulator; a physical watch runs AOT** (`--profile` for logging/DevTools, `--release` for shipping).
 - **Profile on a physical watch.** The Simulator does not reflect real on-device performance — always validate on an actual Apple Watch before shipping.
 - **iOS plugins don't automatically work.** Packages need a watchOS implementation (see the plugin key above); pure-Dart packages are unaffected.
-- **No WebKit / `webview_flutter`.** watchOS does not ship WebKit; plugins depending on `WKWebView` will not compile.
+- **No WebKit / `webview_flutter`.** The watchOS SDK has no WebKit, so plugins depending on `WKWebView` will not compile and a page cannot be embedded in a Flutter layout. A page can still be shown full-screen: `url_launcher` with [`url_launcher_watchos`](https://pub.dev/packages/url_launcher_watchos) 0.1.0 or later opens it in the system browser on the watch.
 - **App Store submission needs an iOS container.** `create` scaffolds a single independent watch app for `build`/`run`; wrapping it in an iOS companion archive for submission is handled separately — see [Publishing](doc/publish-app.md).
 
 Text input (the system keyboard), Digital Crown scrolling and haptics, and app-lifecycle events (`WidgetsBindingObserver`) are all supported.
