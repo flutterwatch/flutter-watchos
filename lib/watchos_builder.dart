@@ -16,7 +16,9 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 
 import 'build_targets/application.dart';
+import 'watchos_auth.dart';
 import 'watchos_build_info.dart';
+import 'watchos_cache.dart';
 import 'watchos_plugins.dart';
 import 'watchos_project.dart';
 
@@ -41,6 +43,19 @@ class WatchosBuilder {
 
     final Directory outputDir = project.directory.childDirectory('build').childDirectory('watchos');
     final BuildInfo buildInfo = watchosBuildInfo.buildInfo;
+
+    // An engine the last download left out is a reason worth giving here,
+    // before anything is compiled, rather than a missing file later on.
+    if (buildInfo.mode.isPrecompiled) {
+      final String? advice = owedEngineAdvice(
+        watchosArtifactDirectory(globals.fs),
+        release: buildInfo.mode == BuildMode.release,
+        signedIn: readWatchosToken(globals.fs, globals.platform) != null,
+      );
+      if (advice != null) {
+        throwToolExit(advice);
+      }
+    }
     final String buildModeName = buildInfo.mode.cliName;
 
     // Used by AotElfBase to generate an AOT snapshot. watchOS rides the iOS

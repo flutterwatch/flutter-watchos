@@ -36,10 +36,11 @@ const List<String> kWatchosEngineZipNames = <String>[
 ];
 
 /// Marker file inside the artifact directory listing the zips a previous
-/// download was not entitled to (e.g. release engines during the closed
-/// beta). While it is non-empty, `flutter-watchos precache` re-checks those
-/// zips — so an account that gains release access picks the release engines
-/// up with a plain `precache`, no cache-nuking required.
+/// download could not have yet — the device and release engines of a machine
+/// that was not signed in, or engines the service does not give that account.
+/// While it is non-empty, `flutter-watchos precache` re-checks those zips — so
+/// signing in, or gaining access, picks the missing engines up with a plain
+/// `precache`, no cache-nuking required.
 const String kWatchosPendingDownloadsFileName = '.pending_downloads';
 
 /// Marker file recording the engine tag a *downloaded* artifact directory was
@@ -177,9 +178,91 @@ void writePendingEngineZips(Directory artifactDir, Iterable<String> zipNames) {
   marker.writeAsStringSync('${names.join('\n')}\n');
 }
 
+/// A gate response that leaves one zip out instead of ending the download.
+enum SkippedGate {
+  /// The service does not give this account that engine.
+  notForThisAccount('not available to this account, skipped'),
+
+  /// Nobody is signed in, and that engine needs an account.
+  needsAccount('needs an account, skipped');
+
+  const SkippedGate(this.note);
+
+  /// What the progress line says after the engine's name.
+  final String note;
+}
+
+/// Whether the gate response [errorCode] may be skipped, and why; null when it
+/// must end the download.
+///
+/// Which engines an account gets is the service's decision, and it changes
+/// without a CLI release, so this reads the machine-readable code and nothing
+/// else:
+///
+///   * `release_not_in_beta` — the account is fine, that engine is not part
+///     of what it has. The rest of the download is still exactly what the
+///     account can use.
+///   * `auth_required` with nobody signed in, once an engine is already in
+///     hand ([haveAnEngine]): the Simulator engine is public, so a machine
+///     that never signed in still gets a working Simulator setup. Refused on
+///     the very first zip it stays fatal — there would be nothing to install —
+///     and so does a token the service no longer accepts, because that person
+///     meant to be signed in and needs to hear that they are not.
+SkippedGate? skippableGate(
+  String? errorCode, {
+  required bool signedIn,
+  required bool haveAnEngine,
+}) {
+  return switch (errorCode) {
+    'release_not_in_beta' => SkippedGate.notForThisAccount,
+    'auth_required' when !signedIn && haveAnEngine => SkippedGate.needsAccount,
+    _ => null,
+  };
+}
+
+/// Said once after a download that left engines out for want of an account.
+const String kSignInForMoreEnginesHint =
+    'Not signed in: the Simulator engine is ready. Engines for a watch and for '
+    'release builds need a flutterwatch.dev account — run `flutter-watchos '
+    'login`, then `flutter-watchos precache`.';
+
+/// Why a precompiled build cannot go ahead, when the engine it needs is one a
+/// download left out; null when nothing it needs is known to be owed.
+///
+/// Without this the build fails further in with "libflutter_engine.dylib not
+/// found — run precache", and for a machine that is not signed in `precache`
+/// alone changes nothing. [release] picks the release engines over the profile
+/// ones; the Simulator engine is never owed, so debug builds do not ask.
+String? owedEngineAdvice(
+  Directory artifactDir, {
+  required bool release,
+  required bool signedIn,
+}) {
+  final needed = release
+      ? const <String>['watchos_release_arm64.zip', 'host_release.zip']
+      : const <String>['watchos_profile_arm64.zip', 'host_debug_unopt.zip'];
+  final List<String> owed = readPendingEngineZips(artifactDir);
+  if (!needed.any(owed.contains)) {
+    return null;
+  }
+  final mode = release ? 'release' : 'profile';
+  if (!signedIn) {
+    return 'The $mode engine is not installed: it needs a flutterwatch.dev '
+        'account, and this machine is not signed in.\n'
+        'Run `flutter-watchos login`, then `flutter-watchos precache`, and '
+        'build again.\n'
+        'The Simulator needs no account:\n'
+        '  flutter-watchos build watchos --simulator';
+  }
+  return 'The $mode engine is not installed: the last download was not given '
+      'it for this account.\n'
+      'Run `flutter-watchos precache` to check again; it says why if the '
+      'answer is still no.';
+}
+
 /// Extracts the machine-readable `error` code from an artifact-API gate
-/// response body (e.g. `beta_access_required`, `release_not_in_beta`), or
-/// null when the file is missing or not a JSON gate response.
+/// response body (e.g. `auth_required`, `release_not_in_beta`), or null when
+/// the file is missing or not a JSON gate response.
 String? apiGateErrorCode(File responseFile) {
   if (!responseFile.existsSync()) {
     return null;
@@ -487,6 +570,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     final String? token = apiMode ? readWatchosToken(globals.fs, _platform) : null;
 
     final skippedZips = <String>[];
+    var extractedAny = false;
+    var needsAccount = false;
     var installed = false;
     try {
       var index = 0;
@@ -516,17 +601,22 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           if (apiMode) {
             final String httpCode = curlResult.stdout.trim();
             if (curlResult.exitCode != 0 || httpCode != '200') {
-              // Release engines are not part of the closed beta. Skip them so
-              // `precache` completes with the debug + profile artifacts a
-              // beta account can actually use; anything else stays fatal.
+              // Some refusals leave one engine out rather than ending the
+              // download (see [skippableGate]); anything else stays fatal.
               // The skip is recorded so a later `precache` retries it once
-              // the account has release access.
-              if (apiGateErrorCode(tempZip) == 'release_not_in_beta') {
+              // the machine is signed in or the account has that engine.
+              final SkippedGate? skipped = skippableGate(
+                apiGateErrorCode(tempZip),
+                signedIn: token != null,
+                haveAnEngine: extractedAny,
+              );
+              if (skipped != null) {
                 status.cancel();
                 skippedZips.add(zipName);
+                needsAccount |= skipped == SkippedGate.needsAccount;
                 _logger.printStatus(
                   _treeLine(index, _artifactZipNames.length,
-                      '${_friendlyName(zipName)} — not in the closed beta, skipped'),
+                      '${_friendlyName(zipName)} — ${skipped.note}'),
                 );
                 continue;
               }
@@ -560,6 +650,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             status.cancel();
             throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
           }
+          extractedAny = true;
         } finally {
           status.stop();
         }
@@ -571,6 +662,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       _finalizeExtractedTree(staging, operatingSystemUtils);
       _installStagedTree(staging);
       installed = true;
+      if (needsAccount) {
+        _logger.printStatus(kSignInForMoreEnginesHint);
+      }
     } finally {
       tempDir.deleteSync(recursive: true);
       if (!installed && staging.existsSync()) {
@@ -631,6 +725,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     );
     final stillPending = <String>[];
     var extractedAny = false;
+    var needsAccount = false;
     try {
       var index = 0;
       for (final zipName in pending) {
@@ -656,12 +751,27 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           if (curlResult.exitCode != 0 || httpCode != '200') {
             status.cancel();
             stillPending.add(zipName);
-            final note = apiGateErrorCode(tempZip) == 'release_not_in_beta'
-                ? 'not in the closed beta, skipped'
-                : 'unavailable right now, will retry on the next precache';
+            // An engine is already installed here, so every refusal is
+            // survivable; only what is said about it differs.
+            final SkippedGate? skipped = skippableGate(
+              apiGateErrorCode(tempZip),
+              signedIn: token != null,
+              haveAnEngine: true,
+            );
+            needsAccount |= skipped == SkippedGate.needsAccount;
+            final String note =
+                skipped?.note ?? 'unavailable right now, will retry on the next precache';
             _logger.printStatus(
               _treeLine(index, pending.length, '${_friendlyName(zipName)} — $note'),
             );
+            // Anything else the service had to say (a sign-in it no longer
+            // accepts, an account it has switched off) is its wording to give.
+            if (skipped == null) {
+              final String? message = _serverMessage(tempZip);
+              if (message != null) {
+                _logger.printStatus('      $message');
+              }
+            }
             continue;
           }
 
@@ -687,6 +797,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     }
 
     writePendingEngineZips(location, stillPending);
+    if (needsAccount) {
+      _logger.printStatus(kSignInForMoreEnginesHint);
+    }
 
     final Directory macOsMetaDir = location.childDirectory('__MACOSX');
     if (macOsMetaDir.existsSync()) {
@@ -710,24 +823,37 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     File responseFile,
     RunResult curlResult,
   ) {
-    if (responseFile.existsSync()) {
-      try {
-        final Object? data = json.decode(responseFile.readAsStringSync());
-        if (data is Map<String, Object?>) {
-          final Object? message = data['message'];
-          if (message is String && message.isNotEmpty) {
-            return message;
-          }
-        }
-      } on FormatException {
-        // Not a JSON gate response — fall through to the generic message.
-      }
+    final String? message = _serverMessage(responseFile);
+    if (message != null) {
+      return message;
     }
     final String detail = curlResult.stderr.trim();
     return 'Failed to download $zipName from the flutterwatch.dev artifact '
         'service (HTTP $httpCode).'
         '${detail.isEmpty ? '' : '\n\n$detail'}\n\n'
         'If you are not signed in yet, run `flutter-watchos login`.';
+  }
+
+  /// The human-readable `message` of a JSON gate response, or null when
+  /// [responseFile] is not one.
+  String? _serverMessage(File responseFile) {
+    if (!responseFile.existsSync()) {
+      return null;
+    }
+    try {
+      final Object? data = json.decode(responseFile.readAsStringSync());
+      if (data is Map<String, Object?>) {
+        final Object? message = data['message'];
+        if (message is String && message.isNotEmpty) {
+          return message;
+        }
+      }
+    } on FormatException {
+      // Binary zip data or a truncated body — not a gate response.
+    } on FileSystemException {
+      // Disappeared between existsSync() and the read.
+    }
+    return null;
   }
 
   Future<void> _extractZips(

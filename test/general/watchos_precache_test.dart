@@ -76,8 +76,8 @@ void main() {
   });
 
   group('pending engine zips marker', () {
-    // Written when a download skips gated zips (release engines during the
-    // beta); read by `precache` to retry them after an account upgrade.
+    // Written when a download leaves zips out (signed out, or not given to
+    // that account); read by `precache` to retry them once that changes.
     late MemoryFileSystem fs;
     late Directory artifactDir;
 
@@ -246,7 +246,7 @@ void main() {
 
   group('apiGateErrorCode', () {
     // The download loop uses this to decide whether an artifact-API gate is
-    // fatal (auth problems) or skippable (release zips during the beta).
+    // fatal (auth problems) or skippable (see skippableGate).
     late MemoryFileSystem fs;
 
     setUp(() {
@@ -273,6 +273,72 @@ void main() {
       expect(apiGateErrorCode(list), isNull);
       final File noError = fs.file('ok.json')..writeAsStringSync('{"ok":true}');
       expect(apiGateErrorCode(noError), isNull);
+    });
+  });
+
+  group('skippableGate', () {
+    test('an engine the account does not have is always skippable', () {
+      for (final signedIn in <bool>[true, false]) {
+        for (final haveAnEngine in <bool>[true, false]) {
+          expect(
+            skippableGate('release_not_in_beta', signedIn: signedIn, haveAnEngine: haveAnEngine),
+            SkippedGate.notForThisAccount,
+          );
+        }
+      }
+    });
+
+    test('a missing account is skippable only signed out, with an engine in hand', () {
+      expect(
+        skippableGate('auth_required', signedIn: false, haveAnEngine: true),
+        SkippedGate.needsAccount,
+      );
+      // Nothing to install: say so.
+      expect(skippableGate('auth_required', signedIn: false, haveAnEngine: false), isNull);
+      // A token the service no longer accepts: that person meant to be signed in.
+      expect(skippableGate('auth_required', signedIn: true, haveAnEngine: true), isNull);
+    });
+
+    test('every other refusal, and no refusal at all, is fatal', () {
+      for (final code in <String?>[
+        'access_inactive', 'beta_access_required', 'license_required', 'not_found', null,
+      ]) {
+        expect(skippableGate(code, signedIn: false, haveAnEngine: true), isNull, reason: '$code');
+      }
+    });
+  });
+
+  group('owedEngineAdvice', () {
+    late MemoryFileSystem fs;
+    late Directory artifactDir;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      artifactDir = fs.directory('/cli/engine_artifacts')..createSync(recursive: true);
+    });
+
+    test('is silent when nothing the build needs is owed', () {
+      expect(owedEngineAdvice(artifactDir, release: true, signedIn: false), isNull);
+      // Release engines owed; a profile build does not care.
+      writePendingEngineZips(artifactDir, const <String>['watchos_release_arm64.zip', 'host_release.zip']);
+      expect(owedEngineAdvice(artifactDir, release: false, signedIn: true), isNull);
+    });
+
+    test('signed out, it sends the developer to login, and names the Simulator', () {
+      writePendingEngineZips(artifactDir, kWatchosEngineZipNames.skip(1));
+      for (final release in <bool>[true, false]) {
+        final String advice = owedEngineAdvice(artifactDir, release: release, signedIn: false)!;
+        expect(advice, contains(release ? 'release engine' : 'profile engine'));
+        expect(advice, contains('flutter-watchos login'));
+        expect(advice, contains('--simulator'));
+      }
+    });
+
+    test('signed in, it does not send a signed-in developer to login', () {
+      writePendingEngineZips(artifactDir, const <String>['host_release.zip']);
+      final String advice = owedEngineAdvice(artifactDir, release: true, signedIn: true)!;
+      expect(advice, contains('flutter-watchos precache'));
+      expect(advice, isNot(contains('flutter-watchos login')));
     });
   });
 }

@@ -99,6 +99,21 @@ void main() {
     stdout: '500',
   );
 
+  /// The service refusing [zipName] with a JSON gate response.
+  FakeCommand curlGated(String zipName, int status, String error, String message) => FakeCommand(
+    command: curlCommand(zipName),
+    stdout: '$status',
+    onRun: (List<String> command) {
+      fs.file(command[7])
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{"error":"$error","message":"$message"}');
+    },
+  );
+
+  const needsAccountMessage = 'This engine needs a flutterwatch.dev account.';
+  FakeCommand curlNeedsAccount(String zipName) =>
+      curlGated(zipName, 401, 'auth_required', needsAccountMessage);
+
   List<Pattern> unzipCommand(String zipName) => <Pattern>[
     'unzip',
     '-q',
@@ -226,6 +241,124 @@ void main() {
         isFalse,
       );
       expect(readEngineVersionStamp(fs.directory(_location)), _tag);
+    },
+    overrides: overrides,
+  );
+
+  // The Simulator engine is public; every other engine needs an account. A
+  // machine that never signed in must end up with a working Simulator setup,
+  // not with an error and the one engine it was allowed thrown away.
+  testUsingContext(
+    'signed out, the Simulator engine is installed and the rest is left owed',
+    () async {
+      final String simulator = kWatchosEngineZipNames.first;
+      processManager.addCommands(<FakeCommand>[
+        curlOk(simulator),
+        unzipOk(simulator),
+        for (final String zip in kWatchosEngineZipNames.skip(1)) curlNeedsAccount(zip),
+      ]);
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      final Directory location = fs.directory(_location);
+      expect(
+        location
+            .childDirectory('watchos_debug_sim_arm64')
+            .childFile('libflutter_engine.dylib')
+            .existsSync(),
+        isTrue,
+      );
+      expect(readEngineVersionStamp(location), _tag);
+      expect(readPendingEngineZips(location), kWatchosEngineZipNames.skip(1).toList());
+      expect(logger.statusText, contains('needs an account, skipped'));
+      expect(logger.statusText, contains('flutter-watchos login'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  // A service that wants an account for everything refuses the first zip.
+  // There is nothing to install, so that is an error, in the service's words.
+  testUsingContext(
+    'signed out and refused the very first engine, the download fails',
+    () async {
+      seedPreviousEngine();
+      processManager.addCommand(curlNeedsAccount(kWatchosEngineZipNames.first));
+
+      await expectLater(
+        () => makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils()),
+        throwsToolExit(message: needsAccountMessage),
+      );
+
+      expect(readEngineVersionStamp(fs.directory(_location)), 'engine-previous00000');
+      expect(fs.directory(_staging).existsSync(), isFalse);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'an engine the account does not have is left owed, without a sign-in hint',
+    () async {
+      const release = 'watchos_release_arm64.zip';
+      const hostRelease = 'host_release.zip';
+      for (final String zip in kWatchosEngineZipNames) {
+        if (zip == release || zip == hostRelease) {
+          processManager.addCommand(
+            curlGated(zip, 403, 'release_not_in_beta', 'Not part of this account.'),
+          );
+        } else {
+          processManager.addCommands(<FakeCommand>[curlOk(zip), unzipOk(zip)]);
+        }
+      }
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      final Directory location = fs.directory(_location);
+      expect(readPendingEngineZips(location), <String>[release, hostRelease]);
+      expect(logger.statusText, contains('not available to this account, skipped'));
+      expect(logger.statusText, isNot(contains('flutter-watchos login')));
+      // What the account has is the service's to describe, whatever it is
+      // called this month; the tool does not name a programme.
+      expect(logger.statusText.toLowerCase(), isNot(contains('beta')));
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'signed out, a later precache says again what the owed engines need',
+    () async {
+      final Directory location = fs.directory(_location);
+      location.childDirectory('watchos_debug_sim_arm64').createSync(recursive: true);
+      writeEngineVersionStamp(location, _tag);
+      const owed = <String>['watchos_profile_arm64.zip', 'host_debug_unopt.zip'];
+      writePendingEngineZips(location, owed);
+      processManager.addCommands(owed.map(curlNeedsAccount).toList());
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      expect(readPendingEngineZips(location), owed);
+      expect(logger.statusText, contains('needs an account, skipped'));
+      expect(logger.statusText, contains('flutter-watchos login'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'a later precache passes on what the service says about any other refusal',
+    () async {
+      final Directory location = fs.directory(_location);
+      location.childDirectory('watchos_debug_sim_arm64').createSync(recursive: true);
+      writeEngineVersionStamp(location, _tag);
+      writePendingEngineZips(location, const <String>['watchos_profile_arm64.zip']);
+      processManager.addCommand(curlGated(
+        'watchos_profile_arm64.zip', 403, 'access_inactive', 'Access for this account is inactive.',
+      ));
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      expect(readPendingEngineZips(location), const <String>['watchos_profile_arm64.zip']);
+      expect(logger.statusText, contains('Access for this account is inactive.'));
     },
     overrides: overrides,
   );
