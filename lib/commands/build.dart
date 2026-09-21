@@ -6,10 +6,12 @@ import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/commands/build.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 import '../watchos_build_info.dart';
+import '../watchos_build_registry.dart';
 import '../watchos_builder.dart';
 import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
@@ -46,6 +48,13 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
     argParser.addFlag(
       'simulator',
       help: 'Build for the watchOS Simulator instead of a physical device.',
+    );
+    argParser.addFlag(
+      'register-build',
+      defaultsTo: true,
+      help: 'After a successful release build, register it with your flutterwatch.dev '
+          'account (bundle id, app version, engine id, build mode). '
+          'See `flutter-watchos build-registry`.',
     );
   }
 
@@ -124,6 +133,30 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
       watchosBuildInfo: watchosBuildInfo,
       targetFile: targetFile,
     );
+
+    // A release build is the one that gets published, so it is the one worth
+    // recording. After the build, never before: only an app that exists is
+    // registered, and nothing here can fail or hold up the build itself.
+    if (watchosBuildInfo.buildInfo.mode == BuildMode.release && boolArg('register-build')) {
+      final ReleaseBuild? build = describeBuiltApp(
+        appDir: project.directory
+            .childDirectory('build')
+            .childDirectory('watchos')
+            .childDirectory(watchosBuildInfo.productsDirName)
+            .childDirectory('Runner.app'),
+        engineVersion: pinnedWatchosEngineVersion(),
+        readPlistValue: (String path, String key) =>
+            globals.plistParser.getValueFromFile<String>(path, key),
+      );
+      if (build != null) {
+        await registerReleaseBuild(
+          fileSystem: globals.fs,
+          platform: globals.platform,
+          logger: globals.logger,
+          build: build,
+        );
+      }
+    }
     return FlutterCommandResult.success();
   }
 }

@@ -152,6 +152,23 @@ where possible; watchOS-specific behaviour is called out per command.
   For how to structure the shared Dart and how the two apps talk to each
   other, see [companion-apps.md](companion-apps.md).
 
+- ### `build-registry`
+
+  Show or change whether release builds are registered with your
+  flutterwatch.dev account (what fills "My apps" in the console).
+
+  ```sh
+  flutter-watchos build-registry            # show the current state, and what is sent
+  flutter-watchos build-registry --disable  # never register builds from this machine
+  flutter-watchos build-registry --enable
+  ```
+
+  On by default. A registered build sends four fields — bundle id, app
+  version, engine id, build mode — and prints a line saying so. See
+  [the build registry](build-registry.md). `FLUTTER_WATCHOS_BUILD_REGISTRY=0`
+  does the same for a CI job, and `build watchos --no-register-build` for a
+  single build.
+
 - ### `login` / `logout`
 
   Connect this machine to your flutterwatch.dev account (required to

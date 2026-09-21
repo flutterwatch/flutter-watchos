@@ -38,14 +38,22 @@ host AOT SDKs. Artifacts are cached under the CLI checkout's
 | `WATCHOS_ARTIFACTS_API` | Override the artifact service base URL (mainly for testing; the production URL is built in). |
 | `WATCHOS_ENGINE_ARTIFACTS` | Point at a local, pre-extracted engine directory — skips downloads entirely. For engine developers. |
 | `WATCHOS_ENGINE_BASE_URL` | Legacy direct-download base URL override. Ignored when the artifact service is in use. |
+| `FLUTTER_WATCHOS_BUILD_REGISTRY` | Set to `0` to stop release builds being registered with your account — see [the build registry](build-registry.md). |
 
 ## Privacy
 
 The service records which engine versions your account downloads — that's
 what ties access to accounts and tells us which engine versions are in use.
-The CLI sends no telemetry of its own, and the engine contains **no
-telemetry**: apps you build never phone home, and nothing is collected from
-your users.
+
+A successful **release** build also registers itself with your account: the
+bundle id, app version, engine id and build mode — four fields, sent once, at
+build time, from your machine. It is on by default, it says so when it happens,
+and it is one command away from off. [The build registry](build-registry.md)
+lists exactly what is and is not sent.
+
+That is all the CLI sends. There is no usage analytics, and the engine
+contains **no telemetry**: apps you build never phone home, and nothing is
+collected from your users.
 
 Full details — what an account stores, what is deliberately not collected,
 and which third parties are involved — are at

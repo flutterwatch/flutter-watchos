@@ -47,6 +47,7 @@ import 'package:path/path.dart';
 import 'build_targets/watchos_hooks.dart' show WatchosHookRunner;
 import 'commands/attach.dart';
 import 'commands/build.dart';
+import 'commands/build_registry.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
@@ -174,6 +175,7 @@ Future<void> main(List<String> args) async {
         outputPreferences: globals.outputPreferences,
       ),
       WatchosHostCommand(),
+      WatchosBuildRegistryCommand(),
       WatchosLoginCommand(),
       WatchosLogoutCommand(),
       WatchosPluginCommand(verboseHelp: verboseHelp),

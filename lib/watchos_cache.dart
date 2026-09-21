@@ -303,6 +303,18 @@ class WatchosFlutterCache extends FlutterCache {
   }
 }
 
+/// The engine id this CLI is pinned to (`bin/internal/engine.version`, e.g.
+/// `engine-ddc777be435e`), or null when the file is missing.
+String? pinnedWatchosEngineVersion() {
+  final File versionFile = globals.fs
+      .directory(Cache.flutterRoot)
+      .parent
+      .childDirectory('bin')
+      .childDirectory('internal')
+      .childFile('engine.version');
+  return versionFile.existsSync() ? versionFile.readAsStringSync().trim() : null;
+}
+
 /// Downloads and caches watchOS engine artifacts.
 ///
 /// Artifact sources (in priority order):
@@ -337,15 +349,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   Directory get location => watchosArtifactDirectory(globals.fs);
 
   @override
-  String? get version {
-    final File versionFile = globals.fs
-        .directory(Cache.flutterRoot)
-        .parent
-        .childDirectory('bin')
-        .childDirectory('internal')
-        .childFile('engine.version');
-    return versionFile.existsSync() ? versionFile.readAsStringSync().trim() : null;
-  }
+  String? get version => pinnedWatchosEngineVersion();
 
   /// The engine id the artifacts are stored under, e.g.
   /// `engine-ddc777be435e`, from `bin/internal/engine.version`.
