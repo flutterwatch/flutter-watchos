@@ -14,17 +14,19 @@ import '../watchos_cache.dart';
 
 /// Connects the CLI to a flutterwatch.dev account via an OAuth-style
 /// device-code flow: prints a URL + short code, the user approves in a
-/// browser, and the CLI polls until it receives an API token. The token is
+/// browser (signing in with GitHub there, which is also what creates the
+/// account), and the CLI polls until it receives an API token. The token is
 /// stored in `~/.flutter-watchos/credentials.json` and sent as a Bearer
-/// header on engine-artifact downloads.
+/// header on engine-artifact downloads. The Simulator engine downloads
+/// without it; the device and release engines need it.
 class WatchosLoginCommand extends FlutterCommand {
   @override
   final String name = 'login';
 
   @override
   final String description =
-      'Connect this machine to your flutterwatch.dev account '
-      '(required to download engine artifacts).';
+      'Connect this machine to your flutterwatch.dev account (needed for a '
+      'physical watch and release builds; the Simulator needs none).';
 
   @override
   String get category => FlutterCommandCategory.tools;
