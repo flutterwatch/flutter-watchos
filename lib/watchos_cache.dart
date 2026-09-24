@@ -210,7 +210,11 @@ enum SkippedGate {
   notForThisAccount('not available to this account, skipped'),
 
   /// Nobody is signed in, and that engine needs an account.
-  needsAccount('needs an account, skipped');
+  needsAccount('needs an account, skipped'),
+
+  /// The service refused the engine to the account signed in here (it has
+  /// switched the account off). Its own words follow the download, once.
+  refused('refused, see below');
 
   const SkippedGate(this.note);
 
@@ -234,6 +238,10 @@ enum SkippedGate {
 ///     the very first zip it stays fatal — there would be nothing to install —
 ///     and so does a token the service no longer accepts, because that person
 ///     meant to be signed in and needs to hear that they are not.
+///   * `access_inactive`, once an engine is in hand: the service has switched
+///     the account off, but it still serves the public Simulator engine to it,
+///     so the download keeps that engine rather than throwing it away. What the
+///     service says about the account is shown once, after the download.
 SkippedGate? skippableGate(
   String? errorCode, {
   required bool signedIn,
@@ -242,6 +250,7 @@ SkippedGate? skippableGate(
   return switch (errorCode) {
     'release_not_in_beta' => SkippedGate.notForThisAccount,
     'auth_required' when !signedIn && haveAnEngine => SkippedGate.needsAccount,
+    'access_inactive' when haveAnEngine => SkippedGate.refused,
     _ => null,
   };
 }
@@ -251,6 +260,16 @@ const String kSignInForMoreEnginesHint =
     'Not signed in: the Simulator engine is ready. Engines for a watch and for '
     'release builds need a flutterwatch.dev account — run `flutter-watchos '
     'login`, then `flutter-watchos precache`.';
+
+/// Said after the service's own message when it refused the token this
+/// machine sent: the person meant to be signed in, and is not any more.
+const String kSignInNotAcceptedNote =
+    'The sign-in stored on this machine was not accepted; run '
+    '`flutter-watchos login` again.';
+
+/// Said after the service's message when it switched the account off: the
+/// Simulator engine stays usable.
+const String kSimulatorStillReadyNote = 'The Simulator engine is ready; it needs no account.';
 
 /// Why a precompiled build cannot go ahead, when the engine it needs is one a
 /// download left out; null when nothing it needs is known to be owed.
@@ -626,6 +645,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     final String? token = apiMode ? readWatchosToken(globals.fs, _platform) : null;
 
     final skippedZips = <String>[];
+    final refusals = _Refusals();
     var extractedAny = false;
     var needsAccount = false;
     var installed = false;
@@ -663,8 +683,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
               // download (see [skippableGate]); anything else stays fatal.
               // The skip is recorded so a later `precache` retries it once
               // the machine is signed in or the account has that engine.
+              final String? errorCode = apiGateErrorCode(tempZip);
               final SkippedGate? skipped = skippableGate(
-                apiGateErrorCode(tempZip),
+                errorCode,
                 signedIn: token != null,
                 haveAnEngine: extractedAny,
               );
@@ -672,6 +693,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
                 status.cancel();
                 skippedZips.add(zipName);
                 needsAccount |= skipped == SkippedGate.needsAccount;
+                if (skipped == SkippedGate.refused) {
+                  refusals.add(errorCode, _serverMessage(tempZip), signedIn: token != null);
+                }
                 _logger.printStatus(
                   _treeLine(index, _artifactZipNames.length,
                       '${_friendlyName(zipName)} — ${skipped.note}'),
@@ -679,7 +703,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
                 continue;
               }
               status.cancel();
-              throwToolExit(_apiGateMessage(zipName, httpCode, tempZip, curlResult));
+              throwToolExit(
+                _apiGateMessage(zipName, httpCode, tempZip, curlResult, signedIn: token != null),
+              );
             }
           } else if (curlResult.exitCode != 0) {
             status.cancel();
@@ -723,6 +749,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       if (needsAccount) {
         _logger.printStatus(kSignInForMoreEnginesHint);
       }
+      refusals.report(_logger, simulatorReady: _hasSimulatorEngine);
     } finally {
       tempDir.deleteSync(recursive: true);
       if (!installed && staging.existsSync()) {
@@ -730,6 +757,14 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       }
     }
   }
+
+  /// Whether the public Simulator engine is installed at [location].
+  bool get _hasSimulatorEngine => location
+      .childDirectory(kWatchosSimulatorEngineZipName.substring(
+        0,
+        kWatchosSimulatorEngineZipName.length - '.zip'.length,
+      ))
+      .existsSync();
 
   /// A fresh, empty staging directory beside [location] — on the same file
   /// system, so moving it into place is a rename rather than a copy.
@@ -782,6 +817,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       'flutter_watchos_artifacts.',
     );
     final stillPending = <String>[];
+    final refusals = _Refusals();
     var extractedAny = false;
     var needsAccount = false;
     try {
@@ -812,24 +848,27 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             stillPending.add(zipName);
             // An engine is already installed here, so every refusal is
             // survivable; only what is said about it differs.
+            final String? errorCode = apiGateErrorCode(tempZip);
             final SkippedGate? skipped = skippableGate(
-              apiGateErrorCode(tempZip),
+              errorCode,
               signedIn: token != null,
               haveAnEngine: true,
             );
             needsAccount |= skipped == SkippedGate.needsAccount;
-            final String note =
-                skipped?.note ?? 'unavailable right now, will retry on the next precache';
+            // A refusal the service explained does not go away by retrying;
+            // only a failure with no answer at all (the network, a 5xx) is
+            // worth calling temporary.
+            final String note = skipped?.note ??
+                (errorCode != null
+                    ? SkippedGate.refused.note
+                    : 'unavailable right now, will retry on the next precache');
             _logger.printStatus(
               _treeLine(index, pending.length, '${_friendlyName(zipName)} — $note'),
             );
             // Anything else the service had to say (a sign-in it no longer
             // accepts, an account it has switched off) is its wording to give.
-            if (skipped == null) {
-              final String? message = _serverMessage(tempZip);
-              if (message != null) {
-                _logger.printStatus('      $message');
-              }
+            if (skipped == null || skipped == SkippedGate.refused) {
+              refusals.add(errorCode, _serverMessage(tempZip), signedIn: token != null);
             }
             continue;
           }
@@ -859,6 +898,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     if (needsAccount) {
       _logger.printStatus(kSignInForMoreEnginesHint);
     }
+    refusals.report(_logger, simulatorReady: _hasSimulatorEngine);
 
     final Directory macOsMetaDir = location.childDirectory('__MACOSX');
     if (macOsMetaDir.existsSync()) {
@@ -880,10 +920,16 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     String zipName,
     String httpCode,
     File responseFile,
-    RunResult curlResult,
-  ) {
+    RunResult curlResult, {
+    required bool signedIn,
+  }) {
     final String? message = _serverMessage(responseFile);
     if (message != null) {
+      // The service writes its `auth_required` text for a machine that never
+      // signed in; this one did, and needs to hear that it no longer counts.
+      if (signedIn && apiGateErrorCode(responseFile) == 'auth_required') {
+        return '$message\n$kSignInNotAcceptedNote';
+      }
       return message;
     }
     final String detail = curlResult.stderr.trim();
@@ -987,6 +1033,33 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           file.basename == 'frontend_server_aot.dart.snapshot') {
         operatingSystemUtils.chmod(file, 'a+r,a+x');
       }
+    }
+  }
+}
+
+/// What the service said while refusing engines during one download — told
+/// once, when the download is over, rather than under every engine it
+/// refused.
+class _Refusals {
+  final _messages = <String>{};
+  var _signInRejected = false;
+  var _accountSwitchedOff = false;
+
+  void add(String? errorCode, String? message, {required bool signedIn}) {
+    if (message != null) {
+      _messages.add(message);
+    }
+    _signInRejected |= signedIn && errorCode == 'auth_required';
+    _accountSwitchedOff |= errorCode == 'access_inactive';
+  }
+
+  void report(Logger logger, {required bool simulatorReady}) {
+    _messages.forEach(logger.printStatus);
+    if (_signInRejected) {
+      logger.printStatus(kSignInNotAcceptedNote);
+    }
+    if (_accountSwitchedOff && simulatorReady) {
+      logger.printStatus(kSimulatorStillReadyNote);
     }
   }
 }

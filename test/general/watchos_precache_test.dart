@@ -299,11 +299,25 @@ void main() {
       expect(skippableGate('auth_required', signedIn: true, haveAnEngine: true), isNull);
     });
 
+    // The service still serves the public Simulator engine to an account it
+    // has switched off; throwing that engine away helped nobody.
+    test('an account switched off keeps the engine already in hand', () {
+      for (final signedIn in <bool>[true, false]) {
+        expect(
+          skippableGate('access_inactive', signedIn: signedIn, haveAnEngine: true),
+          SkippedGate.refused,
+        );
+        // Nothing to install: say so.
+        expect(skippableGate('access_inactive', signedIn: signedIn, haveAnEngine: false), isNull);
+      }
+    });
+
     test('every other refusal, and no refusal at all, is fatal', () {
       for (final code in <String?>[
-        'access_inactive', 'beta_access_required', 'license_required', 'not_found', null,
+        'beta_access_required', 'license_required', 'not_found', null,
       ]) {
         expect(skippableGate(code, signedIn: false, haveAnEngine: true), isNull, reason: '$code');
+        expect(skippableGate(code, signedIn: true, haveAnEngine: true), isNull, reason: '$code');
       }
     });
   });

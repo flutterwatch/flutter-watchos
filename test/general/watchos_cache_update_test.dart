@@ -108,8 +108,14 @@ void main() {
   );
 
   /// The service refusing [zipName] with a JSON gate response.
-  FakeCommand curlGated(String zipName, int status, String error, String message) => FakeCommand(
-    command: curlCommand(zipName),
+  FakeCommand curlGated(
+    String zipName,
+    int status,
+    String error,
+    String message, {
+    bool signedIn = false,
+  }) => FakeCommand(
+    command: curlCommand(zipName, signedIn: signedIn),
     stdout: '$status',
     onRun: (List<String> command) {
       fs.file(outputPath(command))
@@ -119,6 +125,7 @@ void main() {
   );
 
   const needsAccountMessage = 'This engine needs a flutterwatch.dev account.';
+  const inactiveMessage = 'Access for this account is inactive.';
   FakeCommand curlNeedsAccount(String zipName) =>
       curlGated(zipName, 401, 'auth_required', needsAccountMessage);
 
@@ -380,20 +387,127 @@ void main() {
   );
 
   testUsingContext(
-    'a later precache passes on what the service says about any other refusal',
+    'a later precache passes on what the service says about any other refusal, once',
     () async {
+      signIn();
       final Directory location = fs.directory(_location);
       location.childDirectory('watchos_debug_sim_arm64').createSync(recursive: true);
       writeEngineVersionStamp(location, _tag);
-      writePendingEngineZips(location, const <String>['watchos_profile_arm64.zip']);
-      processManager.addCommand(curlGated(
-        'watchos_profile_arm64.zip', 403, 'access_inactive', 'Access for this account is inactive.',
-      ));
+      const owed = <String>['watchos_profile_arm64.zip', 'host_debug_unopt.zip'];
+      writePendingEngineZips(location, owed);
+      processManager.addCommands(<FakeCommand>[
+        for (final String zip in owed)
+          curlGated(zip, 403, 'access_inactive', inactiveMessage, signedIn: true),
+      ]);
 
       await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
 
-      expect(readPendingEngineZips(location), const <String>['watchos_profile_arm64.zip']);
-      expect(logger.statusText, contains('Access for this account is inactive.'));
+      expect(readPendingEngineZips(location), owed);
+      expect(inactiveMessage.allMatches(logger.statusText), hasLength(1));
+      expect(logger.statusText, contains('refused, see below'));
+      // Not a network hiccup: retrying on its own would not change it.
+      expect(logger.statusText, isNot(contains('unavailable right now')));
+      expect(logger.statusText, contains(kSimulatorStillReadyNote));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'a later precache with a sign-in the service no longer accepts says so',
+    () async {
+      signIn();
+      final Directory location = fs.directory(_location);
+      location.childDirectory('watchos_debug_sim_arm64').createSync(recursive: true);
+      writeEngineVersionStamp(location, _tag);
+      const owed = <String>['watchos_release_arm64.zip', 'host_release.zip'];
+      writePendingEngineZips(location, owed);
+      processManager.addCommands(<FakeCommand>[
+        for (final String zip in owed)
+          curlGated(zip, 401, 'auth_required', needsAccountMessage, signedIn: true),
+      ]);
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      expect(readPendingEngineZips(location), owed);
+      expect(needsAccountMessage.allMatches(logger.statusText), hasLength(1));
+      expect(logger.statusText, contains(kSignInNotAcceptedNote));
+    },
+    overrides: overrides,
+  );
+
+  // The service serves the public Simulator engine even to an account it has
+  // switched off. The download used to end at the first engine it refused and
+  // throw away the Simulator engine that had already arrived, so that person
+  // could not even build for the Simulator until they signed out.
+  testUsingContext(
+    'signed in to an account that is switched off, the Simulator engine is kept',
+    () async {
+      signIn();
+      final String simulator = kWatchosEngineZipNames.first;
+      processManager.addCommands(<FakeCommand>[
+        curlOk(simulator, signedIn: true),
+        unzipOk(simulator),
+        for (final String zip in kWatchosEngineZipNames.skip(1))
+          curlGated(zip, 403, 'access_inactive', inactiveMessage, signedIn: true),
+      ]);
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      final Directory location = fs.directory(_location);
+      expect(
+        location.childDirectory('watchos_debug_sim_arm64').childFile('libflutter_engine.dylib').existsSync(),
+        isTrue,
+      );
+      expect(readEngineVersionStamp(location), _tag);
+      expect(readPendingEngineZips(location), kWatchosEngineZipNames.skip(1).toList());
+      expect(inactiveMessage.allMatches(logger.statusText), hasLength(1));
+      expect(logger.statusText, contains(kSimulatorStillReadyNote));
+      // That person is signed in; sending them to `login` would be wrong.
+      expect(logger.statusText, isNot(contains(kSignInForMoreEnginesHint)));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'signed in to an account that is switched off, a refused first engine fails',
+    () async {
+      signIn();
+      seedPreviousEngine();
+      processManager.addCommand(curlGated(
+        kWatchosEngineZipNames.first, 403, 'access_inactive', inactiveMessage, signedIn: true,
+      ));
+
+      await expectLater(
+        () => makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils()),
+        throwsToolExit(message: inactiveMessage),
+      );
+      expect(readEngineVersionStamp(fs.directory(_location)), 'engine-previous00000');
+    },
+    overrides: overrides,
+  );
+
+  // Still fatal, by design: this person meant to be signed in. But the
+  // service's text is written for a machine that never signed in, so the
+  // tool says what actually happened.
+  testUsingContext(
+    'a sign-in the service no longer accepts ends the download, and says so',
+    () async {
+      signIn();
+      seedPreviousEngine();
+      final String simulator = kWatchosEngineZipNames.first;
+      processManager.addCommands(<FakeCommand>[
+        curlOk(simulator, signedIn: true),
+        unzipOk(simulator),
+        curlGated(kWatchosEngineZipNames[1], 401, 'auth_required', needsAccountMessage, signedIn: true),
+      ]);
+
+      await expectLater(
+        () => makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils()),
+        throwsToolExit(message: 'was not accepted'),
+      );
+      expect(readEngineVersionStamp(fs.directory(_location)), 'engine-previous00000');
     },
     overrides: overrides,
   );
