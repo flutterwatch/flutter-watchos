@@ -116,15 +116,22 @@ class WatchosLogoutCommand extends FlutterCommand {
   final String name = 'logout';
 
   @override
-  final String description = 'Remove the stored flutterwatch.dev credentials.';
+  final String description =
+      "Revoke this machine's flutterwatch.dev sign-in and remove the stored credentials.";
 
   @override
   String get category => FlutterCommandCategory.tools;
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Revoke first, while the token is still at hand. Deleting only the file
+    // left the token valid on the service, and every login added one more.
+    final String? token = readWatchosToken(globals.fs, globals.platform);
+    final TokenRevocation? revocation = token == null
+        ? null
+        : await revokeWatchosToken(platform: globals.platform, token: token, logger: globals.logger);
     final bool removed = deleteWatchosCredentials(globals.fs, globals.platform);
-    globals.printStatus(removed ? 'Logged out.' : 'Not logged in.');
+    globals.printStatus(logoutMessage(removed: removed, revocation: revocation));
     return FlutterCommandResult.success();
   }
 }

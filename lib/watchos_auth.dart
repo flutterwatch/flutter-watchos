@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io' as io;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 
@@ -126,4 +128,91 @@ bool deleteWatchosCredentials(FileSystem fileSystem, Platform platform) {
   }
   file.deleteSync();
   return true;
+}
+
+/// What became of the token `logout` asked the service to revoke.
+enum TokenRevocation {
+  /// The service revoked it.
+  revoked,
+
+  /// The service does not offer revocation (an older service answers 404), or
+  /// already refuses the token. Nothing to tell anyone.
+  notNeeded,
+
+  /// No answer, or an error: the token may still be valid.
+  unreachable,
+}
+
+/// Sends the revocation request and returns the HTTP status. Separate so
+/// tests can see exactly what is sent.
+typedef TokenRevokeRequest = Future<int> Function(Uri uri, String token);
+
+const Duration _revokeTimeout = Duration(seconds: 5);
+
+/// Asks the service to revoke [token] (`DELETE /v1/auth/token`, with the token
+/// as the bearer). Best-effort: never throws, never waits longer than five
+/// seconds, and a failure never stops `logout` from removing the local file.
+Future<TokenRevocation> revokeWatchosToken({
+  required Platform platform,
+  required String token,
+  Logger? logger,
+  TokenRevokeRequest? request,
+  io.HttpClient Function()? createHttpClient,
+}) async {
+  final int status;
+  try {
+    final Uri uri = Uri.parse('${watchosApiBase(platform)}/v1/auth/token');
+    if (request != null) {
+      status = await request(uri, token).timeout(_revokeTimeout);
+    } else {
+      final io.HttpClient client = (createHttpClient ?? io.HttpClient.new)()
+        ..connectionTimeout = _revokeTimeout;
+      try {
+        status = await _deleteToken(client, uri, token).timeout(_revokeTimeout);
+      } finally {
+        client.close(force: true);
+      }
+    }
+  } on Object catch (error) {
+    // Offline, a timeout, a bad override URL: the local file goes anyway.
+    logger?.printTrace('Could not revoke the token on flutterwatch.dev: $error');
+    return TokenRevocation.unreachable;
+  }
+  logger?.printTrace('flutterwatch.dev answered the token revocation with HTTP $status.');
+  if (status >= 200 && status < 300) {
+    return TokenRevocation.revoked;
+  }
+  // 404: a service from before revocation existed. 401/403: it no longer
+  // accepts this token anyway.
+  if (status == 404 || status == 401 || status == 403) {
+    return TokenRevocation.notNeeded;
+  }
+  return TokenRevocation.unreachable;
+}
+
+Future<int> _deleteToken(io.HttpClient client, Uri uri, String token) async {
+  final io.HttpClientRequest request = await client.deleteUrl(uri);
+  request.headers.set(io.HttpHeaders.authorizationHeader, 'Bearer $token');
+  final io.HttpClientResponse response = await request.close();
+  await response.drain<void>();
+  return response.statusCode;
+}
+
+/// What `logout` says, given whether a credentials file was [removed] and
+/// what became of its token ([revocation] is null when there was no token to
+/// revoke).
+String logoutMessage({required bool removed, TokenRevocation? revocation}) {
+  if (!removed) {
+    return 'Not logged in.';
+  }
+  return switch (revocation) {
+    TokenRevocation.revoked =>
+      'Logged out. flutterwatch.dev revoked the sign-in this machine used, and '
+          'it is removed from this machine.',
+    TokenRevocation.unreachable =>
+      'Logged out. The sign-in is removed from this machine, but flutterwatch.dev '
+          'could not be reached to revoke it: it stays valid until you revoke it '
+          'in your console at $kDefaultWatchosApiBase/.',
+    TokenRevocation.notNeeded || null => 'Logged out. The sign-in is removed from this machine.',
+  };
 }

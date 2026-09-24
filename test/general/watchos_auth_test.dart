@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:io' show HttpRequest, HttpServer, InternetAddress, SocketException;
+
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/platform.dart';
@@ -104,6 +106,102 @@ void main() {
       final File file = watchosCredentialsFile(fs, platform);
       expect(readWatchosToken(fs, platform), 'fw_new');
       expect(file.readAsStringSync(), isNot(contains('fw_old')));
+    });
+  });
+
+  // `logout` used to delete only the local file: the token stayed valid on the
+  // service, and every login added one more.
+  group('revokeWatchosToken', () {
+    testWithoutContext('sends a DELETE for the token, with it as the bearer', () async {
+      final sent = <(Uri, String)>[];
+      final TokenRevocation result = await revokeWatchosToken(
+        platform: _withApi(null),
+        token: 'fw_secret',
+        request: (Uri uri, String token) async {
+          sent.add((uri, token));
+          return 204;
+        },
+      );
+      expect(result, TokenRevocation.revoked);
+      expect(sent, <(Uri, String)>[(Uri.parse('$kDefaultWatchosApiBase/v1/auth/token'), 'fw_secret')]);
+    });
+
+    testWithoutContext('over the wire: a DELETE with the token as the bearer', () async {
+      final HttpServer server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final seen = <String>[];
+      server.listen((HttpRequest request) {
+        seen.add('${request.method} ${request.uri.path} ${request.headers.value('authorization')}');
+        request.response
+          ..statusCode = 204
+          ..close();
+      });
+
+      final TokenRevocation result = await revokeWatchosToken(
+        platform: _withApi('http://127.0.0.1:${server.port}'),
+        token: 'fw_secret',
+      );
+
+      expect(result, TokenRevocation.revoked);
+      expect(seen, <String>['DELETE /v1/auth/token Bearer fw_secret']);
+    });
+
+    testWithoutContext('an older service without the endpoint is not a problem', () async {
+      final TokenRevocation result = await revokeWatchosToken(
+        platform: _withApi(null),
+        token: 'fw_secret',
+        request: (Uri uri, String token) async => 404,
+      );
+      expect(result, TokenRevocation.notNeeded);
+      expect(logoutMessage(removed: true, revocation: result), 'Logged out. The sign-in is removed from this machine.');
+    });
+
+    testWithoutContext('a token the service already refuses needs nothing more', () async {
+      expect(
+        await revokeWatchosToken(
+          platform: _withApi(null),
+          token: 'fw_secret',
+          request: (Uri uri, String token) async => 401,
+        ),
+        TokenRevocation.notNeeded,
+      );
+    });
+
+    testWithoutContext('no answer never throws, and says the token may still be valid', () async {
+      final TokenRevocation result = await revokeWatchosToken(
+        platform: _withApi(null),
+        token: 'fw_secret',
+        request: (Uri uri, String token) async => throw const SocketException('offline'),
+      );
+      expect(result, TokenRevocation.unreachable);
+      expect(logoutMessage(removed: true, revocation: result), contains('stays valid until you revoke it'));
+      expect(
+        await revokeWatchosToken(
+          platform: _withApi(null),
+          token: 'fw_secret',
+          request: (Uri uri, String token) async => 503,
+        ),
+        TokenRevocation.unreachable,
+      );
+    });
+
+    testWithoutContext('an override that is not a usable URL does not stop the logout', () async {
+      expect(
+        await revokeWatchosToken(
+          platform: _withApi('http://staging.flutterwatch.dev'),
+          token: 'fw_secret',
+          request: (Uri uri, String token) async => fail('nothing is sent over plain http'),
+        ),
+        TokenRevocation.unreachable,
+      );
+    });
+  });
+
+  group('logoutMessage', () {
+    testWithoutContext('says what happened to the sign-in', () {
+      expect(logoutMessage(removed: false), 'Not logged in.');
+      expect(logoutMessage(removed: true, revocation: TokenRevocation.revoked), contains('revoked'));
+      expect(logoutMessage(removed: true), 'Logged out. The sign-in is removed from this machine.');
     });
   });
 }
