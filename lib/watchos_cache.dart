@@ -465,7 +465,17 @@ bool _holdsEngine(Directory artifactDir) =>
 /// engine is aside on purpose, and putting it back there would stop the
 /// download --force asked for. A build after a killed run still downloads
 /// the engine again, and the copy goes at the next `precache`.
+///
+/// The staging directory a killed download extracted into goes too. It is
+/// never valid across runs, and once the engine is back nothing else would
+/// remove it: a download is what clears it, and none is needed. Left in the
+/// checkout it makes `upgrade` refuse, as an uncommitted change.
 bool restoreInterruptedRedownload(Directory artifactDir) {
+  final Directory staging =
+      artifactDir.parent.childDirectory('.${artifactDir.basename}.staging');
+  if (staging.existsSync()) {
+    staging.deleteSync(recursive: true);
+  }
   final Directory previous = _previousEngineDirectory(artifactDir);
   if (!previous.existsSync()) {
     return false;

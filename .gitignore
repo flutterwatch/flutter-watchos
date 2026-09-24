@@ -13,6 +13,9 @@ bin/cache/
 # kept under a suffixed name, leaving the engine untracked but stageable.
 engine_artifacts*/
 artifacts*/
+# The staging directory a download extracts into, beside engine_artifacts/.
+# A killed download can leave it behind; it must never read as a change.
+.engine_artifacts*/
 
 # Local engine source / build workspaces (closed-source, lives outside repo).
 # The watchOS engine is proprietary and must never be tracked in this repo.

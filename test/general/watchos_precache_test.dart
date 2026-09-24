@@ -547,6 +547,20 @@ void main() {
         expect(previous.existsSync(), isFalse);
       });
 
+      // A download killed after its first zip leaves a staging directory as
+      // well. Nothing downloads after the restore, so nothing else clears it.
+      testWithoutContext('is put back, and the staging directory a killed download left goes', () {
+        seedEngine(previous.path, 'old');
+        engine.createSync(recursive: true);
+        final Directory staging = fs.directory('/cli/.engine_artifacts.staging');
+        staging.childDirectory('watchos_debug_sim_arm64').childFile('partial').createSync(recursive: true);
+
+        expect(restoreInterruptedRedownload(engine), isTrue);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('old').existsSync(), isTrue);
+        expect(staging.existsSync(), isFalse);
+        expect(previous.existsSync(), isFalse);
+      });
+
       // Local zips install without a stamp; that is an engine all the same.
       testWithoutContext('is dropped beside an unstamped engine', () {
         seedEngine(previous.path, 'older');
