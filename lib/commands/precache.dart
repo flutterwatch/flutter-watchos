@@ -73,6 +73,14 @@ class WatchosPrecacheCommand extends PrecacheCommand {
       await globals.cache.lock();
     }
 
+    // Before the engine update, not after it: the update writes the watchOS
+    // engine's stamp, and clearing it afterwards left a machine that owes
+    // engines (signed out, or refused them) asking the service for them all
+    // over again on its next build.
+    if (boolArg('force')) {
+      globals.cache.clearStampFiles();
+    }
+
     if (boolArg('watchos')) {
       final Directory artifactDir = watchosArtifactDirectory(globals.fs);
       Future<void> updateEngine() =>
@@ -104,9 +112,6 @@ class WatchosPrecacheCommand extends PrecacheCommand {
     // universal artifacts and the engine stamp, on top of the watchOS engine
     // set fetched above. So drive the cache ourselves instead of delegating to
     // `super.runCommand()`, while still honouring the stock per-platform flags.
-    if (boolArg('force')) {
-      globals.cache.clearStampFiles();
-    }
     final bool allPlatforms = boolArg('all-platforms');
     if (allPlatforms) {
       globals.cache.includeAllPlatforms = true;

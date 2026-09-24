@@ -4,13 +4,18 @@
 
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_watchos/commands/precache.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
+import 'package:test/fake.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
 import '../src/fakes.dart';
+import '../src/test_flutter_command_runner.dart';
 
 /// All features either enabled or disabled, depending on [enabled]; every other
 /// FeatureFlags member returns false.
@@ -27,6 +32,35 @@ class _FakeFeatureFlags implements FeatureFlags {
 
 Set<String> _names(Set<DevelopmentArtifact> a) =>
     a.map((DevelopmentArtifact d) => d.name).toSet();
+
+/// A cache that only records, in order, what `precache` asks of it.
+class _RecordingCache extends Fake implements Cache {
+  final List<String> calls = <String>[];
+
+  @override
+  Future<void> lock() async {}
+
+  @override
+  void releaseLock() {}
+
+  @override
+  void clearStampFiles() => calls.add('clear stamps');
+
+  @override
+  void setStampFor(String artifactName, String version) =>
+      calls.add('stamp $artifactName');
+
+  @override
+  Future<void> updateAll(Set<DevelopmentArtifact> requiredArtifacts, {bool offline = false}) async {
+    calls.add('update ${(_names(requiredArtifacts).toList()..sort()).join(', ')}');
+  }
+
+  @override
+  bool includeAllPlatforms = false;
+
+  @override
+  bool useUnsignedMacBinaries = false;
+}
 
 void main() {
   group('WatchosPrecacheCommand.selectRequiredArtifacts', () {
@@ -409,5 +443,74 @@ void main() {
       expect(engine.childDirectory('half').existsSync(), isFalse);
       expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
     });
+  });
+
+  // `precache --force` cleared every cache stamp after the engine update, the
+  // engine's own included. A machine that owes engines (signed out, or
+  // refused them) then asked the service for them all again on its next
+  // build, and printed the refusals again.
+  group('precache command', () {
+    late MemoryFileSystem fs;
+    late _RecordingCache cache;
+    final Platform platform = FakePlatform(
+      operatingSystem: 'macos',
+      environment: <String, String>{'HOME': '/home/u'},
+    );
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      cache = _RecordingCache();
+      Cache.flutterRoot = '/cli/flutter';
+      fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').createSync(recursive: true);
+    });
+
+    Future<void> runPrecache(List<String> args) => createTestCommandRunner(
+      WatchosPrecacheCommand(
+        verboseHelp: false,
+        cache: cache,
+        logger: BufferLogger.test(),
+        platform: platform,
+        featureFlags: TestFeatureFlags(),
+      ),
+    ).run(<String>['precache', ...args]);
+
+    testUsingContext(
+      '--force clears the stamps before the engine update, not after it',
+      () async {
+        await runPrecache(const <String>['--force']);
+
+        expect(cache.calls, <String>[
+          'update informative', // the command runner's, before any command
+          'clear stamps',
+          'update watchos',
+          'update informative, universal',
+        ]);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => platform,
+        Cache: () => cache,
+      },
+    );
+
+    testUsingContext(
+      'a plain precache clears no stamps',
+      () async {
+        await runPrecache(const <String>[]);
+
+        expect(cache.calls, <String>[
+          'update informative',
+          'update watchos',
+          'update informative, universal',
+        ]);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => platform,
+        Cache: () => cache,
+      },
+    );
   });
 }
