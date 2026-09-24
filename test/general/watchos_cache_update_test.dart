@@ -679,6 +679,53 @@ void main() {
     overrides: overrides,
   );
 
+  /// curl stopped by Ctrl-C. By then flutter_tools' signal handler has
+  /// deleted its temp directory, and the download's own inside it.
+  FakeCommand curlInterrupted(String zipName) => FakeCommand(
+    command: curlCommand(zipName),
+    exitCode: -2,
+    onRun: (List<String> command) {
+      fs.file(outputPath(command)).parent.deleteSync(recursive: true);
+    },
+  );
+
+  // Deleting the temp directory again on the way out threw
+  // PathNotFoundException, whose stack trace took the place of the failure.
+  testUsingContext(
+    'a download stopped by Ctrl-C ends with its own failure, not a missing temp directory',
+    () async {
+      seedPreviousEngine();
+      processManager.addCommand(curlInterrupted(kWatchosEngineZipNames.first));
+
+      await expectLater(
+        () => makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils()),
+        throwsToolExit(message: 'Could not reach'),
+      );
+
+      expect(readEngineVersionStamp(fs.directory(_location)), 'engine-previous00000');
+      expect(fs.directory(_staging).existsSync(), isFalse);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'a retry stopped by Ctrl-C leaves the engine owed, not a missing temp directory',
+    () async {
+      final Directory location = seedSignedOutInstall(makeCache());
+      const owed = 'watchos_profile_arm64.zip';
+      writePendingEngineZips(location, const <String>[owed]);
+      processManager.addCommand(curlInterrupted(owed));
+
+      await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+      expect(readPendingEngineZips(location), const <String>[owed]);
+      expect(readEngineVersionStamp(location), _tag);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
   // BufferLogger hands out silent statuses, so the tests above cannot see
   // how a line ends on a real terminal. A skipped engine used to come out as
   // three lines there: the progress line, the line again with its note, and

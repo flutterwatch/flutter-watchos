@@ -6,6 +6,7 @@
 import 'dart:convert';
 
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/error_handling_io.dart' show ErrorHandlingFileSystem;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart' show OperatingSystemUtils;
@@ -884,7 +885,9 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       }
       refusals.report(_logger, simulatorReady: _hasSimulatorEngine);
     } finally {
-      tempDir.deleteSync(recursive: true);
+      // Ctrl-C: flutter_tools' signal handler has already deleted its temp
+      // directory, this one inside it, before the download unwinds to here.
+      ErrorHandlingFileSystem.deleteIfExists(tempDir, recursive: true);
       if (!installed && staging.existsSync()) {
         staging.deleteSync(recursive: true);
       }
@@ -1020,7 +1023,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         }
       }
     } finally {
-      tempDir.deleteSync(recursive: true);
+      // Gone already after Ctrl-C, as in updateInner.
+      ErrorHandlingFileSystem.deleteIfExists(tempDir, recursive: true);
     }
 
     writePendingEngineZips(location, stillPending);
