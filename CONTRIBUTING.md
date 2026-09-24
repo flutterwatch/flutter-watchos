@@ -47,8 +47,15 @@ git pull --ff-only origin main
 # --no-ff is the point: one merge commit per release.
 git merge --no-ff dev -m "Release <version>: <summary>"
 
-git tag -a v<version> -m "v<version>"   # optional but recommended
-git push origin main --follow-tags
+# The tag is what `flutter-watchos upgrade` looks for, so it must have this
+# exact shape: v<flutter version>-watchos.<X.Y.Z>, e.g. v3.47.4-watchos.0.1.0.
+# `upgrade` ignores any other tag.
+git tag -a v<flutter>-watchos.<X.Y.Z> -m "flutter-watchos <X.Y.Z>"
+
+# Push main and that one tag, by name, in one go. Never --tags or
+# --follow-tags: they push every local tag reachable from main, including
+# ones that were never meant to be released.
+git push --atomic origin main refs/tags/v<flutter>-watchos.<X.Y.Z>
 ```
 
 Prefer to review the release as a whole? Open a `dev → main` pull request and
