@@ -13,6 +13,9 @@ import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:process/process.dart';
 
+import 'watchos_auth.dart';
+import 'watchos_cache.dart';
+
 WatchosWorkflow? get watchosWorkflow => context.get<WatchosWorkflow>();
 WatchosValidator? get watchosValidator => context.get<WatchosValidator>();
 
@@ -71,8 +74,8 @@ class WatchosValidator extends DoctorValidator {
     // 4. Check CocoaPods
     await _checkCocoaPods(messages);
 
-    // 5. Check engine artifacts
-    await _checkEngineArtifacts(messages);
+    // 5. Check engine artifacts, and the account they come with
+    final String statusInfo = _checkEngineArtifacts(messages);
 
     final bool hasErrors = messages.any(
       (ValidationMessage m) => m.type == const ValidationMessage.error('').type,
@@ -87,7 +90,7 @@ class WatchosValidator extends DoctorValidator {
       validationType = ValidationType.success;
     }
 
-    return ValidationResult(validationType, messages);
+    return ValidationResult(validationType, messages, statusInfo: statusInfo);
   }
 
   /// Checks that Xcode is installed and reports its version.
@@ -238,27 +241,82 @@ class WatchosValidator extends DoctorValidator {
     );
   }
 
-  /// Checks that watchOS engine artifacts are present.
-  Future<void> _checkEngineArtifacts(List<ValidationMessage> messages) async {
+  /// Reports which engines are installed, whether this machine is signed in,
+  /// and which engines are still owed; returns the short summary doctor
+  /// prints next to the title. Reads local files only — doctor makes no
+  /// network request.
+  String _checkEngineArtifacts(List<ValidationMessage> messages) {
     final FileSystem fs = _fileSystem ?? globals.fs;
     final Platform platform = _platform ?? globals.platform;
+    // The directory precache and the builder use, which honours
+    // WATCHOS_ENGINE_ARTIFACTS and a workspace-root engine_artifacts/.
+    final Directory artifactDir = watchosArtifactDirectory(fs, platform: platform);
+    final signedIn = readWatchosToken(fs, platform) != null;
+    final account = signedIn ? 'signed in' : 'not signed in';
 
-    // Resolve path relative to the flutter-watchos CLI root (script location),
-    // not the caller's cwd.
-    final String scriptPath = fs.path.fromUri(platform.script);
-    // bin/cache/flutter-watchos.snapshot → CLI root is two dirs up.
-    final String cliRoot = fs.path.dirname(fs.path.dirname(fs.path.dirname(scriptPath)));
-    final String artifactDir = fs.path.join(cliRoot, 'engine_artifacts', 'watchos_debug_sim_arm64');
-    if (fs.directory(artifactDir).existsSync()) {
-      messages.add(const ValidationMessage('watchOS engine artifacts present'));
-      return;
+    final List<String> installed = installedEngineModes(artifactDir);
+    if (installed.isEmpty) {
+      messages.add(
+        const ValidationMessage.hint(
+          'watchOS engine artifacts not found. Run: flutter-watchos precache',
+        ),
+      );
+    } else {
+      final String? tag = readEngineVersionStamp(artifactDir);
+      messages.add(
+        ValidationMessage(
+          'watchOS engine${tag == null ? '' : ' $tag'} at ${artifactDir.path}: '
+          '${installed.join(', ')}',
+          piiStrippedMessage: 'watchOS engine${tag == null ? '' : ' $tag'}: ${installed.join(', ')}',
+        ),
+      );
     }
 
+    final String? login = readWatchosLogin(fs, platform);
     messages.add(
-      const ValidationMessage.hint(
-        'watchOS engine artifacts not found. Run: flutter-watchos precache',
-      ),
+      signedIn
+          ? ValidationMessage(
+              'Signed in to flutterwatch.dev${login == null ? '' : ' as $login'}',
+              piiStrippedMessage: 'Signed in to flutterwatch.dev',
+            )
+          : const ValidationMessage(
+              'Not signed in: the Simulator engine works without an account; '
+              '`flutter-watchos login` for a watch and release builds',
+            ),
     );
+
+    final List<String> owed = owedEngineModes(artifactDir);
+    if (owed.isNotEmpty) {
+      // Signed out, missing them is expected and said above; signed in, the
+      // last download could not get them, which is worth a look.
+      messages.add(
+        signedIn
+            ? ValidationMessage.hint(
+                'Not installed yet: ${owed.join(', ')}. Run `flutter-watchos '
+                'precache` to fetch them; it says why if it cannot.',
+              )
+            : ValidationMessage(
+                'Not installed yet: ${owed.join(', ')} (they need an account: '
+                '`flutter-watchos login`, then build or `flutter-watchos precache`)',
+              ),
+      );
+    }
+
+    return '${_enginesSummary(installed)}, $account';
+  }
+
+  /// "Simulator engine", "Simulator and profile engines", "all engines".
+  static String _enginesSummary(List<String> installed) {
+    if (installed.isEmpty) {
+      return 'no engine yet';
+    }
+    if (installed.length == kWatchosEngineModes.length) {
+      return 'all engines';
+    }
+    final List<String> names = installed.map((String mode) => mode.split(' ').first).toList();
+    return names.length == 1
+        ? '${names.single} engine'
+        : '${names.take(names.length - 1).join(', ')} and ${names.last} engines';
   }
 
   @override

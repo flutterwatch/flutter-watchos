@@ -2,22 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
+import 'package:flutter_watchos/watchos_auth.dart';
+import 'package:flutter_watchos/watchos_cache.dart';
 import 'package:flutter_watchos/watchos_doctor.dart';
 
 import '../src/common.dart';
 import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 
-// A fake platform whose script URI points to a known path so that
-// _checkEngineArtifacts can resolve the CLI root without touching globals.
-//   /cli/bin/cache/flutter-watchos.snapshot  ← script
+// The CLI checkout the tests pretend to run from (Cache.flutterRoot is set to
+// its flutter/ in setUp), so the engine is looked up where precache puts it:
+//   /cli/flutter/                              ← Cache.flutterRoot
 //   /cli/engine_artifacts/watchos_debug_sim_arm64/
-FakePlatform _makePlatform() =>
-    FakePlatform(script: Uri.file('/cli/bin/cache/flutter-watchos.snapshot'));
+FakePlatform _makePlatform({Map<String, String>? environment}) => FakePlatform(
+  script: Uri.file('/cli/bin/cache/flutter-watchos.snapshot'),
+  environment: environment ?? <String, String>{'HOME': '/home/u'},
+);
 
 // The hardware every other test assumes: an arm64 Mac in a native shell.
 FakeOperatingSystemUtils _appleSilicon() =>
@@ -55,6 +61,7 @@ void main() {
 
   setUp(() {
     processManager = FakeProcessManager.empty();
+    Cache.flutterRoot = '/cli/flutter';
   });
 
   group('WatchosValidator', () {
@@ -76,7 +83,7 @@ void main() {
       expect(messageTexts, contains(contains('watchOS SDK')));
       expect(messageTexts, contains(contains('watchOS Simulator runtime')));
       expect(messageTexts, contains(contains('CocoaPods')));
-      expect(messageTexts, contains(contains('engine artifacts')));
+      expect(messageTexts, contains(contains('watchOS engine at /cli/engine_artifacts')));
       expect(processManager, hasNoRemainingExpectations);
     });
 
@@ -217,6 +224,108 @@ void main() {
       final ValidationResult result = await validator.validate();
       expect(result.type, equals(ValidationType.partial));
       expect(_texts(result), contains(contains('Rosetta')));
+    });
+  });
+
+  // doctor is where people look when something is off, and it said nothing
+  // about the account, nor about the engines a signed-out download skipped.
+  group('WatchosValidator engines and account', () {
+    const engineDirs = <String>[
+      'watchos_debug_sim_arm64',
+      'watchos_profile_arm64',
+      'watchos_release_arm64',
+      'host_debug_unopt',
+      'host_release',
+    ];
+
+    Future<ValidationResult> validate(MemoryFileSystem fs, {FakePlatform? platform}) {
+      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      return WatchosValidator(
+        processManager: processManager,
+        fileSystem: fs,
+        platform: platform ?? _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
+      ).validate();
+    }
+
+    testWithoutContext('signed out, it says the Simulator needs no account and what is owed', () async {
+      final MemoryFileSystem fs = _makeEngineFs();
+      final Directory dir = fs.directory('/cli/engine_artifacts');
+      writeEngineVersionStamp(dir, 'engine-0123456789ab');
+      writePendingEngineZips(dir, kWatchosEngineZipNames.skip(1));
+
+      final ValidationResult result = await validate(fs);
+
+      expect(result.type, ValidationType.success);
+      expect(result.statusInfo, 'Simulator engine, not signed in');
+      expect(
+        _texts(result),
+        containsAll(<Object>[
+          'watchOS engine engine-0123456789ab at /cli/engine_artifacts: Simulator (debug)',
+          contains('Not signed in: the Simulator engine works without an account'),
+          contains('Not installed yet: profile, release (they need an account'),
+        ]),
+      );
+      // Nothing is wrong with a Simulator-only setup: no warning sign for it.
+      expect(result.messages.where((ValidationMessage m) => m.isHint), isEmpty);
+    });
+
+    testWithoutContext('signed in, it names the account and never the token', () async {
+      final MemoryFileSystem fs = _makeEngineFs();
+      for (final dir in engineDirs) {
+        fs.directory('/cli/engine_artifacts/$dir').createSync(recursive: true);
+      }
+      final FakePlatform platform = _makePlatform();
+      writeWatchosCredentials(fs, platform, token: 'fw_secret_token', login: 'someone');
+
+      final ValidationResult result = await validate(fs, platform: platform);
+
+      expect(result.statusInfo, 'all engines, signed in');
+      expect(_texts(result), contains('Signed in to flutterwatch.dev as someone'));
+      expect(_texts(result), contains(endsWith('Simulator (debug), profile, release')));
+      expect(_texts(result).join('\n'), isNot(contains('fw_secret_token')));
+      expect(
+        result.messages.map((ValidationMessage m) => m.piiStrippedMessage).join('\n'),
+        isNot(contains('someone')),
+      );
+    });
+
+    testWithoutContext('signed in with an engine still owed, it points at precache', () async {
+      final MemoryFileSystem fs = _makeEngineFs();
+      for (final String dir in engineDirs.take(4)) {
+        fs.directory('/cli/engine_artifacts/$dir').createSync(recursive: true);
+      }
+      writePendingEngineZips(fs.directory('/cli/engine_artifacts'), const <String>['host_release.zip']);
+      final FakePlatform platform = _makePlatform();
+      writeWatchosCredentials(fs, platform, token: 'fw_secret_token');
+
+      final ValidationResult result = await validate(fs, platform: platform);
+
+      expect(result.statusInfo, 'Simulator and profile engines, signed in');
+      expect(_texts(result), contains('Signed in to flutterwatch.dev'));
+      final ValidationMessage owed = result.messages.singleWhere(
+        (ValidationMessage m) => m.message.startsWith('Not installed yet'),
+      );
+      expect(owed.isHint, isTrue);
+      expect(owed.message, contains('release'));
+      expect(owed.message, contains('flutter-watchos precache'));
+    });
+
+    testWithoutContext('looks where precache does: WATCHOS_ENGINE_ARTIFACTS first', () async {
+      final fs = MemoryFileSystem.test();
+      for (final dir in engineDirs) {
+        fs.directory('/engines/$dir').createSync(recursive: true);
+      }
+
+      final ValidationResult result = await validate(
+        fs,
+        platform: _makePlatform(environment: <String, String>{
+          'HOME': '/home/u',
+          'WATCHOS_ENGINE_ARTIFACTS': '/engines',
+        }),
+      );
+
+      expect(_texts(result), contains('watchOS engine at /engines: Simulator (debug), profile, release'));
     });
   });
 

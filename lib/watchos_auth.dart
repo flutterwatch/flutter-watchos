@@ -89,6 +89,28 @@ String? readWatchosToken(FileSystem fileSystem, Platform platform) {
   return null;
 }
 
+/// The account name `login` stored next to the token (the GitHub login), or
+/// null when signed out or it was not stored. Never the token itself.
+String? readWatchosLogin(FileSystem fileSystem, Platform platform) {
+  if (readWatchosToken(fileSystem, platform) == null) {
+    return null;
+  }
+  try {
+    final Object? data = json.decode(watchosCredentialsFile(fileSystem, platform).readAsStringSync());
+    if (data is Map<String, Object?>) {
+      final Object? login = data['login'];
+      if (login is String && login.isNotEmpty) {
+        return login;
+      }
+    }
+  } on FormatException {
+    // Read a moment ago by readWatchosToken; treat a change since as no name.
+  } on FileSystemException {
+    // Likewise.
+  }
+  return null;
+}
+
 /// Stores the token, readable by the owner only.
 ///
 /// A file created with the default umask is world-readable from the moment it

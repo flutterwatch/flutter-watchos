@@ -307,6 +307,34 @@ String? owedEngineAdvice(
       'Run `flutter-watchos precache` to fetch it; it says why if it cannot.';
 }
 
+/// The build modes an engine directory can serve, each with the engine
+/// directories it needs: debug runs on the Simulator; profile and release
+/// run on a watch and also need their host SDK to compile against.
+const Map<String, List<String>> kWatchosEngineModes = <String, List<String>>{
+  'Simulator (debug)': <String>['watchos_debug_sim_arm64'],
+  'profile': <String>['watchos_profile_arm64', 'host_debug_unopt'],
+  'release': <String>['watchos_release_arm64', 'host_release'],
+};
+
+/// The modes of [kWatchosEngineModes] whose engine directories are all in
+/// [artifactDir].
+List<String> installedEngineModes(Directory artifactDir) => <String>[
+  for (final MapEntry<String, List<String>> mode in kWatchosEngineModes.entries)
+    if (mode.value.every((String dir) => artifactDir.childDirectory(dir).existsSync())) mode.key,
+];
+
+/// The modes of [kWatchosEngineModes] that need an engine [artifactDir] still
+/// owes (see [readPendingEngineZips]).
+List<String> owedEngineModes(Directory artifactDir) {
+  final Set<String> owed = readPendingEngineZips(
+    artifactDir,
+  ).map((String zip) => zip.substring(0, zip.length - '.zip'.length)).toSet();
+  return <String>[
+    for (final MapEntry<String, List<String>> mode in kWatchosEngineModes.entries)
+      if (mode.value.any(owed.contains)) mode.key,
+  ];
+}
+
 /// Extracts the machine-readable `error` code from an artifact-API gate
 /// response body (e.g. `auth_required`, `release_not_in_beta`), or null when
 /// the file is missing or not a JSON gate response.
@@ -360,8 +388,11 @@ Directory watchosToolRootDirectory(FileSystem fileSystem) {
 ///    checkout's parent), the layout `package_artifacts.sh` produces. This is
 ///    what makes a local monorepo checkout "just work" without the env var.
 /// 3. `engine_artifacts/` inside the CLI checkout (the download target).
-Directory watchosArtifactDirectory(FileSystem fileSystem) {
-  final String? override = globals.platform.environment['WATCHOS_ENGINE_ARTIFACTS'];
+///
+/// [platform] defaults to the context's; tests without a context pass one.
+Directory watchosArtifactDirectory(FileSystem fileSystem, {Platform? platform}) {
+  final String? override =
+      (platform ?? globals.platform).environment['WATCHOS_ENGINE_ARTIFACTS'];
   if (override != null && override.isNotEmpty) {
     final Directory dir = fileSystem.directory(override);
     if (dir.existsSync()) {
