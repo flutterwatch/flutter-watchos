@@ -934,10 +934,22 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       return message;
     }
     final String detail = curlResult.stderr.trim();
+    final curlSaid = detail.isEmpty ? '' : '\n\n$detail';
+    // No HTTP status at all: the service was never reached. Signing in
+    // would not help (and `login` needs the same network).
+    if (httpCode.isEmpty || httpCode == '000') {
+      return 'Could not reach the flutterwatch.dev artifact service to download '
+          '$zipName.$curlSaid\n\n'
+          'Check your network connection, then run `flutter-watchos precache` '
+          'again.';
+    }
+    final String next = switch (httpCode) {
+      '401' when signedIn => kSignInNotAcceptedNote,
+      '401' => 'If you are not signed in yet, run `flutter-watchos login`.',
+      _ => 'Run `flutter-watchos precache` again in a few minutes.',
+    };
     return 'Failed to download $zipName from the flutterwatch.dev artifact '
-        'service (HTTP $httpCode).'
-        '${detail.isEmpty ? '' : '\n\n$detail'}\n\n'
-        'If you are not signed in yet, run `flutter-watchos login`.';
+        'service (HTTP $httpCode).$curlSaid\n\n$next';
   }
 
   /// The human-readable `message` of a JSON gate response, or null when

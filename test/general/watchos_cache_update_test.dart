@@ -9,6 +9,7 @@
 
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -631,6 +632,48 @@ void main() {
       expect(readPendingEngineZips(location), kWatchosEngineZipNames.skip(1).toList());
       expect(await artifacts.isUpToDate(fs), isTrue);
       expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  // Offline, the first download used to end with "If you are not signed in
+  // yet, run `flutter-watchos login`" — which needs the same network, and is
+  // not what the Simulator engine needs anyway.
+  testUsingContext(
+    'a first download that cannot reach the service says so, not "log in"',
+    () async {
+      processManager.addCommand(FakeCommand(
+        command: curlCommand(kWatchosEngineZipNames.first),
+        exitCode: 6,
+        stdout: '000',
+        stderr: 'curl: (6) Could not resolve host: api.flutterwatch.dev',
+      ));
+
+      try {
+        await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+        fail('expected a tool exit');
+      } on ToolExit catch (error) {
+        expect(error.message, contains('Could not reach the flutterwatch.dev artifact service'));
+        expect(error.message, contains('Could not resolve host'));
+        expect(error.message, contains('flutter-watchos precache'));
+        expect(error.message, isNot(contains('login')));
+      }
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'a server error with no explanation suggests trying again, not "log in"',
+    () async {
+      processManager.addCommand(curlServerError(kWatchosEngineZipNames.first));
+
+      try {
+        await makeArtifacts().updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+        fail('expected a tool exit');
+      } on ToolExit catch (error) {
+        expect(error.message, contains('HTTP 500'));
+        expect(error.message, isNot(contains('login')));
+      }
     },
     overrides: overrides,
   );
