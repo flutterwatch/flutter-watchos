@@ -426,23 +426,55 @@ bool isDownloadedArtifactDirectory(FileSystem fileSystem, Directory artifactDir)
 Directory _previousEngineDirectory(Directory artifactDir) =>
     artifactDir.parent.childDirectory('${artifactDir.basename}.previous');
 
-/// Puts back the engine a `precache --force` killed mid-download left aside
-/// (see [redownloadEngine]), when nothing has taken its place; returns
-/// whether it did. `precache` calls it first, with or without --force.
+/// Whether [artifactDir] holds an engine, rather than what a killed download
+/// leaves there.
 ///
-/// That copy is the only working engine on the machine. `precache` ignored
-/// it and downloaded every engine again, and `precache --force` deleted it
+/// flutter_tools creates the engine directory, empty, before the engine
+/// update starts (`CachedArtifact.update`), and the download moves its
+/// finished engine in with one rename, stamp included. So a run killed
+/// mid-download leaves an empty directory, not a missing one. An engine
+/// extracted from local zips carries no stamp, so an engine directory counts
+/// as well; a `.DS_Store` that Finder left in the empty directory does not.
+bool _holdsEngine(Directory artifactDir) =>
+    artifactDir.existsSync() &&
+    (readEngineVersionStamp(artifactDir) != null ||
+        artifactDir
+            .listSync()
+            .whereType<Directory>()
+            .any((Directory dir) => dir.basename.startsWith('watchos_')));
+
+/// Settles the engine a `precache --force` killed mid-download left aside
+/// (see [redownloadEngine]); returns whether it put that engine back.
+/// `precache` calls it first, with or without --force, and so does
+/// [redownloadEngine]. Afterwards nothing is left aside.
+///
+/// When nothing has taken its place, that copy is the only working engine on
+/// the machine, and it goes back. "Nothing" includes the empty
+/// engine_artifacts/ the killed run leaves behind ([_holdsEngine]). Taking
+/// that directory for an engine, `precache` left the copy aside and
+/// downloaded every engine again, and `precache --force` deleted the copy
 /// before its own download, so if that one failed too there was no engine
 /// left at all.
+///
+/// Beside an engine that is in place, the copy is dropped: that engine went
+/// in after it (the killed run's own, or one a build downloaded since), so it
+/// is the newer one.
 ///
 /// Not called from the engine update itself: inside [redownloadEngine] the
 /// engine is aside on purpose, and putting it back there would stop the
 /// download --force asked for. A build after a killed run still downloads
-/// the engine again.
+/// the engine again, and the copy goes at the next `precache`.
 bool restoreInterruptedRedownload(Directory artifactDir) {
   final Directory previous = _previousEngineDirectory(artifactDir);
-  if (artifactDir.existsSync() || !previous.existsSync()) {
+  if (!previous.existsSync()) {
     return false;
+  }
+  if (_holdsEngine(artifactDir)) {
+    previous.deleteSync(recursive: true);
+    return false;
+  }
+  if (artifactDir.existsSync()) {
+    artifactDir.deleteSync(recursive: true);
   }
   previous.renameSync(artifactDir.path);
   return true;
@@ -458,14 +490,10 @@ bool restoreInterruptedRedownload(Directory artifactDir) {
 /// the checkout look modified to `upgrade`; the next `precache` puts it back
 /// ([restoreInterruptedRedownload]).
 Future<void> redownloadEngine(Directory artifactDir, Future<void> Function() download) async {
+  // A copy a killed run left aside is back in place or gone now, so what
+  // moves aside below is the working engine.
   restoreInterruptedRedownload(artifactDir);
   final Directory previous = _previousEngineDirectory(artifactDir);
-  if (previous.existsSync()) {
-    // Left beside an engine that is in place: by a run killed after its new
-    // engine went in, or before a build downloaded one. The engine in place
-    // is the newer one.
-    previous.deleteSync(recursive: true);
-  }
   final bool hadEngine = artifactDir.existsSync();
   if (hadEngine) {
     artifactDir.renameSync(previous.path);

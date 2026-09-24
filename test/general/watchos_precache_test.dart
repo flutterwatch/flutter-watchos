@@ -4,6 +4,7 @@
 
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -50,9 +51,14 @@ class _RecordingCache extends Fake implements Cache {
   void setStampFor(String artifactName, String version) =>
       calls.add('stamp $artifactName');
 
+  /// Runs after each update is recorded; a test uses it to act as the real
+  /// engine update would.
+  Future<void> Function(Set<DevelopmentArtifact> requiredArtifacts)? onUpdate;
+
   @override
   Future<void> updateAll(Set<DevelopmentArtifact> requiredArtifacts, {bool offline = false}) async {
     calls.add('update ${(_names(requiredArtifacts).toList()..sort()).join(', ')}');
+    await onUpdate?.call(requiredArtifacts);
   }
 
   @override
@@ -444,33 +450,52 @@ void main() {
       expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
     });
 
+    // What a download leaves in place: a stamped engine, as one rename.
+    void seedEngine(String path, String marker) {
+      final Directory dir = fs.directory(path);
+      dir.childDirectory('watchos_debug_sim_arm64').childFile(marker).createSync(recursive: true);
+      writeEngineVersionStamp(dir, 'engine-0123456789ab');
+    }
+
     // Killed after the move aside and before the new engine went in, a run
-    // left the only working engine in engine_artifacts.previous. The next
-    // --force deleted it before downloading, so a second failure left none.
+    // left the only working engine in engine_artifacts.previous, and in its
+    // place the empty engine_artifacts/ flutter_tools creates before any
+    // engine update. The next --force took that empty directory for the
+    // engine, deleted the copy and moved the empty directory aside, so a
+    // second failure left no engine at all.
     testWithoutContext('a run killed mid-download: the next one starts from the engine it left aside', () async {
-      final Directory engine = fs.directory('/cli/engine_artifacts');
-      fs.file('/cli/engine_artifacts.previous/old').createSync(recursive: true);
+      final Directory engine = fs.directory('/cli/engine_artifacts')..createSync(recursive: true);
+      seedEngine('/cli/engine_artifacts.previous', 'old');
 
       await expectLater(
         redownloadEngine(engine, () async {
-          expect(fs.file('/cli/engine_artifacts.previous/old').existsSync(), isTrue,
-              reason: 'moved aside again, not deleted');
+          expect(
+            fs.file('/cli/engine_artifacts.previous/watchos_debug_sim_arm64/old').existsSync(),
+            isTrue,
+            reason: 'moved aside again, not deleted',
+          );
+          // What CachedArtifact.update does before it downloads.
+          engine.createSync(recursive: true);
           throw Exception('offline');
         }),
         throwsException,
       );
 
-      expect(engine.childFile('old').existsSync(), isTrue);
+      expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('old').existsSync(), isTrue);
+      expect(readEngineVersionStamp(engine), 'engine-0123456789ab');
       expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
     });
 
     testWithoutContext('a leftover beside an engine in place is dropped, the engine kept', () async {
       final Directory engine = fs.directory('/cli/engine_artifacts');
-      engine.childFile('newer').createSync(recursive: true);
-      fs.file('/cli/engine_artifacts.previous/older').createSync(recursive: true);
+      seedEngine(engine.path, 'newer');
+      seedEngine('/cli/engine_artifacts.previous', 'older');
 
       await redownloadEngine(engine, () async {
-        expect(fs.file('/cli/engine_artifacts.previous/newer').existsSync(), isTrue);
+        expect(
+          fs.file('/cli/engine_artifacts.previous/watchos_debug_sim_arm64/newer').existsSync(),
+          isTrue,
+        );
         engine.childFile('new').createSync(recursive: true);
       });
 
@@ -478,18 +503,59 @@ void main() {
       expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
     });
 
-    testWithoutContext('an engine left aside is put back only when nothing took its place', () {
-      final Directory engine = fs.directory('/cli/engine_artifacts');
-      expect(restoreInterruptedRedownload(engine), isFalse, reason: 'nothing left aside');
+    group('an engine left aside', () {
+      late Directory engine;
+      late Directory previous;
 
-      fs.file('/cli/engine_artifacts.previous/old').createSync(recursive: true);
-      expect(restoreInterruptedRedownload(engine), isTrue);
-      expect(engine.childFile('old').existsSync(), isTrue);
-      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+      setUp(() {
+        engine = fs.directory('/cli/engine_artifacts');
+        previous = fs.directory('/cli/engine_artifacts.previous');
+      });
 
-      fs.file('/cli/engine_artifacts.previous/older').createSync(recursive: true);
-      expect(restoreInterruptedRedownload(engine), isFalse, reason: 'an engine is in place');
-      expect(engine.childFile('older').existsSync(), isFalse);
+      testWithoutContext('is nothing to do when there is none', () {
+        expect(restoreInterruptedRedownload(engine), isFalse);
+        expect(engine.existsSync(), isFalse);
+      });
+
+      testWithoutContext('is put back when engine_artifacts/ is missing', () {
+        seedEngine(previous.path, 'old');
+
+        expect(restoreInterruptedRedownload(engine), isTrue);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('old').existsSync(), isTrue);
+        expect(previous.existsSync(), isFalse);
+      });
+
+      // The state a real kill leaves: flutter_tools makes the directory
+      // before the download starts. Finder may have added a .DS_Store.
+      testWithoutContext('is put back when engine_artifacts/ is only the empty directory a killed download leaves', () {
+        seedEngine(previous.path, 'old');
+        engine.childFile('.DS_Store').createSync(recursive: true);
+
+        expect(restoreInterruptedRedownload(engine), isTrue);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('old').existsSync(), isTrue);
+        expect(engine.childFile('.DS_Store').existsSync(), isFalse);
+        expect(previous.existsSync(), isFalse);
+      });
+
+      testWithoutContext('is dropped beside a downloaded engine, which is the newer one', () {
+        seedEngine(previous.path, 'older');
+        seedEngine(engine.path, 'newer');
+
+        expect(restoreInterruptedRedownload(engine), isFalse);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('newer').existsSync(), isTrue);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('older').existsSync(), isFalse);
+        expect(previous.existsSync(), isFalse);
+      });
+
+      // Local zips install without a stamp; that is an engine all the same.
+      testWithoutContext('is dropped beside an unstamped engine', () {
+        seedEngine(previous.path, 'older');
+        engine.childDirectory('watchos_debug_sim_arm64').childFile('newer').createSync(recursive: true);
+
+        expect(restoreInterruptedRedownload(engine), isFalse);
+        expect(engine.childDirectory('watchos_debug_sim_arm64').childFile('newer').existsSync(), isTrue);
+        expect(previous.existsSync(), isFalse);
+      });
     });
   });
 
@@ -542,14 +608,48 @@ void main() {
       },
     );
 
+    /// What a `precache --force` killed mid-download leaves: the engine
+    /// aside, and in its place the empty directory flutter_tools creates
+    /// before the engine update starts.
+    void killedForceRun() {
+      fs.directory('/cli/engine_artifacts').renameSync('/cli/engine_artifacts.previous');
+      fs.directory('/cli/engine_artifacts').createSync();
+    }
+
     // `upgrade` runs a plain precache: after a killed --force it downloaded
     // every engine again while the old one sat beside engine_artifacts/.
     testUsingContext(
       'precache puts back the engine a killed --force left aside',
       () async {
-        fs.directory('/cli/engine_artifacts').renameSync('/cli/engine_artifacts.previous');
+        killedForceRun();
 
         await runPrecache(const <String>[]);
+
+        expect(fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').existsSync(), isTrue);
+        expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => platform,
+        Cache: () => cache,
+      },
+    );
+
+    // The next --force deleted the copy, took the empty directory for the
+    // engine, and put that back when its own download failed: no engine.
+    testUsingContext(
+      'a --force after a killed one keeps the engine when its download fails too',
+      () async {
+        killedForceRun();
+        cache.onUpdate = (Set<DevelopmentArtifact> artifacts) async {
+          if (artifacts.contains(WatchosDevelopmentArtifact.watchos)) {
+            fs.directory('/cli/engine_artifacts').createSync();
+            throwToolExit('offline');
+          }
+        };
+
+        await expectLater(runPrecache(const <String>['--force']), throwsToolExit(message: 'offline'));
 
         expect(fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').existsSync(), isTrue);
         expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
