@@ -148,8 +148,9 @@ enum BuildRegistration {
   registered,
   disabled,
   notSignedIn,
-  /// The service said no (in the closed beta, release builds are not
-  /// registered) or could not be reached. Neither is the build's problem.
+  /// The service said no (it registers builds only for accounts it gives the
+  /// release engines to) or could not be reached. Neither is the build's
+  /// problem.
   notAccepted,
 }
 

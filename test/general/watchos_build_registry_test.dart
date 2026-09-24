@@ -125,7 +125,7 @@ void main() {
     testWithoutContext('a refusal from the service is quiet, and is not the build’s problem', () async {
       final FakePlatform platform = _platform();
       signIn(platform);
-      // 403 release_not_in_beta is what a beta account gets during the closed beta.
+      // 403 release_not_in_beta: the service does not give that account release engines.
       expect(
         await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: _Recorder(403).post),
         BuildRegistration.notAccepted,

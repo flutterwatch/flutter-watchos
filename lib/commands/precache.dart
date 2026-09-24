@@ -80,10 +80,10 @@ class WatchosPrecacheCommand extends PrecacheCommand {
           artifactDir.deleteSync(recursive: true);
         }
       } else if (readPendingEngineZips(artifactDir).isNotEmpty) {
-        // Zips a previous download was not entitled to (release engines
-        // during the beta). Invalidate the stamp so the cache re-enters the
-        // artifact update, which retries exactly those zips — this is how an
-        // account that gained release access picks up the release engines.
+        // Zips a previous download was left without: signed out, or not
+        // given to that account. Invalidate the stamp so the cache re-enters
+        // the artifact update, which retries exactly those zips — this is how
+        // signing in, or gaining access, picks the missing engines up.
         globals.cache.setStampFor(kWatchosEngineStampName, 'pending-downloads');
       }
       await globals.cache.updateAll(<DevelopmentArtifact>{WatchosDevelopmentArtifact.watchos});
