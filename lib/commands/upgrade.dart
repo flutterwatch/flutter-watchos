@@ -5,13 +5,17 @@
 import 'dart:convert';
 
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/upgrade.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:meta/meta.dart';
+
+import '../watchos_cache.dart';
 
 /// `flutter-watchos upgrade` — upgrades the flutter-watchos toolchain itself to
 /// the latest released version.
@@ -284,8 +288,8 @@ class WatchosUpgradeCommandRunner {
       throwToolExit(
         'flutter-watchos was upgraded to the new release, but finishing the '
         'upgrade (precache / doctor) failed. Your checkout is on the new '
-        'version; re-run "flutter-watchos precache --force" and '
-        '"flutter-watchos doctor" to complete it.',
+        'version; run "flutter-watchos precache" and "flutter-watchos doctor" '
+        'to complete it.',
         exitCode: code,
       );
     }
@@ -298,8 +302,15 @@ class WatchosUpgradeCommandRunner {
     globals.persistentToolState?.setShouldRedisplayWelcomeMessage(true);
   }
 
-  /// Re-downloads the watchOS engine artifacts that match the new pinned
-  /// version.
+  /// Brings the watchOS engine in line with the new pinned version.
+  ///
+  /// A plain `precache`, as stock `flutter upgrade` runs: the engine directory
+  /// is stamped with the engine id it holds, so a new pin downloads the new
+  /// engine (staged, and swapped in only once it is complete) and an
+  /// unchanged pin downloads nothing. `--force` used to delete the working
+  /// engine first and fetch all of it again, about 66 MB, even when the new
+  /// release pins the same engine — and left no engine at all when that
+  /// download failed.
   Future<void> precacheArtifacts() async {
     globals.printStatus('');
     globals.printStatus('Upgrading engine...');
@@ -309,7 +320,7 @@ class WatchosUpgradeCommandRunner {
         '--no-color',
         '--no-version-check',
         'precache',
-        '--force',
+        if (needsForcedEngineDownload(globals.fs, globals.platform)) '--force',
       ],
       workingDirectory: workingDirectory,
       allowReentrantFlutter: true,
@@ -317,12 +328,25 @@ class WatchosUpgradeCommandRunner {
     );
     if (code != 0) {
       throwToolExit(
-        'The flutter-watchos checkout was upgraded, but re-downloading the '
-        'watchOS engine artifacts for the new version failed. Re-run '
-        '"flutter-watchos precache --force" once your network is available.',
+        'The flutter-watchos checkout was upgraded, but downloading the '
+        'watchOS engine for the new version failed. Run '
+        '"flutter-watchos precache" once your network is available.',
         exitCode: code,
       );
     }
+  }
+
+  /// Whether the engine can only be brought up to date by downloading it all
+  /// again: this tool's own engine_artifacts/, downloaded by a version from
+  /// before downloads were stamped with their engine id, which `precache`
+  /// would otherwise reuse whatever engine it holds. A hand-built engine
+  /// elsewhere is never forced.
+  @visibleForTesting
+  static bool needsForcedEngineDownload(FileSystem fileSystem, Platform platform) {
+    final Directory artifactDir = watchosArtifactDirectory(fileSystem, platform: platform);
+    return isDownloadedArtifactDirectory(fileSystem, artifactDir) &&
+        artifactDir.existsSync() &&
+        readEngineVersionStamp(artifactDir) == null;
   }
 
   Future<void> runDoctor() async {

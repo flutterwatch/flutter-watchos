@@ -358,4 +358,56 @@ void main() {
       expect(advice, isNot(contains('for this account')));
     });
   });
+
+  // `precache --force` deleted whatever directory the engine resolved to,
+  // before downloading: a hand-built WATCHOS_ENGINE_ARTIFACTS or workspace
+  // engine went with it, and a failed download left no engine at all.
+  group('precache --force', () {
+    late MemoryFileSystem fs;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      Cache.flutterRoot = '/cli/flutter';
+    });
+
+    testWithoutContext('only the engine this tool downloads is its to delete', () {
+      expect(
+        isDownloadedArtifactDirectory(fs, fs.directory('/cli/engine_artifacts')),
+        isTrue,
+      );
+      expect(isDownloadedArtifactDirectory(fs, fs.directory('/engine_artifacts')), isFalse);
+      expect(isDownloadedArtifactDirectory(fs, fs.directory('/somewhere/engines')), isFalse);
+    });
+
+    testWithoutContext('a download that succeeds replaces the engine', () async {
+      final Directory engine = fs.directory('/cli/engine_artifacts');
+      engine.childFile('old').createSync(recursive: true);
+
+      await redownloadEngine(engine, () async {
+        expect(engine.existsSync(), isFalse, reason: 'the old engine is out of the way');
+        engine.childFile('new').createSync(recursive: true);
+      });
+
+      expect(engine.childFile('new').existsSync(), isTrue);
+      expect(engine.childFile('old').existsSync(), isFalse);
+      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+    });
+
+    testWithoutContext('a download that fails puts the previous engine back', () async {
+      final Directory engine = fs.directory('/cli/engine_artifacts');
+      engine.childFile('old').createSync(recursive: true);
+
+      await expectLater(
+        redownloadEngine(engine, () async {
+          engine.childDirectory('half').createSync(recursive: true);
+          throw Exception('offline');
+        }),
+        throwsException,
+      );
+
+      expect(engine.childFile('old').existsSync(), isTrue);
+      expect(engine.childDirectory('half').existsSync(), isFalse);
+      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+    });
+  });
 }

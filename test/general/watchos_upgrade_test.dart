@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_watchos/commands/upgrade.dart';
+import 'package:flutter_watchos/watchos_cache.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -328,6 +333,108 @@ void main() {
       overrides: <Type, Generator>{
         ProcessManager: () => processManager,
         Logger: () => logger,
+      },
+    );
+  });
+
+  // `upgrade` used to run `precache --force`: it deleted the working engine
+  // and fetched all of it again (about 66 MB) even when the new release pins
+  // the same engine, and left no engine at all when that download failed.
+  group('WatchosUpgradeCommandRunner.precacheArtifacts', () {
+    late MemoryFileSystem fs;
+    late FakeProcessManager processManager;
+    late FakePlatform platform;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+      processManager = FakeProcessManager.empty();
+      platform = FakePlatform(environment: <String, String>{});
+      Cache.flutterRoot = '/cli/flutter';
+    });
+
+    FakeCommand precache({bool force = false}) => FakeCommand(
+      command: <String>[
+        'bin/flutter-watchos',
+        '--no-color',
+        '--no-version-check',
+        'precache',
+        if (force) '--force',
+      ],
+      workingDirectory: '/cli',
+    );
+
+    Future<void> run() => (WatchosUpgradeCommandRunner()..workingDirectory = '/cli').precacheArtifacts();
+
+    testUsingContext(
+      'runs a plain precache: a stamped engine updates itself',
+      () async {
+        final Directory engine = fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64')
+          ..createSync(recursive: true);
+        writeEngineVersionStamp(engine.parent, 'engine-0123456789ab');
+        processManager.addCommand(precache());
+
+        await run();
+
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => processManager,
+        Platform: () => platform,
+      },
+    );
+
+    testUsingContext(
+      'forces the download only for an unstamped engine it downloaded itself',
+      () async {
+        fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').createSync(recursive: true);
+        processManager.addCommand(precache(force: true));
+
+        await run();
+
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => processManager,
+        Platform: () => platform,
+      },
+    );
+
+    testUsingContext(
+      'never forces a hand-built engine beside the checkout',
+      () async {
+        fs.directory('/engine_artifacts/watchos_debug_sim_arm64').createSync(recursive: true);
+        fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').createSync(recursive: true);
+        processManager.addCommand(precache());
+
+        await run();
+
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => processManager,
+        Platform: () => platform,
+      },
+    );
+
+    testUsingContext(
+      'a failed engine download says to run precache, not precache --force',
+      () async {
+        processManager.addCommand(
+          const FakeCommand(
+            command: <String>['bin/flutter-watchos', '--no-color', '--no-version-check', 'precache'],
+            exitCode: 1,
+          ),
+        );
+
+        await expectToolExitLater(run(), allOf(contains('flutter-watchos precache'), isNot(contains('--force'))));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => processManager,
+        Platform: () => platform,
       },
     );
   });

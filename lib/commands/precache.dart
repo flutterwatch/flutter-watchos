@@ -75,18 +75,28 @@ class WatchosPrecacheCommand extends PrecacheCommand {
 
     if (boolArg('watchos')) {
       final Directory artifactDir = watchosArtifactDirectory(globals.fs);
-      if (boolArg('force')) {
-        if (artifactDir.existsSync()) {
-          artifactDir.deleteSync(recursive: true);
-        }
+      Future<void> updateEngine() =>
+          globals.cache.updateAll(<DevelopmentArtifact>{WatchosDevelopmentArtifact.watchos});
+      if (boolArg('force') && isDownloadedArtifactDirectory(globals.fs, artifactDir)) {
+        await redownloadEngine(artifactDir, updateEngine);
       } else {
+        if (boolArg('force')) {
+          // A WATCHOS_ENGINE_ARTIFACTS or workspace-root engine_artifacts/ is
+          // a hand-built engine this tool did not download and cannot
+          // download again; --force used to delete it all the same.
+          globals.printStatus(
+            'Keeping the watchOS engine at ${artifactDir.path}: it was not '
+            'downloaded by flutter-watchos (WATCHOS_ENGINE_ARTIFACTS, or an '
+            'engine_artifacts/ beside the checkout), so --force leaves it alone.',
+          );
+        }
         // Zips a previous download was left without: signed out, or not
         // given to that account. Invalidate the stamp so the cache re-enters
         // the artifact update, which retries exactly those zips — this is how
         // signing in, or gaining access, picks the missing engines up.
         retryOwedEnginesNextTime(artifactDir, globals.cache);
+        await updateEngine();
       }
-      await globals.cache.updateAll(<DevelopmentArtifact>{WatchosDevelopmentArtifact.watchos});
     }
 
     // Stock `flutter precache` with no platform flags downloads *every* enabled

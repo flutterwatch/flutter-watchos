@@ -410,6 +410,51 @@ Directory watchosArtifactDirectory(FileSystem fileSystem, {Platform? platform}) 
   return watchosToolRootDirectory(fileSystem).childDirectory('engine_artifacts');
 }
 
+/// The `engine_artifacts/` inside the CLI checkout: the one directory this
+/// tool downloads into, and so the only one it may delete. A
+/// `WATCHOS_ENGINE_ARTIFACTS` directory or a workspace-root `engine_artifacts/`
+/// is somebody's hand-built engine.
+Directory watchosDownloadedArtifactDirectory(FileSystem fileSystem) =>
+    watchosToolRootDirectory(fileSystem).childDirectory('engine_artifacts');
+
+/// Whether [artifactDir] is this tool's own download target
+/// ([watchosDownloadedArtifactDirectory]).
+bool isDownloadedArtifactDirectory(FileSystem fileSystem, Directory artifactDir) =>
+    fileSystem.path.equals(artifactDir.path, watchosDownloadedArtifactDirectory(fileSystem).path);
+
+/// Runs [download] — the engine update of `precache --force` — with the
+/// engine in [artifactDir] moved aside rather than deleted: if the download
+/// fails (no network, a refusal), the previous engine is put back instead of
+/// being lost with it. The copy goes once the download has succeeded.
+///
+/// The copy sits beside [artifactDir] as `engine_artifacts.previous`, a name
+/// .gitignore covers, so a run killed halfway leaves nothing that would make
+/// the checkout look modified to `upgrade`.
+Future<void> redownloadEngine(Directory artifactDir, Future<void> Function() download) async {
+  final Directory previous = artifactDir.parent.childDirectory('${artifactDir.basename}.previous');
+  if (previous.existsSync()) {
+    previous.deleteSync(recursive: true);
+  }
+  final bool hadEngine = artifactDir.existsSync();
+  if (hadEngine) {
+    artifactDir.renameSync(previous.path);
+  }
+  try {
+    await download();
+  } on Object {
+    if (hadEngine) {
+      if (artifactDir.existsSync()) {
+        artifactDir.deleteSync(recursive: true);
+      }
+      previous.renameSync(artifactDir.path);
+    }
+    rethrow;
+  }
+  if (previous.existsSync()) {
+    previous.deleteSync(recursive: true);
+  }
+}
+
 /// Local override: if zips are present here they are used instead of
 /// downloading. Used in development within the monorepo — `artifacts/` lives
 /// at the monorepo root, alongside the CLI checkout (so the CLI repo itself
