@@ -299,10 +299,11 @@ String? owedEngineAdvice(
         'The Simulator needs no account:\n'
         '  flutter-watchos build watchos --simulator';
   }
-  return 'The $mode engine is not installed: the last download was not given '
-      'it for this account.\n'
-      'Run `flutter-watchos precache` to check again; it says why if the '
-      'answer is still no.';
+  // Signed in, an engine is owed after a download that was refused it or
+  // could not reach the service; which of the two, `precache` says.
+  return 'The $mode engine is not installed yet: the last download did not '
+      'get it.\n'
+      'Run `flutter-watchos precache` to fetch it; it says why if it cannot.';
 }
 
 /// Extracts the machine-readable `error` code from an artifact-API gate

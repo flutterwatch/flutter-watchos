@@ -353,6 +353,9 @@ void main() {
       final String advice = owedEngineAdvice(artifactDir, release: true, signedIn: true)!;
       expect(advice, contains('flutter-watchos precache'));
       expect(advice, isNot(contains('flutter-watchos login')));
+      // It does not know why the engine is missing (a refusal, or no network),
+      // so it does not guess; `precache` prints the reason.
+      expect(advice, isNot(contains('for this account')));
     });
   });
 }
