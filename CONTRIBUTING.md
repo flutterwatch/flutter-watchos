@@ -40,6 +40,12 @@ Before cutting, on `dev`: make sure it is green on CI, roll `CHANGELOG.md`'s
 **Unreleased** section into the new version heading, and bump the version
 wherever it is stated (e.g. `README.md`).
 
+If the release bumps `packages/flutter_watchos`, publish that version to
+pub.dev before pushing `main` (`cd packages/flutter_watchos &&
+../../flutter/bin/flutter pub publish`): [doc/plugins.md](doc/plugins.md) on
+`main` tells people to add it from pub.dev, so it has to resolve as soon as
+`main` is public.
+
 ```bash
 git checkout main
 git pull --ff-only origin main
@@ -56,7 +62,13 @@ git tag -a v<flutter>-watchos.<X.Y.Z> -m "flutter-watchos <X.Y.Z>"
 # --follow-tags: they push every local tag reachable from main, including
 # ones that were never meant to be released.
 git push --atomic origin main refs/tags/v<flutter>-watchos.<X.Y.Z>
+
+# Only released tags belong on GitHub: this lists what is there.
+git ls-remote --tags origin
 ```
+
+A local tag that was never released is best deleted (`git tag -d <tag>`)
+before the push, so that no later push can publish it by mistake.
 
 Prefer to review the release as a whole? Open a `dev → main` pull request and
 merge it with GitHub's **"Create a merge commit"** button instead — that is the
