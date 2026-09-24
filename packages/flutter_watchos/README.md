@@ -194,3 +194,10 @@ flutter-watchos CLI, and kept through the App Store strip, so they survive
 
 On non-Apple platforms (Web, Android, desktop) every API returns a safe
 default and performs no FFI lookup.
+
+---
+
+_flutter_watchos is part of [flutter-watchos](https://flutterwatch.dev), an
+independent project that is not affiliated with, endorsed by, or sponsored by
+Google LLC or Apple Inc. Flutter and Dart are trademarks of Google LLC. Apple
+Watch and watchOS are trademarks of Apple Inc._
