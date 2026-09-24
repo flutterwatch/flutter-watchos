@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:meta/meta.dart';
 
 import '../watchos_auth.dart';
 import '../watchos_cache.dart';
@@ -39,8 +40,7 @@ class WatchosLoginCommand extends FlutterCommand {
       final (int startStatus, Map<String, Object?> start) =
           await _postJson(client, Uri.parse('$api/v1/auth/device'), <String, Object?>{});
       if (startStatus != 200) {
-        throwToolExit(_serverMessage(start) ??
-            'Could not reach the flutterwatch.dev service (HTTP $startStatus).');
+        throwToolExit(loginFailureMessage(startStatus, start));
       }
 
       final String deviceCode = _requireString(start, 'device_code');
@@ -98,7 +98,7 @@ class WatchosLoginCommand extends FlutterCommand {
           }
           return FlutterCommandResult.success();
         }
-        throwToolExit(_serverMessage(body) ?? 'Login failed (HTTP $status).');
+        throwToolExit(loginFailureMessage(status, body));
       }
       throwToolExit('Login timed out. Run `flutter-watchos login` again.');
     } on IOException catch (e) {
@@ -151,10 +151,34 @@ String _requireString(Map<String, Object?> body, String key) {
   );
 }
 
-String? _serverMessage(Map<String, Object?> body) {
-  final Object? message = body['message'] ?? body['error'];
-  return message is String && message.isNotEmpty ? message : null;
+/// What `login` says when the service answers [status] instead of success,
+/// with [body] its JSON reply (empty when it sent none).
+///
+/// A message the service wrote for people, such as the one for too many
+/// sign-in attempts, is passed on as it is. A server error sends only a
+/// code, and printed alone that read as the whole explanation: an HTTP 500
+/// ended `login` with the single word "internal".
+@visibleForTesting
+String loginFailureMessage(int status, Map<String, Object?> body) {
+  final String? message = _nonEmptyString(body['message']);
+  final String? code = _nonEmptyString(body['error']);
+  if (status >= 500) {
+    final String? detail = message ?? code;
+    return 'Login failed (HTTP $status${detail == null ? '' : ': $detail'}). '
+        'The flutterwatch.dev service had a problem on its side; try again in '
+        'a few minutes.';
+  }
+  if (message != null) {
+    return message;
+  }
+  if (code == 'expired_token') {
+    return 'The sign-in code expired before it was approved. Run '
+        '`flutter-watchos login` again.';
+  }
+  return 'Login failed (HTTP $status${code == null ? '' : ': $code'}).';
 }
+
+String? _nonEmptyString(Object? value) => value is String && value.isNotEmpty ? value : null;
 
 Future<(int, Map<String, Object?>)> _postJson(
   HttpClient client,

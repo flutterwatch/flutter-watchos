@@ -17,4 +17,36 @@ void main() {
     expect(description, contains('the Simulator needs none'));
     expect(description, isNot(contains('required')));
   });
+
+  group('loginFailureMessage', () {
+    // A service without migration 0009 answered the first request with
+    // HTTP 500 and {"error":"internal"}, and `login` printed "internal".
+    testWithoutContext('a server error says it failed, and with what status', () {
+      final String message = loginFailureMessage(500, <String, Object?>{'error': 'internal'});
+      expect(message, startsWith('Login failed (HTTP 500: internal).'));
+      expect(message, contains('try again'));
+      expect(loginFailureMessage(502, <String, Object?>{}), startsWith('Login failed (HTTP 502).'));
+    });
+
+    testWithoutContext("the service's own message is passed on as it is", () {
+      const tooMany = 'Too many sign-in attempts right now. '
+          'Wait a few minutes, then run `flutter-watchos login` again.';
+      expect(
+        loginFailureMessage(429, <String, Object?>{'error': 'slow_down', 'message': tooMany}),
+        tooMany,
+      );
+    });
+
+    testWithoutContext('a bare error code is shown with the status', () {
+      expect(
+        loginFailureMessage(400, <String, Object?>{'error': 'invalid_grant'}),
+        'Login failed (HTTP 400: invalid_grant).',
+      );
+      expect(loginFailureMessage(404, <String, Object?>{}), 'Login failed (HTTP 404).');
+      expect(
+        loginFailureMessage(400, <String, Object?>{'error': 'expired_token'}),
+        contains('`flutter-watchos login` again'),
+      );
+    });
+  });
 }
