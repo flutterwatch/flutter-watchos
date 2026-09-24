@@ -103,8 +103,10 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `doctor`
 
-  Verify the toolchain: Xcode + watchOS SDKs, simulator runtimes, engine
-  artifacts, and CLI health.
+  Verify the toolchain: Xcode + watchOS SDKs, simulator runtimes, which
+  engines are installed, whether this machine is signed in, and CLI health.
+  It reads local files only. The `Flutter` entry shows the SDK flutter-watchos
+  pins; leave that SDK off your PATH and keep your own `flutter` there.
 
   ```sh
   flutter-watchos doctor -v
@@ -171,9 +173,10 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `login` / `logout`
 
-  Connect this machine to your flutterwatch.dev account (required to
-  download engine artifacts; joining the closed beta is self-serve at
-  flutterwatch.dev).
+  Connect this machine to your flutterwatch.dev account. The Simulator
+  engine downloads without one; the engines for a physical watch and for
+  release builds need it. `login` is all it takes to get an account: the
+  page it opens signs you in with GitHub, and that creates the account.
 
   ```sh
   flutter-watchos login
@@ -182,12 +185,15 @@ where possible; watchOS-specific behaviour is called out per command.
 
   `login` prints a URL plus a short code; approve it in a browser and the
   CLI finishes automatically. Credentials are stored in
-  `~/.flutter-watchos/credentials.json`. See [accounts.md](accounts.md).
+  `~/.flutter-watchos/credentials.json`, and the next build downloads the
+  engines the machine was missing. `logout` revokes this machine's sign-in
+  on the service, then removes the file. See [accounts.md](accounts.md).
 
 - ### `precache`
 
   Download the watchOS engine artifacts ahead of time (otherwise fetched on
-  first build). `--force` re-downloads.
+  first build). `--force` downloads them all again, and keeps the engine you
+  had if that fails.
 
   ```sh
   flutter-watchos precache
@@ -234,7 +240,8 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Upgrade the flutter-watchos toolchain to its latest release tag (this
   moves the pinned Flutter SDK and engine together — never upgrade the
-  vendored Flutter SDK yourself).
+  vendored Flutter SDK yourself). The engine downloads again only when the
+  new release pins a different one.
 
   ```sh
   flutter-watchos upgrade

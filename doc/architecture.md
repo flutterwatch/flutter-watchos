@@ -14,12 +14,14 @@ bootstraps: clone the pinned SDK, compile the tool to a snapshot, go.
 Upgrades move the pinned SDK and the engine together (`flutter-watchos
 upgrade`); mixing your own Flutter checkout in would break the engine pin.
 
-## The engine: pre-built, closed-source, account-gated
+## The engine: pre-built, closed-source
 
 The watchOS engine (a patched Flutter engine built for
 `watchos`/`watchsimulator`) ships as pre-built binaries downloaded from
-flutterwatch.dev — signing in with `flutter-watchos login` ties downloads to
-your account. The engine source is not distributed. Variants:
+flutterwatch.dev. The Simulator variant downloads without an account; the
+device variants and the host SDKs need a signed-in machine
+(`flutter-watchos login`, see [accounts.md](accounts.md)). The engine source
+is not distributed. Variants:
 
 | Artifact | Runs on | Mode |
 |---|---|---|

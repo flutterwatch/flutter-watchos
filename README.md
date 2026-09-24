@@ -6,11 +6,11 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 > **Apple Silicon Mac only.** Xcode is required. The watchOS engine tools are arm64-only, so an Intel Mac, or a terminal running under Rosetta, cannot build for the watch.
 
-> **Closed beta.** The watchOS engine ships as pre-built binaries tied to your account. Joining is self-serve and instant — sign in with GitHub at [flutterwatch.dev](https://flutterwatch.dev), then `flutter-watchos login`.
+> **Accounts.** The watchOS engine ships as pre-built binaries from flutterwatch.dev. The Simulator engine needs no account. Running on a physical watch and building for release need one — run `flutter-watchos login`: the page it opens signs you in with GitHub, and that creates the account. See [Accounts & engine artifacts](doc/accounts.md).
 
 ## Current version
 
-- flutter-watchos: `0.1.0-beta.13`
+- flutter-watchos: `0.1.0`
 - Flutter SDK: `3.47.5` (`6a19cca56475dbfba1478ee68d7bd0c2ef891da1`)
 - watchOS engine artifacts: `engine-31ccab0d37ab`
 
@@ -20,7 +20,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
 export PATH="$PATH:$PWD/bin"
-flutter-watchos login      # connect your flutterwatch.dev account (beta access)
+flutter-watchos login      # your flutterwatch.dev account — optional for the Simulator
 flutter-watchos precache   # download the watchOS engine
 flutter-watchos doctor
 ```

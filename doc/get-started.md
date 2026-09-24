@@ -16,11 +16,11 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 
 - A watchOS Simulator runtime (Xcode → Settings → Components), or a paired
   physical Apple Watch (Series 9 / Ultra 2 or later) for on-device runs.
-- A [flutterwatch.dev](https://flutterwatch.dev) account — engine artifact
-  downloads are tied to your account. Joining the closed beta is self-serve:
-  sign in with GitHub at [api.flutterwatch.dev](https://api.flutterwatch.dev)
-  and click "Join the beta" — you're in immediately. Beta accounts build and
-  run in debug and profile modes.
+- A [flutterwatch.dev](https://flutterwatch.dev) account, for anything beyond
+  the Simulator. The Simulator engine downloads without one; the engines for a
+  physical watch and for release builds need you to be signed in.
+  `flutter-watchos login` (step 2) is all it takes: the page it opens signs you
+  in with GitHub, and that creates the account — no form, nothing to wait for.
 
 ## 1. Install the CLI
 
@@ -37,29 +37,40 @@ compiles the tool); later runs start instantly.
 
 ```sh
 flutter-watchos login    # connects this machine to your flutterwatch.dev account
+                         # (skip it if the Simulator is all you need for now)
 flutter-watchos precache # downloads the watchOS engine artifacts
 flutter-watchos doctor   # verifies Xcode, SDKs, simulators, and engine
 ```
 
 `login` prints a URL and a short code — open the URL, sign in with GitHub, and
-confirm the code. Only the `Flutter` and `Xcode` entries in `doctor` are
-required; Android-related warnings can be ignored.
+confirm the code. There is nothing to do on the website beforehand.
 
-During the closed beta, `precache` fetches the debug (Simulator) and profile
-(device) engines; the release engines are reported as "not in the closed
-beta, skipped" — that is expected and everything you need. If your account
-later gains release access (your dashboard at
-[api.flutterwatch.dev](https://api.flutterwatch.dev) will say "release engine
-enabled"), just run `flutter-watchos precache` again — the release engines
-download automatically.
+Signed in, `precache` fetches every engine: debug (Simulator), profile and
+release (device), and the two host SDKs the device builds compile against.
+Signed out, it fetches the Simulator engine, reports the others as "needs an
+account, skipped", and tells you how to get them: after `flutter-watchos
+login`, the next build downloads only the missing engines (or run
+`flutter-watchos precache` again to fetch them straight away).
+
+`doctor` on a machine that skipped `login` (Android, Chrome and network
+entries left out):
 
 ```
 $ flutter-watchos doctor
-Doctor summary (to see all details, run flutter-watchos doctor -v):
-[✓] Flutter (3.47.5, on macOS)
-[✓] Xcode - develop for iOS and watchOS
-[✓] Connected device (1 available)
+Doctor summary (to see all details, run flutter doctor -v):
+[✓] Flutter (3.47.5, pinned by flutter-watchos, on macOS …, locale …)
+[✓] watchOS toolchain - develop for Apple Watch devices (Simulator engine, not signed in)
+[✓] Xcode - develop for iOS and macOS (Xcode 27.0)
+[✓] Connected device (3 available)
 ```
+
+The `watchOS toolchain` entry is the one that matters: it checks Xcode, the
+watchOS SDK and Simulator runtime, and says which engines are installed and
+whether this machine is signed in (`flutter-watchos doctor -v` lists them).
+Signed in with every engine, it reads `(all engines, signed in)`. The
+`Flutter` entry is the Flutter SDK flutter-watchos pins: leave it off your
+PATH and keep using your own `flutter` for other projects. Android and Chrome
+warnings can be ignored.
 
 ## 3. Set up a watchOS simulator
 

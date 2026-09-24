@@ -1,7 +1,7 @@
 ---
-name: Beta feedback
-about: General feedback from the closed beta (DX, docs, missing features)
-labels: beta-feedback
+name: Feedback
+about: General feedback (DX, docs, missing features)
+labels: enhancement
 ---
 
 **What were you trying to do?**

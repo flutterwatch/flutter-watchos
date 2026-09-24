@@ -183,7 +183,7 @@ cache, rather than re-decoding per navigation.
 
 ## Build modes
 
-Judge performance in **profile** on a physical watch. Note that release
-engines are not part of the closed beta by default (see
-[Accounts & engine artifacts](accounts.md)), so profile is the mode to
-benchmark in unless your account has release access.
+Judge performance in **profile** on a physical watch: it runs the same AOT
+code as release and keeps the timeline and DevTools that release strips out.
+Both need a signed-in machine (see
+[Accounts & engine artifacts](accounts.md)).
