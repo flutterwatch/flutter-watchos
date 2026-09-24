@@ -85,7 +85,7 @@ class WatchosPluginPortCommand extends FlutterCommand {
         negatable: false,
         help:
             'Report what would be written without touching the filesystem. '
-            'Useful for previewing the layout on a plugin you are not yet '
+            'Useful for checking the layout on a plugin you are not yet '
             'sure you want to port.',
       )
       ..addFlag(
