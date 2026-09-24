@@ -175,7 +175,7 @@ flutter/bin/dart test test/general
 
 BSD 3-Clause — see [LICENSE](LICENSE).
 
-This project incorporates code from Flutter and flutter-tizen (both BSD 3-Clause). The pre-built engine artifacts bundle the Flutter engine and Dart SDK; their aggregated open-source license ships inside each artifact. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full attribution.
+This project incorporates code from Flutter, flutter-tizen and flutter-tvos (all BSD 3-Clause). The pre-built engine artifacts bundle the Flutter engine and Dart SDK; their aggregated open-source license ships as `LICENSES.txt` in each watchOS engine folder the CLI installs (`engine_artifacts/watchos_*/`), and covers the host SDK folders installed beside them. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full attribution.
 
 ---
 
