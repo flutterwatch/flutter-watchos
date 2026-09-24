@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart' show OperatingSystemUtils;
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/base/utils.dart' show getElapsedAsMilliseconds, getElapsedAsSeconds;
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/flutter_cache.dart';
@@ -656,7 +657,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         index++;
         final String url = artifactDownloadUrl(zipName);
         final File tempZip = tempDir.childFile(zipName);
-        final Status status = _logger.startProgress(
+        final line = _TreeLine(
+          _logger,
           _treeLine(index, _artifactZipNames.length, _friendlyName(zipName)),
         );
         try {
@@ -691,25 +693,19 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
                 haveAnEngine: extractedAny,
               );
               if (skipped != null) {
-                status.cancel();
                 skippedZips.add(zipName);
                 needsAccount |= skipped == SkippedGate.needsAccount;
                 if (skipped == SkippedGate.refused) {
                   refusals.add(errorCode, _serverMessage(tempZip), signedIn: token != null);
                 }
-                _logger.printStatus(
-                  _treeLine(index, _artifactZipNames.length,
-                      '${_friendlyName(zipName)} — ${skipped.note}'),
-                );
+                line.note(skipped.note);
                 continue;
               }
-              status.cancel();
               throwToolExit(
                 _apiGateMessage(zipName, httpCode, tempZip, curlResult, signedIn: token != null),
               );
             }
           } else if (curlResult.exitCode != 0) {
-            status.cancel();
             // Only reachable when WATCHOS_ENGINE_BASE_URL points the CLI at a
             // custom host, so send the user to that host — not to the default
             // one, which is not where their artifacts live.
@@ -732,12 +728,13 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
           ]);
 
           if (unzipResult.exitCode != 0) {
-            status.cancel();
             throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
           }
           extractedAny = true;
+          line.done();
         } finally {
-          status.stop();
+          // Ends the line before a failure is reported under it.
+          line.end();
         }
       }
 
@@ -827,9 +824,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         index++;
         final String url = artifactDownloadUrl(zipName);
         final File tempZip = tempDir.childFile(zipName);
-        final Status status = _logger.startProgress(
-          _treeLine(index, pending.length, _friendlyName(zipName)),
-        );
+        final line = _TreeLine(_logger, _treeLine(index, pending.length, _friendlyName(zipName)));
         try {
           final RunResult curlResult = await _processUtils.run(<String>[
             'curl',
@@ -845,7 +840,6 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
 
           final String httpCode = curlResult.stdout.trim();
           if (curlResult.exitCode != 0 || httpCode != '200') {
-            status.cancel();
             stillPending.add(zipName);
             // An engine is already installed here, so every refusal is
             // survivable; only what is said about it differs.
@@ -863,9 +857,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
                 (errorCode != null
                     ? SkippedGate.refused.note
                     : 'unavailable right now, will retry on the next precache');
-            _logger.printStatus(
-              _treeLine(index, pending.length, '${_friendlyName(zipName)} — $note'),
-            );
+            line.note(note);
             // Anything else the service had to say (a sign-in it no longer
             // accepts, an account it has switched off) is its wording to give.
             if (skipped == null || skipped == SkippedGate.refused) {
@@ -883,12 +875,13 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             location.path,
           ]);
           if (unzipResult.exitCode != 0) {
-            status.cancel();
             throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
           }
           extractedAny = true;
+          line.done();
         } finally {
-          status.stop();
+          // Ends the line before a failure is reported under it.
+          line.end();
         }
       }
     } finally {
@@ -988,9 +981,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
       var index = 0;
       for (final zip in zips) {
         index++;
-        final Status status = _logger.startProgress(
-          _treeLine(index, zips.length, _friendlyName(zip.basename)),
-        );
+        final line = _TreeLine(_logger, _treeLine(index, zips.length, _friendlyName(zip.basename)));
         try {
           final RunResult result = await _processUtils.run(<String>[
             'unzip',
@@ -1000,11 +991,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             staging.path,
           ]);
           if (result.exitCode != 0) {
-            status.cancel();
             throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
           }
+          line.done();
         } finally {
-          status.stop();
+          line.end();
         }
       }
       _finalizeExtractedTree(staging, operatingSystemUtils);
@@ -1047,6 +1038,59 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
         operatingSystemUtils.chmod(file, 'a+r,a+x');
       }
     }
+  }
+}
+
+/// One engine's line in the download tree: its name, a spinner while it
+/// downloads, and then — on the same line — how long it took, or what
+/// happened to it instead.
+///
+/// [Logger.startProgress] cannot end a line with a note: its status always
+/// finishes the line itself. A skipped engine therefore came out as three
+/// lines — the progress line, the line again with the note, and the elapsed
+/// time on a line of its own, because the status was both cancelled and
+/// stopped.
+class _TreeLine {
+  _TreeLine(this._logger, this._text) {
+    // The verbose logger puts every message on a line of its own, so there
+    // the whole line is printed once, at the end.
+    if (!_logger.isVerbose) {
+      _logger.printStatus(_text, newline: false, wrap: false);
+    }
+    _spinner = _logger.startSpinner();
+    _stopwatch.start();
+  }
+
+  final Logger _logger;
+  final String _text;
+  final _stopwatch = Stopwatch();
+  late final Status _spinner;
+  var _ended = false;
+
+  /// Ends the line with how long the engine took, aligned the way
+  /// [Logger.startProgress] aligns it.
+  void done() {
+    final Duration elapsed = _stopwatch.elapsed;
+    final String time = elapsed.inSeconds > 2
+        ? getElapsedAsSeconds(elapsed)
+        : getElapsedAsMilliseconds(elapsed);
+    final int gap = (kDefaultStatusPadding - _text.length).clamp(0, kDefaultStatusPadding) + 5;
+    _end('${' ' * gap}${time.padLeft(8)}');
+  }
+
+  /// Ends the line with [note] in place of the time.
+  void note(String note) => _end(' — $note');
+
+  /// Ends the line as it stands; does nothing once the line has ended.
+  void end() => _end('');
+
+  void _end(String suffix) {
+    if (_ended) {
+      return;
+    }
+    _ended = true;
+    _spinner.stop();
+    _logger.printStatus(_logger.isVerbose ? '$_text$suffix' : suffix, wrap: false);
   }
 }
 

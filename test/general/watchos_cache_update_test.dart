@@ -12,6 +12,7 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_watchos/watchos_auth.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
@@ -677,4 +678,84 @@ void main() {
     },
     overrides: overrides,
   );
+
+  // BufferLogger hands out silent statuses, so the tests above cannot see
+  // how a line ends on a real terminal. A skipped engine used to come out as
+  // three lines there: the progress line, the line again with its note, and
+  // the elapsed time on a line of its own.
+  for (final ansi in <bool>[false, true]) {
+    testUsingContext(
+      'each engine is exactly one line (${ansi ? 'terminal' : 'piped'} output)',
+      () async {
+        final stdio = FakeStdio();
+        final stdoutLogger = StdoutLogger(
+          terminal: AnsiTerminal(stdio: stdio, platform: FakePlatform(stdoutSupportsAnsi: ansi)),
+          stdio: stdio,
+          outputPreferences: OutputPreferences.test(showColor: ansi),
+        );
+        final String simulator = kWatchosEngineZipNames.first;
+        processManager.addCommands(<FakeCommand>[
+          curlOk(simulator),
+          unzipOk(simulator),
+          for (final String zip in kWatchosEngineZipNames.skip(1)) curlNeedsAccount(zip),
+        ]);
+
+        await WatchosEngineArtifacts(
+          makeCache(),
+          logger: stdoutLogger,
+          platform: platform,
+          processManager: processManager,
+        ).updateInner(makeUpdater(), fs, FakeOperatingSystemUtils());
+
+        final List<String> lines = screenLines(stdio.writtenToStdout.join());
+        for (final name in <String>[
+          'watchos-debug-sim-arm64',
+          'watchos-profile-arm64',
+          'watchos-release-arm64',
+          'watchos-host-debug-unopt',
+          'watchos-host-release',
+        ]) {
+          expect(lines.where((String line) => line.contains('] $name')), hasLength(1), reason: name);
+        }
+        expect(lines.where((String line) => line.endsWith('needs an account, skipped')), hasLength(4));
+        expect(lines.singleWhere((String line) => line.contains('watchos-debug-sim-arm64')), endsWith('ms'));
+        expect(
+          lines.where((String line) => RegExp(r'^\s*[\d,.]+m?s$').hasMatch(line)),
+          isEmpty,
+          reason: 'no elapsed time on a line of its own',
+        );
+      },
+      overrides: overrides,
+    );
+  }
+}
+
+/// The lines a terminal shows for [output]: a backspace moves the cursor
+/// back one column, anything else overwrites what is under it.
+List<String> screenLines(String output) {
+  final lines = <String>[];
+  var line = <int>[];
+  var cursor = 0;
+  for (final int rune in output.runes) {
+    if (rune == 0x0A) {
+      lines.add(String.fromCharCodes(line).trimRight());
+      line = <int>[];
+      cursor = 0;
+    } else if (rune == 0x08) {
+      if (cursor > 0) {
+        cursor--;
+      }
+    } else {
+      if (cursor < line.length) {
+        line[cursor] = rune;
+      } else {
+        line.add(rune);
+      }
+      cursor++;
+    }
+  }
+  if (line.isNotEmpty) {
+    lines.add(String.fromCharCodes(line).trimRight());
+  }
+  return lines;
 }
