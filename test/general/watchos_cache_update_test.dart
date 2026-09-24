@@ -12,6 +12,7 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_watchos/watchos_auth.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
 
 import '../src/common.dart';
@@ -47,15 +48,16 @@ void main() {
     logger = BufferLogger.test();
   });
 
-  WatchosEngineArtifacts makeArtifacts() {
-    final cache = Cache.test(
-      processManager: processManager,
-      fileSystem: fs,
-      platform: platform,
-      logger: logger,
-    );
+  Cache makeCache() => Cache.test(
+    processManager: processManager,
+    fileSystem: fs,
+    platform: platform,
+    logger: logger,
+  );
+
+  WatchosEngineArtifacts makeArtifacts([Cache? cache]) {
     return WatchosEngineArtifacts(
-      cache,
+      cache ?? makeCache(),
       logger: logger,
       platform: platform,
       processManager: processManager,
@@ -72,23 +74,29 @@ void main() {
     allowedBaseUrls: const <String>[],
   );
 
-  List<Pattern> curlCommand(String zipName) => <Pattern>[
+  List<Pattern> curlCommand(String zipName, {bool signedIn = false}) => <Pattern>[
     'curl',
     '--location',
     '--silent',
     '--show-error',
+    '--connect-timeout',
+    '15',
     '--write-out',
     '%{http_code}',
+    if (signedIn) ...<Pattern>['--config', RegExp(r'auth\.curl$')],
     '--output',
     RegExp('.*/$zipName'),
     '$_api/v1/artifacts/$_tag/$zipName',
   ];
 
-  FakeCommand curlOk(String zipName) => FakeCommand(
-    command: curlCommand(zipName),
+  /// Where curl was told to write the response.
+  String outputPath(List<String> command) => command[command.indexOf('--output') + 1];
+
+  FakeCommand curlOk(String zipName, {bool signedIn = false}) => FakeCommand(
+    command: curlCommand(zipName, signedIn: signedIn),
     stdout: '200',
     onRun: (List<String> command) {
-      fs.file(command[7])
+      fs.file(outputPath(command))
         ..createSync(recursive: true)
         ..writeAsStringSync('PK');
     },
@@ -104,7 +112,7 @@ void main() {
     command: curlCommand(zipName),
     stdout: '$status',
     onRun: (List<String> command) {
-      fs.file(command[7])
+      fs.file(outputPath(command))
         ..createSync(recursive: true)
         ..writeAsStringSync('{"error":"$error","message":"$message"}');
     },
@@ -134,6 +142,19 @@ void main() {
     },
   );
 
+  /// The retry of an owed zip unzips over the installed engine (`-o`).
+  FakeCommand unzipOverOk(String zipName) => FakeCommand(
+    command: <Pattern>['unzip', '-q', '-o', RegExp('.*/$zipName'), '-d', _location],
+    onRun: (List<String> command) {
+      final String stem = zipName.substring(0, zipName.length - '.zip'.length);
+      fs
+          .directory(command[5])
+          .childDirectory(stem)
+          .childFile('libflutter_engine.dylib')
+          .createSync(recursive: true);
+    },
+  );
+
   FakeCommand unzipCorrupt(String zipName) => FakeCommand(
     command: unzipCommand(zipName),
     exitCode: 9,
@@ -145,6 +166,20 @@ void main() {
         .file('$_location/watchos_debug_sim_arm64/keep')
         .createSync(recursive: true);
     writeEngineVersionStamp(fs.directory(_location), 'engine-previous00000');
+  }
+
+  void signIn() => writeWatchosCredentials(fs, platform, token: 'fw_test', login: 'someone');
+
+  /// What a signed-out `precache` leaves: the Simulator engine, stamped, the
+  /// other four owed, and the cache stamp current.
+  Directory seedSignedOutInstall(Cache cache) {
+    final Directory location = fs.directory(_location);
+    location.childDirectory('watchos_debug_sim_arm64').createSync(recursive: true);
+    writeEngineVersionStamp(location, _tag);
+    writePendingEngineZips(location, kWatchosEngineZipNames.skip(1));
+    cache.getRoot().createSync(recursive: true);
+    cache.setStampFor(kWatchosEngineStampName, _tag);
+    return location;
   }
 
   final overrides = <Type, Generator>{
@@ -374,6 +409,114 @@ void main() {
 
       expect(processManager, hasNoRemainingExpectations);
       expect(readEngineVersionStamp(location), _tag);
+    },
+    overrides: overrides,
+  );
+
+  // Before this, a machine that never signed in was never up to date: every
+  // run, build and drive asked the service again for the four engines that
+  // need an account, printed four "skipped" lines and the sign-in hint, and
+  // offline it waited on the network first.
+  testUsingContext(
+    'signed out, the engines left owed do not make the engine stale',
+    () async {
+      final Cache cache = makeCache();
+      seedSignedOutInstall(cache);
+
+      expect(await makeArtifacts(cache).isUpToDate(fs), isTrue);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'a missing engine nobody said was owed still makes the engine stale',
+    () async {
+      final Cache cache = makeCache();
+      final Directory location = seedSignedOutInstall(cache);
+      writePendingEngineZips(location, const <String>['host_release.zip']);
+
+      expect(await makeArtifacts(cache).isUpToDate(fs), isFalse);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'the Simulator engine is never taken as owed',
+    () async {
+      final Cache cache = makeCache();
+      final Directory location = seedSignedOutInstall(cache);
+      location.childDirectory('watchos_debug_sim_arm64').deleteSync(recursive: true);
+      writePendingEngineZips(location, kWatchosEngineZipNames);
+
+      expect(await makeArtifacts(cache).isUpToDate(fs), isFalse);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'after login, the next update fetches exactly the owed engines, once',
+    () async {
+      final Cache cache = makeCache();
+      final Directory location = seedSignedOutInstall(cache);
+      final WatchosEngineArtifacts artifacts = makeArtifacts(cache);
+      signIn();
+
+      // What `login` does once the credentials are written.
+      expect(retryOwedEnginesNextTime(location, cache), isTrue);
+      expect(await artifacts.isUpToDate(fs), isFalse);
+
+      for (final String zip in kWatchosEngineZipNames.skip(1)) {
+        processManager.addCommands(<FakeCommand>[curlOk(zip, signedIn: true), unzipOverOk(zip)]);
+      }
+      await artifacts.update(makeUpdater(), logger, fs, FakeOperatingSystemUtils());
+
+      expect(processManager, hasNoRemainingExpectations);
+      expect(readPendingEngineZips(location), isEmpty);
+      expect(await artifacts.isUpToDate(fs), isTrue);
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'nothing owed, signing in leaves the engine alone',
+    () async {
+      final Cache cache = makeCache();
+      final Directory location = seedSignedOutInstall(cache);
+      writePendingEngineZips(location, const <String>[]);
+
+      expect(retryOwedEnginesNextTime(location, cache), isFalse);
+      expect(cache.getStampFor(kWatchosEngineStampName), _tag);
+    },
+    overrides: overrides,
+  );
+
+  // The retry's "will retry on the next precache" has to be true: a retry
+  // that failed is not repeated by every build that follows.
+  testUsingContext(
+    'a retry that could not reach the service waits for the next precache',
+    () async {
+      final Cache cache = makeCache();
+      final Directory location = seedSignedOutInstall(cache);
+      final WatchosEngineArtifacts artifacts = makeArtifacts(cache);
+      signIn();
+      retryOwedEnginesNextTime(location, cache);
+      processManager.addCommands(<FakeCommand>[
+        for (final String zip in kWatchosEngineZipNames.skip(1))
+          FakeCommand(
+            command: curlCommand(zip, signedIn: true),
+            exitCode: 28,
+            stdout: '000',
+            stderr: 'curl: (28) Connection timed out after 15001 milliseconds',
+          ),
+      ]);
+
+      await artifacts.update(makeUpdater(), logger, fs, FakeOperatingSystemUtils());
+
+      expect(logger.statusText, contains('will retry on the next precache'));
+      expect(readPendingEngineZips(location), kWatchosEngineZipNames.skip(1).toList());
+      expect(await artifacts.isUpToDate(fs), isTrue);
+      expect(processManager, hasNoRemainingExpectations);
     },
     overrides: overrides,
   );

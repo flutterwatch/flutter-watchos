@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 import '../watchos_auth.dart';
+import '../watchos_cache.dart';
 
 /// Connects the CLI to a flutterwatch.dev account via an OAuth-style
 /// device-code flow: prints a URL + short code, the user approves in a
@@ -82,10 +83,17 @@ class WatchosLoginCommand extends FlutterCommand {
             login: login,
             operatingSystemUtils: globals.os,
           );
+          // Engines a signed-out download left owed can arrive now: have the
+          // next build fetch them, once, instead of waiting for `precache`.
+          final bool owedEngines =
+              retryOwedEnginesNextTime(watchosArtifactDirectory(globals.fs), globals.cache);
           globals.printStatus(
             '\nLogged in${login != null ? ' as $login' : ''}. '
             'Credentials stored in ${watchosCredentialsFile(globals.fs, globals.platform).path}.',
           );
+          if (owedEngines) {
+            globals.printStatus(kOwedEnginesAfterSignInNote);
+          }
           return FlutterCommandResult.success();
         }
         throwToolExit(_serverMessage(body) ?? 'Login failed (HTTP $status).');

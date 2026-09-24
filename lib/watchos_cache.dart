@@ -22,13 +22,17 @@ import 'watchos_auth.dart';
 
 const String kWatchosEngineStampName = 'watchos-sdk';
 
+/// The public engine: the one a machine that is not signed in gets, and the
+/// only one a debug (Simulator) build needs. It is never left owed.
+const String kWatchosSimulatorEngineZipName = 'watchos_debug_sim_arm64.zip';
+
 /// Every engine artifact zip, in download order.
 ///
 /// NOTE: there is deliberately no `watchos_debug_arm64` — debug (JIT) cannot
 /// exist on a physical watch (the device SDK removes the Mach APIs the Dart
 /// JIT VM needs). The Simulator is the debug path; devices use profile/release.
 const List<String> kWatchosEngineZipNames = <String>[
-  'watchos_debug_sim_arm64.zip',
+  kWatchosSimulatorEngineZipName,
   'watchos_profile_arm64.zip',
   'watchos_release_arm64.zip',
   'host_debug_unopt.zip',
@@ -38,9 +42,11 @@ const List<String> kWatchosEngineZipNames = <String>[
 /// Marker file inside the artifact directory listing the zips a previous
 /// download could not have yet — the device and release engines of a machine
 /// that was not signed in, or engines the service does not give that account.
-/// While it is non-empty, `flutter-watchos precache` re-checks those zips — so
-/// signing in, or gaining access, picks the missing engines up with a plain
-/// `precache`, no cache-nuking required.
+/// While it is non-empty, `flutter-watchos precache` re-checks those zips, and
+/// so does the first build after `flutter-watchos login` — so signing in, or
+/// gaining access, picks the missing engines up without any cache-nuking.
+/// Other commands leave them alone: nothing about them can change between
+/// one build and the next.
 const String kWatchosPendingDownloadsFileName = '.pending_downloads';
 
 /// Marker file recording the engine tag a *downloaded* artifact directory was
@@ -177,6 +183,26 @@ void writePendingEngineZips(Directory artifactDir, Iterable<String> zipNames) {
   }
   marker.writeAsStringSync('${names.join('\n')}\n');
 }
+
+/// Makes the next command that needs the engine retry the zips [artifactDir]
+/// still owes, by invalidating the engine's cache stamp; returns whether any
+/// are owed.
+///
+/// Owed engines do not make the cache stale by themselves (see
+/// [WatchosEngineArtifacts.isUpToDateInner]), so something has to say when a
+/// retry could turn out differently: `precache`, and signing in.
+bool retryOwedEnginesNextTime(Directory artifactDir, Cache cache) {
+  if (readPendingEngineZips(artifactDir).isEmpty) {
+    return false;
+  }
+  cache.setStampFor(kWatchosEngineStampName, 'pending-downloads');
+  return true;
+}
+
+/// Said by `login` when the machine owes engines from a signed-out download.
+const String kOwedEnginesAfterSignInNote =
+    'The engines for a physical watch and for release builds download with '
+    'your next build, or run `flutter-watchos precache` to fetch them now.';
 
 /// A gate response that leaves one zip out instead of ending the download.
 enum SkippedGate {
@@ -425,6 +451,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
 
   static const List<String> _artifactZipNames = kWatchosEngineZipNames;
 
+  /// How long curl may take to connect to the artifact service. The download
+  /// itself has no limit; a service that cannot be reached at all should not
+  /// hold a build up for the system's TCP timeout.
+  static const int _connectTimeoutSeconds = 15;
+
   @override
   String get displayName => 'watchOS Engine';
 
@@ -482,6 +513,31 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     <String>['host_release', ''],
   ];
 
+  /// Up to date when every engine directory is there, or is one a previous
+  /// download left owed.
+  ///
+  /// The inherited check wants all five directories, so a machine that never
+  /// signed in — which has only the Simulator engine — was never up to date:
+  /// every `run`, `build` and `drive` went back to the service for the four
+  /// engines it had just been told need an account, printed four "skipped"
+  /// lines and the sign-in hint again, and offline it waited on the network
+  /// first. Nothing about an owed engine changes from one build to the next;
+  /// `precache` and `login` invalidate the stamp when a retry could succeed
+  /// (see [retryOwedEnginesNextTime]).
+  ///
+  /// The Simulator engine never counts as owed, so a hand-edited marker cannot
+  /// hide a missing one.
+  @override
+  bool isUpToDateInner(FileSystem fileSystem) {
+    final owed = <String>{
+      for (final String zip in readPendingEngineZips(location))
+        if (zip != kWatchosSimulatorEngineZipName) zip.substring(0, zip.length - '.zip'.length),
+    };
+    return getBinaryDirs().every(
+      (List<String> dir) => owed.contains(dir[0]) || location.childDirectory(dir[0]).existsSync(),
+    );
+  }
+
   @override
   List<String> getLicenseDirs() => const <String>[];
 
@@ -505,8 +561,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     // `location` (watchosArtifactDirectory) may resolve to a pre-extracted
     // engine_artifacts/ at the workspace root, or a previous download. If it
     // already holds extracted engine variant dirs, use it as-is — except for
-    // zips a previous download was not yet entitled to, which are retried
-    // here (this is how release engines arrive after an account upgrade).
+    // zips a previous download left owed, which are retried here (this is how
+    // the device and release engines arrive after `login`).
     if (location.existsSync() &&
         location
             .listSync()
@@ -589,6 +645,8 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             if (!apiMode) '--fail',
             '--silent',
             '--show-error',
+            // An unreachable host fails fast instead of holding up the build.
+            '--connect-timeout', '$_connectTimeoutSeconds',
             // In API mode capture the HTTP status so gate responses (401/403)
             // can be surfaced with the server's message instead of a bare
             // curl failure.
@@ -708,11 +766,11 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
     staging.renameSync(location.path);
   }
 
-  /// Retries the zips a previous download was not entitled to, on top of an
+  /// Retries the zips a previous download left owed, on top of an
   /// otherwise-populated artifact directory.
   ///
-  /// Nothing here is fatal: the existing debug/profile engines keep working
-  /// whatever happens, so a still-gated zip is re-skipped (and stays pending)
+  /// Nothing here is fatal: the engines already installed keep working
+  /// whatever happens, so a still-refused zip is re-skipped (and stays owed)
   /// and a transient failure is reported and retried on the next `precache`.
   Future<void> _fetchPendingZips(
     List<String> pending,
@@ -741,6 +799,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
             '--location',
             '--silent',
             '--show-error',
+            '--connect-timeout', '$_connectTimeoutSeconds',
             '--write-out', '%{http_code}',
             ...curlAuthArgs(token, tempDir, operatingSystemUtils),
             '--output', tempZip.path,
