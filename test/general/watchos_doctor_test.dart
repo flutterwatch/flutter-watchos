@@ -329,6 +329,82 @@ void main() {
     });
   });
 
+  // The pinned SDK sits on a detached HEAD, so stock Flutter's entry read
+  // "[!] Flutter (Channel [user-branch], …)" on every install, and told people
+  // to switch channel and to put the pinned SDK first on their PATH.
+  group('PinnedFlutterValidator', () {
+    const versionOnUnknownChannel =
+        'Flutter version 3.47.4 on channel [user-branch] at /cli/flutter\n'
+        'Currently on an unknown channel. Run `flutter channel` to switch to an official channel.\n'
+        "If that doesn't fix the issue, try deleting the 'bin/cache/flutter.version.json' file in "
+        'your Flutter SDK directory and then reinstall Flutter by following instructions at '
+        'https://flutter.dev/setup.';
+    const pathWarning =
+        'Warning: `flutter` on your path resolves to /Users/me/sdk/flutter/bin/flutter, which is '
+        'not inside your current Flutter SDK checkout at /cli/flutter. Consider adding '
+        '/cli/flutter/bin to the front of your path.';
+    const noDartOnPath =
+        'The dart binary is not on your path. Consider adding /cli/flutter/bin to your path.';
+    const intentional =
+        'If those were intentional, you can disregard the above warnings; however it is '
+        'recommended to use "git" directly to perform update checks and upgrades.';
+    const statusInfo = 'Channel [user-branch], 3.47.4, on macOS 26.0 25A354 darwin-arm64, locale en-US';
+
+    ValidationResult stock(List<ValidationMessage> extra, {String status = statusInfo}) =>
+        ValidationResult(ValidationType.partial, <ValidationMessage>[
+          const ValidationMessage.hint(versionOnUnknownChannel),
+          const ValidationMessage.hint(pathWarning),
+          const ValidationMessage.hint(noDartOnPath),
+          const ValidationMessage('Upstream repository https://github.com/flutter/flutter.git'),
+          const ValidationMessage('Framework revision 9584c67132 (5 weeks ago), 2026-08-20'),
+          ...extra,
+          const ValidationMessage(intentional),
+        ], statusInfo: status);
+
+    testWithoutContext('a fresh install is [✓], and says the SDK is pinned', () async {
+      final ValidationResult result = await PinnedFlutterValidator(_FakeValidator(stock(const <ValidationMessage>[]))).validate();
+
+      expect(result.type, ValidationType.success);
+      expect(result.statusInfo, '3.47.4, pinned by flutter-watchos, on macOS 26.0 25A354 darwin-arm64, locale en-US');
+      expect(_texts(result).first, 'Flutter version 3.47.4 at /cli/flutter, pinned by flutter-watchos');
+      expect(result.messages.every((ValidationMessage m) => m.isInformation), isTrue);
+      final String all = _texts(result).join('\n');
+      expect(all, isNot(contains('unknown channel')));
+      expect(all, isNot(contains('your path')));
+      expect(all, isNot(contains('If those were intentional')));
+      expect(all, contains('Framework revision 9584c67132'));
+    });
+
+    testWithoutContext('any other warning still stands, with its footer', () async {
+      const nonStandardRemote =
+          'Upstream repository https://example.com/flutter.git is not a standard remote.\n'
+          'Set environment variable "FLUTTER_GIT_URL" to https://example.com/flutter.git to dismiss this error.';
+      final ValidationResult result = await PinnedFlutterValidator(
+        _FakeValidator(stock(const <ValidationMessage>[ValidationMessage.hint(nonStandardRemote)])),
+      ).validate();
+
+      expect(result.type, ValidationType.partial);
+      expect(_texts(result), contains(nonStandardRemote));
+      expect(_texts(result).last, intentional);
+      expect(_texts(result).join('\n'), isNot(contains('your path')));
+    });
+
+    testWithoutContext('an SDK on a real channel is left as it is', () async {
+      final result = ValidationResult(
+        ValidationType.success,
+        const <ValidationMessage>[
+          ValidationMessage('Flutter version 3.47.4 on channel stable at /cli/flutter'),
+        ],
+        statusInfo: 'Channel stable, 3.47.4, on macOS 26.0 25A354 darwin-arm64, locale en-US',
+      );
+      final ValidationResult wrapped = await PinnedFlutterValidator(_FakeValidator(result)).validate();
+
+      expect(wrapped.type, ValidationType.success);
+      expect(wrapped.statusInfo, result.statusInfo);
+      expect(_texts(wrapped), _texts(result));
+    });
+  });
+
   group('WatchosWorkflow', () {
     testWithoutContext('applies to a macOS host and can list/launch devices', () {
       final workflow = WatchosWorkflow(
@@ -340,4 +416,13 @@ void main() {
       expect(workflow.canListEmulators, isTrue);
     });
   });
+}
+
+class _FakeValidator extends DoctorValidator {
+  _FakeValidator(this._result) : super('Flutter');
+
+  final ValidationResult _result;
+
+  @override
+  Future<ValidationResult> validateImpl() async => _result;
 }

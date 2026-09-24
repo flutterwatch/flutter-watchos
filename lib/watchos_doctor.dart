@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/version.dart' show kUserBranch;
 import 'package:process/process.dart';
 
 import 'watchos_auth.dart';
@@ -24,7 +25,11 @@ class WatchosDoctorValidatorsProvider implements DoctorValidatorsProvider {
   @override
   List<DoctorValidator> get validators {
     final List<DoctorValidator> validators = DoctorValidatorsProvider.defaultInstance.validators;
-    return <DoctorValidator>[validators.first, watchosValidator!, ...validators.sublist(1)];
+    return <DoctorValidator>[
+      PinnedFlutterValidator(validators.first),
+      watchosValidator!,
+      ...validators.sublist(1),
+    ];
   }
 
   @override
@@ -32,6 +37,91 @@ class WatchosDoctorValidatorsProvider implements DoctorValidatorsProvider {
     ...DoctorValidatorsProvider.defaultInstance.workflows,
     watchosWorkflow!,
   ];
+}
+
+/// Stock Flutter's doctor entry, for the Flutter SDK flutter-watchos pins.
+///
+/// That SDK is checked out at one commit rather than on a branch, so the stock
+/// validator reports the channel as "[user-branch]", with advice to switch
+/// channel or reinstall Flutter, and warns that the `flutter` on PATH is not
+/// this SDK, with advice to put this SDK first on PATH. Both are expected
+/// here and both pieces of advice are wrong: the pinned SDK is not meant to be
+/// switched, and putting it first on PATH would shadow the developer's own
+/// Flutter. Every install showed `[!] Flutter` for it.
+///
+/// This drops exactly those messages (and the "if those were intentional"
+/// line that follows them), says the SDK is pinned instead, and leaves
+/// anything else the stock validator finds as it is.
+class PinnedFlutterValidator extends DoctorValidator {
+  PinnedFlutterValidator(this._inner) : super(_inner.title);
+
+  final DoctorValidator _inner;
+
+  static const _pinned = 'pinned by flutter-watchos';
+
+  @override
+  String get slowWarning => _inner.slowWarning;
+
+  @override
+  Future<ValidationResult> validateImpl() async {
+    final ValidationResult result = await _inner.validate();
+    final messages = <ValidationMessage>[];
+    ValidationMessage? intentionalFooter;
+    for (final ValidationMessage message in result.messages) {
+      final String text = message.message;
+      if (text.contains('Currently on an unknown channel') &&
+          !text.contains('Cannot resolve current version')) {
+        messages.add(
+          ValidationMessage(
+            _pinnedVersionLine(text),
+            piiStrippedMessage: _pinnedVersionLine(message.piiStrippedMessage),
+          ),
+        );
+      } else if (text.contains('on your path resolves to') ||
+          text.contains('binary is not on your path')) {
+        continue;
+      } else if (text.startsWith('If those were intentional, you can disregard the above warnings')) {
+        intentionalFooter = message;
+      } else {
+        messages.add(message);
+      }
+    }
+
+    final bool nothingLeftToWarnAbout =
+        messages.every((ValidationMessage message) => message.isInformation);
+    // Anything else the stock validator warned about still stands, and so
+    // does its footer.
+    if (!nothingLeftToWarnAbout && intentionalFooter != null) {
+      messages.add(intentionalFooter);
+    }
+    return ValidationResult(
+      result.type == ValidationType.partial && nothingLeftToWarnAbout
+          ? ValidationType.success
+          : result.type,
+      messages,
+      statusInfo: _pinnedStatusInfo(result.statusInfo),
+    );
+  }
+
+  /// "Flutter version 3.47.4 on channel [user-branch] at /x/flutter" plus the
+  /// unknown-channel advice, as "Flutter version 3.47.4 at /x/flutter, pinned
+  /// by flutter-watchos".
+  static String _pinnedVersionLine(String text) {
+    final String firstLine = text.split('\n').first.replaceFirst(' on channel $kUserBranch', '');
+    return '$firstLine, $_pinned';
+  }
+
+  /// "Channel [user-branch], 3.47.4, on macOS …" as "3.47.4, pinned by
+  /// flutter-watchos, on macOS …"; anything else unchanged.
+  static String? _pinnedStatusInfo(String? statusInfo) {
+    const prefix = 'Channel $kUserBranch, ';
+    if (statusInfo == null || !statusInfo.startsWith(prefix)) {
+      return statusInfo;
+    }
+    final String rest = statusInfo.substring(prefix.length);
+    final int comma = rest.indexOf(', ');
+    return comma < 0 ? '$rest, $_pinned' : '${rest.substring(0, comma)}, $_pinned${rest.substring(comma)}';
+  }
 }
 
 class WatchosValidator extends DoctorValidator {
