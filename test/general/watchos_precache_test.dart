@@ -443,6 +443,54 @@ void main() {
       expect(engine.childDirectory('half').existsSync(), isFalse);
       expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
     });
+
+    // Killed after the move aside and before the new engine went in, a run
+    // left the only working engine in engine_artifacts.previous. The next
+    // --force deleted it before downloading, so a second failure left none.
+    testWithoutContext('a run killed mid-download: the next one starts from the engine it left aside', () async {
+      final Directory engine = fs.directory('/cli/engine_artifacts');
+      fs.file('/cli/engine_artifacts.previous/old').createSync(recursive: true);
+
+      await expectLater(
+        redownloadEngine(engine, () async {
+          expect(fs.file('/cli/engine_artifacts.previous/old').existsSync(), isTrue,
+              reason: 'moved aside again, not deleted');
+          throw Exception('offline');
+        }),
+        throwsException,
+      );
+
+      expect(engine.childFile('old').existsSync(), isTrue);
+      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+    });
+
+    testWithoutContext('a leftover beside an engine in place is dropped, the engine kept', () async {
+      final Directory engine = fs.directory('/cli/engine_artifacts');
+      engine.childFile('newer').createSync(recursive: true);
+      fs.file('/cli/engine_artifacts.previous/older').createSync(recursive: true);
+
+      await redownloadEngine(engine, () async {
+        expect(fs.file('/cli/engine_artifacts.previous/newer').existsSync(), isTrue);
+        engine.childFile('new').createSync(recursive: true);
+      });
+
+      expect(engine.childFile('new').existsSync(), isTrue);
+      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+    });
+
+    testWithoutContext('an engine left aside is put back only when nothing took its place', () {
+      final Directory engine = fs.directory('/cli/engine_artifacts');
+      expect(restoreInterruptedRedownload(engine), isFalse, reason: 'nothing left aside');
+
+      fs.file('/cli/engine_artifacts.previous/old').createSync(recursive: true);
+      expect(restoreInterruptedRedownload(engine), isTrue);
+      expect(engine.childFile('old').existsSync(), isTrue);
+      expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+
+      fs.file('/cli/engine_artifacts.previous/older').createSync(recursive: true);
+      expect(restoreInterruptedRedownload(engine), isFalse, reason: 'an engine is in place');
+      expect(engine.childFile('older').existsSync(), isFalse);
+    });
   });
 
   // `precache --force` cleared every cache stamp after the engine update, the
@@ -485,6 +533,26 @@ void main() {
           'update watchos',
           'update informative, universal',
         ]);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => platform,
+        Cache: () => cache,
+      },
+    );
+
+    // `upgrade` runs a plain precache: after a killed --force it downloaded
+    // every engine again while the old one sat beside engine_artifacts/.
+    testUsingContext(
+      'precache puts back the engine a killed --force left aside',
+      () async {
+        fs.directory('/cli/engine_artifacts').renameSync('/cli/engine_artifacts.previous');
+
+        await runPrecache(const <String>[]);
+
+        expect(fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').existsSync(), isTrue);
+        expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
       },
       overrides: <Type, Generator>{
         FileSystem: () => fs,

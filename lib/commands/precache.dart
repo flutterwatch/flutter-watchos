@@ -82,6 +82,9 @@ class WatchosPrecacheCommand extends PrecacheCommand {
     }
 
     if (boolArg('watchos')) {
+      // A `precache --force` killed mid-download left the only working
+      // engine aside; take it back before deciding what to download.
+      restoreInterruptedRedownload(watchosDownloadedArtifactDirectory(globals.fs));
       final Directory artifactDir = watchosArtifactDirectory(globals.fs);
       Future<void> updateEngine() =>
           globals.cache.updateAll(<DevelopmentArtifact>{WatchosDevelopmentArtifact.watchos});

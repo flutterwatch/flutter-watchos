@@ -422,6 +422,32 @@ Directory watchosDownloadedArtifactDirectory(FileSystem fileSystem) =>
 bool isDownloadedArtifactDirectory(FileSystem fileSystem, Directory artifactDir) =>
     fileSystem.path.equals(artifactDir.path, watchosDownloadedArtifactDirectory(fileSystem).path);
 
+/// Where [redownloadEngine] keeps the engine it is replacing.
+Directory _previousEngineDirectory(Directory artifactDir) =>
+    artifactDir.parent.childDirectory('${artifactDir.basename}.previous');
+
+/// Puts back the engine a `precache --force` killed mid-download left aside
+/// (see [redownloadEngine]), when nothing has taken its place; returns
+/// whether it did. `precache` calls it first, with or without --force.
+///
+/// That copy is the only working engine on the machine. `precache` ignored
+/// it and downloaded every engine again, and `precache --force` deleted it
+/// before its own download, so if that one failed too there was no engine
+/// left at all.
+///
+/// Not called from the engine update itself: inside [redownloadEngine] the
+/// engine is aside on purpose, and putting it back there would stop the
+/// download --force asked for. A build after a killed run still downloads
+/// the engine again.
+bool restoreInterruptedRedownload(Directory artifactDir) {
+  final Directory previous = _previousEngineDirectory(artifactDir);
+  if (artifactDir.existsSync() || !previous.existsSync()) {
+    return false;
+  }
+  previous.renameSync(artifactDir.path);
+  return true;
+}
+
 /// Runs [download] — the engine update of `precache --force` — with the
 /// engine in [artifactDir] moved aside rather than deleted: if the download
 /// fails (no network, a refusal), the previous engine is put back instead of
@@ -429,10 +455,15 @@ bool isDownloadedArtifactDirectory(FileSystem fileSystem, Directory artifactDir)
 ///
 /// The copy sits beside [artifactDir] as `engine_artifacts.previous`, a name
 /// .gitignore covers, so a run killed halfway leaves nothing that would make
-/// the checkout look modified to `upgrade`.
+/// the checkout look modified to `upgrade`; the next `precache` puts it back
+/// ([restoreInterruptedRedownload]).
 Future<void> redownloadEngine(Directory artifactDir, Future<void> Function() download) async {
-  final Directory previous = artifactDir.parent.childDirectory('${artifactDir.basename}.previous');
+  restoreInterruptedRedownload(artifactDir);
+  final Directory previous = _previousEngineDirectory(artifactDir);
   if (previous.existsSync()) {
+    // Left beside an engine that is in place: by a run killed after its new
+    // engine went in, or before a build downloaded one. The engine in place
+    // is the newer one.
     previous.deleteSync(recursive: true);
   }
   final bool hadEngine = artifactDir.existsSync();
