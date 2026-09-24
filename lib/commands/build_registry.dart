@@ -56,7 +56,7 @@ class WatchosBuildRegistryCommand extends FlutterCommand {
       '  $kBuildRegistryEnv=0                 turn it off for one shell or a CI job\n'
       '  flutter-watchos build watchos --no-register-build   skip it for one build\n'
       '\n'
-      'Details: doc/build-registry.md',
+      'Details: $kBuildRegistryDocUrl',
     );
     return FlutterCommandResult.success();
   }

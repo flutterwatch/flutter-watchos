@@ -35,6 +35,11 @@ const String kBuildRegistryEnv = 'FLUTTER_WATCHOS_BUILD_REGISTRY';
 
 const Duration _timeout = Duration(seconds: 5);
 
+/// Where the registry is explained in full. A URL, not a path: the notice is
+/// printed in the app's directory, where no doc/ folder exists.
+const String kBuildRegistryDocUrl =
+    'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/build-registry.md';
+
 /// `~/.flutter-watchos/settings.json` — next to the credentials, but not in
 /// them: signing out must not flip a privacy choice back to its default.
 File watchosSettingsFile(FileSystem fileSystem, Platform platform) {
@@ -210,7 +215,7 @@ Future<BuildRegistration> registerReleaseBuild({
       '  flutterwatch.dev account — nothing else, and nothing is added to your app.\n'
       '  It lists the app under "My apps" in your console. To turn it off:\n'
       '    flutter-watchos build-registry --disable      (or $kBuildRegistryEnv=0 on CI)\n'
-      '  Details: doc/build-registry.md',
+      '  Details: $kBuildRegistryDocUrl',
     );
     try {
       _writeSetting(fileSystem, platform, 'build_registry_notice_shown', true);

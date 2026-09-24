@@ -81,6 +81,11 @@ void main() {
       await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: _Recorder().post);
       expect(logger.statusText, contains('nothing is added to your app'));
       expect(logger.statusText, contains('flutter-watchos build-registry --disable'));
+      // Printed in the app's directory, which has no doc/ folder.
+      expect(
+        logger.statusText,
+        contains('Details: https://github.com/flutterwatch/flutter-watchos/blob/main/doc/build-registry.md'),
+      );
 
       final second = BufferLogger.test();
       await registerReleaseBuild(fileSystem: fs, platform: platform, logger: second, build: _build, post: _Recorder().post);
