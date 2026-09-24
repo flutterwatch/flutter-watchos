@@ -46,18 +46,26 @@ rather script it, export an `.ipa` from the Organizer (or `xcodebuild
 
 ## One-time setup
 
-1. **App Store Connect record** — create the app (platform iOS) with your
+1. **A signed-in machine** — the release engines need a flutterwatch.dev
+   account: run `flutter-watchos login` (signing in with GitHub is all it
+   takes), and the next build downloads them (or run `flutter-watchos
+   precache`). See [accounts.md](accounts.md). A successful release build
+   made while signed in is registered with your account — bundle id, app
+   version, engine id and build mode, nothing else;
+   [build-registry.md](build-registry.md) says exactly what is sent and how to
+   turn it off.
+2. **App Store Connect record** — create the app (platform iOS) with your
    bundle id, e.g. `com.acme.myapp`.
-2. **Certificates** — an **Apple Distribution** certificate in your keychain
+3. **Certificates** — an **Apple Distribution** certificate in your keychain
    (Xcode → Settings → Accounts → Manage Certificates, or the developer
    portal).
-3. **Provisioning profiles** — none to create by hand. With "Automatically
+4. **Provisioning profiles** — none to create by hand. With "Automatically
    manage signing" enabled, Xcode creates and manages the two App Store
    profiles it needs — `com.acme.myapp` (the container) and
    `com.acme.myapp.watchkitapp` (the embedded watch app). (Projects created
    by `flutter-watchos create` use `<org>.<app>` for the container and
    `<org>.<app>.watchkitapp` for the watch app.)
-4. **API key** (optional, for CLI `upload`) — an App Store Connect API key
+5. **API key** (optional, for CLI `upload`) — an App Store Connect API key
    (Users and Access → Integrations, role App Manager). Put the `.p8` in
    `~/.appstoreconnect/private_keys/` and pass the key id + issuer id to
    `upload` (or export `APP_STORE_CONNECT_API_KEY_ID` /
@@ -113,6 +121,7 @@ arm64-only either way.
 
 ## Checklist
 
+- [ ] Signed in (`flutter-watchos login`) and the release engines downloaded
 - [ ] `version:` bumped in pubspec.yaml (App Store rejects duplicates)
 - [ ] Release build runs on a physical watch
 - [ ] App icons + `Info.plist` metadata set in `watchos/Runner`
