@@ -16,8 +16,20 @@ the toolchain's first-party package (FFI, no method channels):
 - `WatchCrown` — Digital Crown as a raw rotation input for games and custom
   controls
 
-During the closed beta the package isn't on pub.dev yet — depend on it from
-the repo you cloned (via a git or path dependency):
+It is on pub.dev as [`flutter_watchos`](https://pub.dev/packages/flutter_watchos):
+
+```sh
+flutter-watchos pub add flutter_watchos
+```
+
+or, in `pubspec.yaml`:
+
+```yaml
+dependencies:
+  flutter_watchos: ^0.1.0
+```
+
+To try changes that are not released yet, depend on the repo instead:
 
 ```yaml
 dependencies:
@@ -25,6 +37,7 @@ dependencies:
     git:
       url: https://github.com/flutterwatch/flutter-watchos.git
       path: packages/flutter_watchos
+      ref: main
 ```
 
 ## Using existing pub.dev plugins

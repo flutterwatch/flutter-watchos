@@ -1,3 +1,7 @@
+## 0.1.0
+
+* The same code and API as the previous version, released as 0.1.0.
+
 ## 0.1.0-beta.9
 
 * **Changed:** `WatchPlatformView` is now a real platform view in the layer
