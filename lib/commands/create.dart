@@ -37,6 +37,25 @@ String? watchosCreateTemplateError(String templateType) {
       'For plugins that target other platforms, use stock `flutter create`.';
 }
 
+/// How to run the watch app `create` just made, printed last.
+///
+/// Stock `flutter create` ends with "\$ flutter run", which runs the other
+/// platforms' apps (or is not installed at all, when flutter-watchos is the
+/// only Flutter on the machine). [afterStockCreate] says that instruction has
+/// just been printed above, and is not the one for the watch.
+String watchosCreateNextSteps(String relativeProjectPath, {required bool afterStockCreate}) {
+  final cd = relativeProjectPath == '.' ? '' : '  \$ cd $relativeProjectPath\n';
+  return '\n'
+      '${afterStockCreate ? 'The `flutter run` above runs the app on the other platforms. ' : ''}'
+      'To run the watch app on the watchOS Simulator, type:\n'
+      '\n'
+      '$cd'
+      '  \$ flutter-watchos run\n'
+      '\n'
+      'To pick a simulator or a watch, list them with `flutter-watchos devices` '
+      'and pass -d <id>.';
+}
+
 class WatchosCreateCommand extends CreateCommand {
   WatchosCreateCommand({required super.verboseHelp}) {
     // Internal only. Users say `--platforms=watchos`; the argv shim in
@@ -80,6 +99,7 @@ class WatchosCreateCommand extends CreateCommand {
       globals.logger.printStatus(
         'Created watchOS-only project (shared app + watchos/, no other platforms).',
       );
+      _printNextSteps(projectDirPath, templateType, afterStockCreate: false);
       return FlutterCommandResult.success();
     }
 
@@ -91,7 +111,22 @@ class WatchosCreateCommand extends CreateCommand {
     }
     await _renderWatchosRunner(projectDirPath, name);
     await _adoptHostMode(projectDirPath);
+    _printNextSteps(projectDirPath, templateType, afterStockCreate: true);
     return FlutterCommandResult.success();
+  }
+
+  /// Ends `create` with how to run the watch app — for the templates that
+  /// make one to run.
+  void _printNextSteps(String projectDirPath, String templateType, {required bool afterStockCreate}) {
+    if (templateType != 'app' && templateType != 'skeleton') {
+      return;
+    }
+    globals.logger.printStatus(
+      watchosCreateNextSteps(
+        globals.fs.path.normalize(globals.fs.path.relative(projectDirPath)),
+        afterStockCreate: afterStockCreate,
+      ),
+    );
   }
 
   /// Applies the host mode the project's shape implies — companion when
