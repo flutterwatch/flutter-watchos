@@ -115,9 +115,9 @@ what the rest of this guide covers.
 
 The App Store requires an `arm64_32` slice in the watch executable when
 `WATCHOS_DEPLOYMENT_TARGET < 27.0`. The Flutter engine is arm64-only
-(Apple Watch Series 9 / Ultra 2 and later), so the template handles this
-with a stub `arm64_32` slice that shows a "Requires Apple Watch Series 9 or
-later" screen on older hardware.
+(Apple Watch Series 9 or later, Ultra 2 or later, or SE 3, on watchOS 26.0
+or later), so the template handles this with a stub `arm64_32` slice that
+shows a "Requires Apple Watch Series 9 or later" screen on older hardware.
 
 Leave `ARCHS` unset. With Xcode 27, the Standard Architectures build
 `arm64_32` only when the deployment target is below 27.0, which is exactly

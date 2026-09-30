@@ -15,7 +15,8 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
   ```
 
 - A watchOS Simulator runtime (Xcode → Settings → Components), or a paired
-  physical Apple Watch (Series 9 / Ultra 2 or later) for on-device runs.
+  physical Apple Watch for on-device runs: Series 9 or later, Ultra 2 or
+  later, or SE 3, on watchOS 26.0 or later.
 - A [flutterwatch.dev](https://flutterwatch.dev) account, for anything beyond
   the Simulator. The Simulator engine downloads without one; the engines for a
   physical watch and for release builds need you to be signed in.
