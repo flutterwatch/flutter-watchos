@@ -3,12 +3,16 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_watchos/watchos_application_package.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 
 import '../src/common.dart';
@@ -185,35 +189,94 @@ void main() {
     });
   });
 
-  group('WatchosDevice.parseDeviceUdid', () {
-    // The Xcode-debugger fallback identifies the device by its hardware UDID,
-    // read from `devicectl device info details --json-output`.
-    testWithoutContext('extracts the hardware UDID from devicectl info details JSON', () {
-      const jsonOutput = '''
-{
-  "result": {
-    "hardwareProperties": {
-      "udid": "00008110-00114D2E36F0A01E",
-      "platform": "watchOS",
-      "marketingName": "Apple Watch Series 11"
-    }
-  },
-  "info": { "outcome": "success" }
-}
-''';
-      expect(WatchosDevice.parseDeviceUdid(jsonOutput), '00008110-00114D2E36F0A01E');
+  // The launch path a profile run takes on a watch, driven end to end with a
+  // fake devicectl: install, wait for LaunchServices, start the relay, launch
+  // through the console. No debugger is involved at any point.
+  group('profile launch on a physical watch', () {
+    late MemoryFileSystem fileSystem;
+    late FakeProcessManager processManager;
+    late ShutdownHooks shutdownHooks;
+    late BufferLogger logger;
+    const appPath = '/build/watchos/Release-watchos/Runner.app';
+    const bundleId = 'com.example.demo';
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      fileSystem.directory(appPath).createSync(recursive: true);
+      processManager = FakeProcessManager.empty();
+      shutdownHooks = ShutdownHooks();
+      logger = BufferLogger.test();
     });
 
-    testWithoutContext('returns null when the UDID is missing', () {
-      expect(WatchosDevice.parseDeviceUdid('{"result": {"hardwareProperties": {}}}'), isNull);
-      expect(WatchosDevice.parseDeviceUdid('{"result": {}}'), isNull);
-      expect(WatchosDevice.parseDeviceUdid('{}'), isNull);
+    tearDown(() async {
+      // The relay binds real local sockets; close them.
+      await shutdownHooks.runShutdownHooks(BufferLogger.test());
     });
 
-    testWithoutContext('returns null for malformed or empty JSON', () {
-      expect(WatchosDevice.parseDeviceUdid('not json'), isNull);
-      expect(WatchosDevice.parseDeviceUdid(''), isNull);
-    });
+    FakeCommand appsQuery() => FakeCommand(
+      command: <Pattern>[
+        'xcrun', 'devicectl', 'device', 'info', 'apps', '--device', 'watch-1', //
+        '--json-output', RegExp(r'apps_1\.json$'),
+      ],
+      onRun: (List<String> command) {
+        fileSystem.file(command.last).writeAsStringSync(
+          jsonEncode(<String, Object>{
+            'result': <String, Object>{
+              'apps': <Object>[
+                <String, String>{'bundleIdentifier': bundleId, 'url': 'file:///private/var/app/Runner.app/'},
+              ],
+            },
+          }),
+        );
+      },
+    );
+
+    testUsingContext(
+      'installs, waits for registration and launches with the relay',
+      () async {
+        List<String>? launch;
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['xcrun', 'devicectl', 'device', 'install', 'app', '--device', 'watch-1', appPath],
+          ),
+          appsQuery(),
+          FakeCommand(
+            command: <Pattern>[
+              'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
+              '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
+              RegExp('.*'), bundleId, '--enable-dart-profiling', '--disable-service-auth-codes',
+              '--vm-service-host=127.0.0.1', RegExp(r'^--vm-service-port=\d+$'),
+            ],
+            onRun: (List<String> command) => launch = command,
+          ),
+        ]);
+        final device = WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false);
+
+        final LaunchResult result = await device.startApp(
+          WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+          prebuiltApplication: true,
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.profile),
+        );
+
+        expect(processManager, hasNoRemainingExpectations);
+        final environment = jsonDecode(launch![14]) as Map<String, Object?>;
+        expect(environment['OS_ACTIVITY_DT_MODE'], 'enable');
+        expect(environment['FLUTTER_WATCHOS_RELAY_URL'], startsWith('http://192.0.2.10:'));
+        expect(launch!.last, '--vm-service-port=${environment['FLUTTER_WATCHOS_VM_PORT']}');
+        // The fake console ends at once, as if the app had exited before
+        // connecting back, so the launch reports failure with that reason.
+        expect(result.started, isFalse);
+        expect(logger.errorText, contains('ended before the app connected back'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        ShutdownHooks: () => shutdownHooks,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10'},
+        ),
+      },
+    );
   });
 
   group('WatchosDevice.isDeviceLocalHost', () {

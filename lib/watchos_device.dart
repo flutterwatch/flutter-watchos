@@ -16,11 +16,6 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/ios/device_support.dart';
-import 'package:flutter_tools/src/ios/lldb.dart';
-import 'package:flutter_tools/src/ios/xcode_debug.dart';
-import 'package:flutter_tools/src/ios/xcodeproj.dart';
-import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/protocol_discovery.dart';
@@ -174,14 +169,11 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
     });
   }
 
-  /// Launches the app on device (optionally paused with --start-stopped) and
-  /// streams its console output as log lines. When `startStopped` is true the
-  /// caller attaches a debugger (lldb) to resume the process — JIT debug on a
-  /// physical watch requires this.
+  /// Launches the app on the watch and streams its console output as log
+  /// lines.
   Future<void> startLogStreamForBundle(
     String deviceId,
     String bundleId, {
-    bool startStopped = false,
     List<String> extraLaunchArguments = const <String>[],
     Map<String, String> environment = const <String, String>{},
     bool enableVmService = true,
@@ -199,7 +191,6 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       '--terminate-existing',
       '--environment-variables',
       jsonEncode(<String, String>{'OS_ACTIVITY_DT_MODE': 'enable', ...environment}),
-      if (startStopped) '--start-stopped',
       bundleId,
       ...appLaunchArguments(
         enableVmService: enableVmService,
@@ -481,29 +472,6 @@ class WatchosDevice extends Device {
   late final DartDevelopmentService _dds = WatchosDartDevelopmentService(logger: logger);
 
   DeviceLogReader? _logReader;
-  LLDB? _lldb;
-  LLDBLogForwarder? _lldbLogForwarder;
-
-  /// What LLDB (since Flutter 3.47.4) reports against when an attach takes
-  /// longer than a minute: the iOS DeviceSupport symbols for this device. A
-  /// paired watch has no such folder of its own, so this carries the device id
-  /// and leaves model, OS version and architecture unknown — the warning then
-  /// stays generic instead of naming a folder that cannot exist.
-  IOSDeviceSupport? _deviceSupport;
-  IOSDeviceSupport get _lldbDeviceSupport => _deviceSupport ??= IOSDeviceSupport(
-    logger: logger,
-    processUtils: globals.processUtils,
-    xcode: globals.xcode,
-    deviceId: id,
-    homeDirectory: globals.fsUtils.homeDirPath == null
-        ? null
-        : globals.fs.directory(globals.fsUtils.homeDirPath),
-    modelCode: null,
-    operatingSystemVersion: null,
-    cpuArchitectureString: null,
-  );
-
-  XcodeDebug? _xcodeDebug;
 
   /// Mac half of the VM Service relay for a profile run on a physical watch.
   WatchosVmRelay? _vmRelay;
@@ -515,16 +483,6 @@ class WatchosDevice extends Device {
 
   /// Port the VM Service is pinned to on the watch for this run.
   int _deviceVmServicePort = 0;
-
-  /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
-  /// tunnel before giving up. Apple Watch has no USB data port, so the lldb
-  /// attach always goes through the network tunnel. Override with
-  /// `FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS` for slow networks.
-  Duration get _lldbAttachTimeout {
-    final String? raw = globals.platform.environment['FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
-    final int? seconds = raw == null ? null : int.tryParse(raw);
-    return Duration(seconds: seconds != null && seconds > 0 ? seconds : 180);
-  }
 
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
@@ -869,9 +827,6 @@ class WatchosDevice extends Device {
       return LaunchResult.failed();
     }
 
-    // Debug builds need JIT, which a physical watch only allows when a debugger
-    // is attached. Launch `--start-stopped`, then attach lldb and resume.
-    final bool needsDebugger = debuggingOptions.buildInfo.isDebug;
     logger.printTrace('Launching $bundleId on Apple Watch...');
     final logReader =
         (_logReader ??= WatchosPhysicalDeviceLogReader(name)) as WatchosPhysicalDeviceLogReader;
@@ -888,7 +843,6 @@ class WatchosDevice extends Device {
     await logReader.startLogStreamForBundle(
       id,
       bundleId,
-      startStopped: needsDebugger,
       extraLaunchArguments: <String>[
         // Pin the port so the in-app bridge knows where the VM Service is
         // without having to discover it.
@@ -900,124 +854,6 @@ class WatchosDevice extends Device {
       // be launched asking for one.
       enableVmService: debuggingOptions.buildInfo.mode != BuildMode.release,
     );
-
-    if (needsDebugger) {
-      // Path 1: lldb (fast when it works). Over a wireless tunnel the attach
-      // can stall or drop the CoreDevice connection.
-      var attached = false;
-      final int? pid = await _findAppPid(id, bundleId, installUrl: installUrl);
-      // Since 3.47 LLDB shells out via `xcrun`, which it gets from the Xcode
-      // project interpreter. Without it, skip straight to the Xcode fallback.
-      final XcodeProjectInterpreter? xcodeProjectInterpreter = globals.xcodeProjectInterpreter;
-      if (pid != null && xcodeProjectInterpreter != null) {
-        logger.printTrace('Attaching lldb to pid $pid for JIT debugging...');
-        final LLDBLogForwarder lldbForwarder = _lldbLogForwarder ??= LLDBLogForwarder();
-        lldbForwarder.logLines.listen((String line) {
-          logger.printTrace('[lldb] $line');
-        });
-        final LLDB lldb = _lldb ??= LLDB(
-          logger: logger,
-          processUtils: globals.processUtils,
-          xcodeProjectInterpreter: xcodeProjectInterpreter,
-          // Required since Flutter 3.47.5. Null keeps off the manual stop
-          // handling 3.47.5 turns on for debug on a device at 27.0 or later,
-          // an iOS workaround never tried on a watch. It does not keep
-          // 3.47.4's commands: the JIT breakpoint is now set with
-          // `--auto-continue true`, where 3.47.4's hook returned False. No
-          // launch gets here any more: startApp refuses debug on a watch,
-          // prebuilt apps included.
-          deviceVersion: null,
-        );
-        final Duration timeout = _lldbAttachTimeout;
-        attached = await lldb
-            .attachAndStart(
-              deviceId: id,
-              appProcessId: pid,
-              lldbLogForwarder: lldbForwarder,
-              mode: debuggingOptions.buildInfo.mode,
-              deviceSupport: _lldbDeviceSupport,
-            )
-            .timeout(
-              timeout,
-              onTimeout: () {
-                logger.printTrace(
-                  'lldb attach timed out after ${timeout.inSeconds}s; falling back.',
-                );
-                return false;
-              },
-            );
-      }
-
-      if (!attached) {
-        // Path 2: Xcode debugger fallback — the same path stock Flutter uses
-        // for iOS Core Devices, and the mechanism Xcode itself uses to reliably
-        // debug a wirelessly-paired device.
-        logger.printStatus(
-          'lldb debugging did not attach — falling back to the Xcode debugger. '
-          'You may be prompted to allow controlling Xcode '
-          '(Settings ▸ Privacy & Security ▸ Automation).',
-        );
-        await _teardownDeviceLaunch();
-        final bool xcodeStarted = await _launchViaXcodeDebugger(
-          project: project,
-          debuggingOptions: debuggingOptions,
-        );
-        if (!xcodeStarted) {
-          logger.printError(
-            'Could not attach a debugger to the app on this Apple Watch, so the '
-            'debug session could not start (the app may briefly appear on the '
-            'watch and then exit — watchOS debug mode requires an attached '
-            'debugger).\n'
-            '\n'
-            'Apple Watch debugging is wireless-only and depends on the CoreDevice '
-            'tunnel. Things to try, in order:\n'
-            '  1. Restart the Apple Watch to reset the tunnel, then run again — a '
-            'cold/stale tunnel is the most common cause.\n'
-            '  2. Make sure the Apple Watch (via its paired iPhone) and this Mac '
-            'are on the same Wi-Fi/LAN, and that the Mac has Local Network '
-            'permission (System Settings ▸ Privacy & Security ▸ Local Network).\n'
-            '  3. Re-run — the lldb attach over the tunnel can be slow; it is '
-            'given ${_lldbAttachTimeout.inSeconds}s (override with '
-            'FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS).\n'
-            '  4. For fast debug iteration without the device, use the watchOS '
-            'simulator (JIT works there without a debugger).',
-          );
-          return LaunchResult.failed();
-        }
-        // IPv4 first, then IPv6 — a wireless watch often publishes only AAAA
-        // records, and an IPv4-only query throws rather than returning null.
-        Uri? xcodeUri;
-        for (final ipv6 in <bool>[false, true]) {
-          try {
-            xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
-              bundleId,
-              this,
-              usesIpv6: ipv6,
-              useDeviceIPAsHost: true,
-              // Halved so two queries keep the original 60s budget.
-              timeout: const Duration(seconds: 30),
-            );
-          } on Object catch (e) {
-            logger.printTrace('mDNS ${ipv6 ? 'IPv6' : 'IPv4'} VM Service lookup failed: $e');
-          }
-          if (xcodeUri != null) {
-            break;
-          }
-        }
-        if (xcodeUri != null) {
-          logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
-          return LaunchResult.succeeded(vmServiceUri: xcodeUri);
-        }
-        logger.printWarning(
-          'App launched via Xcode, but its Dart VM Service was not found over '
-          'mDNS within 60s — hot reload, hot restart, and DevTools will be '
-          'unavailable. Check that this Mac has Local Network permission '
-          '(System Settings ▸ Privacy & Security ▸ Local Network) and that the '
-          'Apple Watch is on the same network.',
-        );
-        return LaunchResult.succeeded();
-      }
-    }
 
     // With the relay up, the Mac-reachable VM Service *is* the relay: it speaks
     // the protocol transparently, so DDS and DevTools connect to it unchanged.
@@ -1155,165 +991,6 @@ class WatchosDevice extends Device {
     return null;
   }
 
-  /// Tears down the in-flight devicectl `--console` launch and lldb session so
-  /// the Xcode debugger can take the device over cleanly.
-  Future<void> _teardownDeviceLaunch() async {
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
-    _logReader?.dispose();
-    _logReader = null;
-  }
-
-  /// Launches + debugs the app through Xcode (AppleScript automation), mirroring
-  /// stock Flutter's iOS Core Device Xcode fallback. Xcode reliably establishes
-  /// the debugserver connection to a wirelessly-paired device.
-  Future<bool> _launchViaXcodeDebugger({
-    required FlutterProject project,
-    required DebuggingOptions debuggingOptions,
-  }) async {
-    final Directory watchosDir = project.directory.childDirectory('watchos');
-    final Directory workspace = watchosDir.childDirectory('Runner.xcworkspace');
-    final Directory xcodeproj = watchosDir.childDirectory('Runner.xcodeproj');
-    if (!workspace.existsSync()) {
-      logger.printError(
-        'Xcode debugger fallback unavailable: ${workspace.path} not found. '
-        'Run the app once so CocoaPods generates the workspace.',
-      );
-      return false;
-    }
-
-    final Xcode? xcode = globals.xcode;
-    if (xcode == null) {
-      logger.printError(
-        'Xcode is required for the wireless debug fallback but is not selected.\n'
-        'Open Xcode once, or run '
-        '`sudo xcode-select -s /Applications/Xcode.app`.',
-      );
-      return false;
-    }
-
-    final xcodeDebug = XcodeDebug(
-      logger: logger,
-      processManager: globals.processManager,
-      xcode: xcode,
-      fileSystem: globals.fs,
-    );
-    _xcodeDebug = xcodeDebug;
-
-    final File schemeFile = xcodeproj
-        .childDirectory('xcshareddata')
-        .childDirectory('xcschemes')
-        .childFile('Runner.xcscheme');
-    if (schemeFile.existsSync()) {
-      try {
-        xcodeDebug.ensureXcodeDebuggerLaunchAction(schemeFile);
-      } on Object catch (e) {
-        logger.printError(
-          'Could not prepare the Runner scheme for debugging: $e\n'
-          'Open watchos/Runner.xcodeproj in Xcode and make sure the Runner '
-          "scheme's Run action uses the LLDB debugger.",
-        );
-        return false;
-      }
-    }
-
-    final List<String> launchArguments = debuggingOptions.getIOSLaunchArguments(
-      EnvironmentType.physical,
-      null,
-      const <String, Object?>{},
-      interfaceType: DeviceConnectionInterface.wireless,
-    )..removeWhere((String a) => a == '--enable-checked-mode' || a == '--verify-entry-points');
-    for (final flag in <String>[
-      // Dual-stack: see the same flag in startLogStreamForBundle.
-      '--vm-service-host=::0',
-      '--disable-service-auth-codes',
-      '--enable-dart-profiling',
-    ]) {
-      if (!launchArguments.contains(flag)) {
-        launchArguments.add(flag);
-      }
-    }
-
-    final debugProject = XcodeDebugProject(
-      scheme: 'Runner',
-      xcodeWorkspace: workspace,
-      xcodeProject: xcodeproj,
-      hostAppProjectName: 'Runner',
-      verboseLogging: logger.isVerbose,
-    );
-
-    final String? resolvedUdid = await _resolveDeviceUdid(id);
-    if (resolvedUdid == null) {
-      logger.printTrace(
-        'Could not resolve a hardware UDID; passing the CoreDevice id "$id" to '
-        'Xcode. If Xcode reports the device cannot be found, this is why.',
-      );
-    }
-    final String xcodeDeviceId = resolvedUdid ?? id;
-
-    return xcodeDebug.debugApp(
-      project: debugProject,
-      deviceId: xcodeDeviceId,
-      launchArguments: launchArguments,
-    );
-  }
-
-  /// Resolves the device's hardware UDID from its CoreDevice identifier.
-  Future<String?> _resolveDeviceUdid(String deviceId) async {
-    final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_udid.');
-    try {
-      final File out = tmp.childFile('info.json');
-      final RunResult r = await globals.processUtils.run(<String>[
-        'xcrun',
-        'devicectl',
-        'device',
-        'info',
-        'details',
-        '--device',
-        deviceId,
-        '--json-output',
-        out.path,
-      ]);
-      if (r.exitCode != 0 || !out.existsSync()) {
-        logger.printTrace(
-          'devicectl UDID lookup failed (exit ${r.exitCode}); '
-          'falling back to the raw device id. stderr: ${r.stderr}',
-        );
-        return null;
-      }
-      final String? udid = parseDeviceUdid(out.readAsStringSync());
-      if (udid == null) {
-        logger.printTrace(
-          'devicectl returned 0 but no result.hardwareProperties.udid was '
-          'found (JSON shape may have changed); falling back to the raw id.',
-        );
-      }
-      return udid;
-    } on Object catch (e) {
-      logger.printTrace('Failed to resolve device UDID: $e');
-      return null;
-    } finally {
-      tmp.deleteSync(recursive: true);
-    }
-  }
-
-  /// Extracts the hardware UDID from `devicectl device info details` JSON.
-  static String? parseDeviceUdid(String jsonOutput) {
-    try {
-      final dynamic decoded = jsonDecode(jsonOutput);
-      final dynamic result = (decoded is Map) ? decoded['result'] : null;
-      final dynamic hw = (result is Map) ? result['hardwareProperties'] : null;
-      if (hw is Map && hw['udid'] is String) {
-        return hw['udid'] as String;
-      }
-    } on FormatException {
-      return null;
-    }
-    return null;
-  }
-
   /// Extracts a Mac-reachable address for [deviceId] from
   /// `devicectl list devices --json-output`.
   ///
@@ -1413,117 +1090,6 @@ class WatchosDevice extends Device {
         return null;
       }
       return parseDeviceAddress(out.readAsStringSync(), deviceId);
-    } finally {
-      try {
-        tmp.deleteSync(recursive: true);
-      } on FileSystemException {
-        /* ignore */
-      }
-    }
-  }
-
-  /// Polls `devicectl device info processes` until a process whose executable
-  /// lives inside a bundle matching [installUrl] appears, returning its pid.
-  Future<int?> _findAppPid(
-    String deviceId,
-    String bundleId, {
-    String? installUrl,
-    Duration timeout = const Duration(seconds: 15),
-    Duration pollInterval = const Duration(milliseconds: 200),
-  }) async {
-    if (installUrl == null) {
-      final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_url.');
-      try {
-        final File out = tmp.childFile('apps.json');
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'apps',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic apps = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['apps']
-                : null;
-            if (apps is List) {
-              for (final Object? a in apps) {
-                if (a is Map && a['bundleIdentifier'] == bundleId) {
-                  final dynamic u = a['url'];
-                  if (u is String) {
-                    installUrl = u;
-                  }
-                  break;
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-      } finally {
-        try {
-          tmp.deleteSync(recursive: true);
-        } on FileSystemException {
-          /* ignore */
-        }
-      }
-    }
-    if (installUrl == null) {
-      return null;
-    }
-
-    final sw = Stopwatch()..start();
-    final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ps.');
-    try {
-      while (sw.elapsed < timeout) {
-        final File out = tmp.childFile('ps.json');
-        if (out.existsSync()) {
-          out.deleteSync();
-        }
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'processes',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic procs = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['runningProcesses']
-                : null;
-            if (procs is List) {
-              for (final Object? p in procs) {
-                if (p is Map) {
-                  final dynamic exe = p['executable'];
-                  final dynamic pid = p['processIdentifier'];
-                  if (exe is String &&
-                      pid is int &&
-                      exe.contains(installUrl.replaceFirst('file://', ''))) {
-                    return pid;
-                  }
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-        await Future<void>.delayed(pollInterval);
-      }
-      return null;
     } finally {
       try {
         tmp.deleteSync(recursive: true);
@@ -1639,12 +1205,6 @@ class WatchosDevice extends Device {
 
     _logReader?.dispose();
     _logReader = null;
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
-    unawaited(_xcodeDebug?.exit());
-    _xcodeDebug = null;
 
     if (isSimulator) {
       final RunResult result = await globals.processUtils.run(<String>[
@@ -1747,7 +1307,5 @@ class WatchosDevice extends Device {
   @override
   Future<void> dispose() async {
     _logReader?.dispose();
-    unawaited(_xcodeDebug?.exit());
-    _xcodeDebug = null;
   }
 }
