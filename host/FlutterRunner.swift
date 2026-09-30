@@ -357,8 +357,12 @@ enum WatchContentScale {
 ///     <key>FlutterWatchOSPresent</key>
 ///     <string>texture</string>
 ///
-/// (`FLUTTER_WATCHOS_PRESENT=texture` in the environment does the same for a
-/// `run`, so an app can be compared without editing its Info.plist.)
+/// `FLUTTER_WATCHOS_PRESENT=texture` in the app's environment does the same,
+/// so an app can be compared without editing its Info.plist. It is a host
+/// switch, read here and not by the engine, as `FLUTTER_WATCHOS_DISPLAY_CLOCK`
+/// and `FLUTTER_WATCHOS_CPU_LOG` are: `flutter-watchos run` forwards all three
+/// to the app, with the engine's own switches (`engineSwitchEnvironment` in
+/// the CLI's `lib/watchos_device.dart`).
 ///
 /// `image` (the default) shows each frame as a CGImage in a SwiftUI `Image`:
 /// the engine reads its Metal render target back through a shared buffer and
