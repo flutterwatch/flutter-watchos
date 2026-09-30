@@ -17,6 +17,7 @@ import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/drive/drive_service.dart';
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_watchos/watchos_application_package.dart';
 import 'package:flutter_watchos/watchos_device.dart';
@@ -112,6 +113,19 @@ class _Packages extends Fake implements ApplicationPackageFactory {
 
 class _NoDevtools extends Fake implements DevtoolsLauncher {}
 
+/// Xcode 27's Simulator viewer.
+const _deviceHub = '/Applications/Xcode.app/Contents/Applications/DeviceHub.app';
+
+/// An Xcode whose Simulator viewer is at [simulatorPath].
+class _FakeXcode extends Fake implements Xcode {
+  _FakeXcode(this.simulatorPath);
+
+  final String? simulatorPath;
+
+  @override
+  String? getSimulatorPath() => simulatorPath;
+}
+
 FakeCommand _run(
   List<String> command, {
   int exitCode = 0,
@@ -188,7 +202,7 @@ void main() {
 
   List<FakeCommand> upToTheLogStream(_LogStreamProcess logProcess) => <FakeCommand>[
     _run(<String>['xcrun', 'simctl', 'boot', _simId]),
-    _run(<String>['open', '-a', 'Simulator']),
+    _run(<String>['open', '-a', _deviceHub]),
     _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
     _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
     _logStream(logProcess),
@@ -221,6 +235,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -254,6 +269,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
       Platform: () => FakePlatform(environment: _switches),
     },
   );
@@ -263,7 +279,7 @@ void main() {
     () async {
       processManager.addCommands(<FakeCommand>[
         _run(<String>['xcrun', 'simctl', 'boot', _simId]),
-        _run(<String>['open', '-a', 'Simulator']),
+        _run(<String>['open', '-a', _deviceHub]),
         _run(
           <String>['xcrun', 'simctl', 'install', _simId, _appPath],
           exitCode: 1,
@@ -283,6 +299,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -308,6 +325,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -339,6 +357,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -362,6 +381,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -386,6 +406,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -401,7 +422,7 @@ void main() {
       FakeCommand ps() => _run(<String>['ps', '-p', '4242', '-o', 'pid=']);
       List<FakeCommand> again() => <FakeCommand>[
         _run(<String>['xcrun', 'simctl', 'boot', _simId]),
-        _run(<String>['open', '-a', 'Simulator']),
+        _run(<String>['open', '-a', _deviceHub]),
         _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
         _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
         launch(),
@@ -453,6 +474,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -500,6 +522,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -510,7 +533,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         _logStream(logProcess),
         _run(<String>['xcrun', 'simctl', 'boot', _simId]),
-        _run(<String>['open', '-a', 'Simulator']),
+        _run(<String>['open', '-a', _deviceHub]),
         _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
         _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
         // No second log stream.
@@ -553,6 +576,7 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
 
@@ -727,6 +751,126 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
     },
   );
+
+  // The window that shows the Simulator: the selected Xcode's viewer, or one
+  // hint; the launch goes on either way (spec 0002 criterion 18).
+  group('Simulator window', () {
+    const developer = '/Applications/Xcode.app/Contents/Developer';
+    const simulatorApp = '$developer/Applications/Simulator.app';
+    const hint = 'Could not open the Simulator window';
+
+    Xcode xcodeWith(List<String> apps) {
+      for (final app in apps) {
+        fileSystem.directory(app).createSync(recursive: true);
+      }
+      return Xcode.test(
+        processManager: FakeProcessManager.list(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['/usr/bin/xcode-select', '--print-path'],
+            stdout: developer,
+          ),
+        ]),
+        fileSystem: fileSystem,
+      );
+    }
+
+    /// Runs a launch whose window step is [window], and returns it.
+    Future<List<LaunchResult>> launchWith(List<FakeCommand> window) async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        _run(<String>['xcrun', 'simctl', 'boot', _simId]),
+        ...window,
+        _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
+        _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
+        _logStream(logProcess),
+        _run(
+          _launchCommand,
+          onRun: (_) =>
+              Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
+        ),
+      ]);
+      final List<LaunchResult> results = start();
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+      return results;
+    }
+
+    testUsingContext(
+      'Xcode 27 opens Device Hub',
+      () async {
+        final List<LaunchResult> results = await launchWith(<FakeCommand>[
+          _run(<String>['open', '-a', _deviceHub]),
+        ]);
+
+        expect(results.single.started, isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+        expect(logger.statusText, isNot(contains(hint)));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Xcode: () => xcodeWith(<String>[_deviceHub, simulatorApp]),
+      },
+    );
+
+    testUsingContext(
+      'Xcode 26 opens Simulator.app',
+      () async {
+        final List<LaunchResult> results = await launchWith(<FakeCommand>[
+          _run(<String>['open', '-a', simulatorApp]),
+        ]);
+
+        expect(results.single.started, isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Xcode: () => xcodeWith(<String>[simulatorApp]),
+      },
+    );
+
+    testUsingContext(
+      'with neither app, no open runs, one hint, and the launch goes on',
+      () async {
+        final List<LaunchResult> results = await launchWith(const <FakeCommand>[]);
+
+        expect(results.single.started, isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+        expect(hint.allMatches(logger.statusText), hasLength(1));
+        expect(logger.statusText, contains('Device Hub (Xcode 27) or Simulator (Xcode 26)'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Xcode: () => xcodeWith(const <String>[]),
+      },
+    );
+
+    testUsingContext(
+      'when open fails, one hint, and the launch goes on',
+      () async {
+        final List<LaunchResult> results = await launchWith(<FakeCommand>[
+          _run(
+            <String>['open', '-a', _deviceHub],
+            exitCode: 1,
+            stderr: 'LSOpenURLsWithRole() failed',
+          ),
+        ]);
+
+        expect(results.single.started, isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+        expect(hint.allMatches(logger.statusText), hasLength(1));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Xcode: () => xcodeWith(<String>[_deviceHub]),
+      },
+    );
+  });
 }

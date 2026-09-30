@@ -149,4 +149,44 @@ void main() {
       Platform: () => FakePlatform(),
     },
   );
+
+  testUsingContext(
+    'logs -d <UDID> of a shut-down Simulator exits at once, and says run boots it',
+    () async {
+      deviceManager.attachedDevices.add(
+        WatchosDevice(
+          'AAAA-BBBB-CCCC',
+          name: 'Apple Watch Ultra 3',
+          logger: logger,
+          isSimulator: true,
+          isShutDown: true,
+        ),
+      );
+      final command = WatchosLogsCommand(
+        sigint: _FakeProcessSignal(),
+        sigterm: _FakeProcessSignal(),
+      );
+
+      await expectLater(
+        createTestCommandRunner(command).run(<String>['logs', '-d', 'AAAA-BBBB-CCCC']),
+        throwsA(
+          isA<ToolExit>().having(
+            (ToolExit e) => e.message,
+            'message',
+            allOf(
+              contains('Apple Watch Ultra 3 (AAAA-BBBB-CCCC) is shut down'),
+              contains('flutter-watchos run -d AAAA-BBBB-CCCC'),
+            ),
+          ),
+        ),
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      DeviceManager: () => deviceManager,
+      ProcessManager: () => processManager,
+      ApplicationPackageFactory: () => _NoPackages(),
+      Platform: () => FakePlatform(),
+    },
+  );
 }

@@ -14,15 +14,17 @@ import 'watchos_device.dart';
 class WatchosEmulator {
   /// Queries `xcrun simctl list --json` for watchOS simulators.
   ///
-  /// Matches stock Flutter's iOS simulator behaviour: by default, only
-  /// **booted** simulators are returned (those are what `flutter devices`
-  /// reports). Pass [includeShutdown] true to get every available simulator
-  /// — used by `flutter-watchos emulators` and the device manager when
-  /// `--device-id <id>` resolves to a shutdown sim that needs booting.
+  /// Matches stock Flutter's iOS simulator behaviour: only **booted**
+  /// simulators are returned (those are what `flutter devices` reports), with
+  /// one exception. The available simulator whose UDID is exactly
+  /// [shutDownUdid] is returned even when it is shut down, marked
+  /// [WatchosDevice.isShutDown]: `WatchosDeviceDiscovery` passes the `-d`
+  /// value, so `run -d <UDID>` finds it and boots it. A match by name, or by
+  /// a UDID prefix, stays booted-only.
   static Future<List<WatchosDevice>> getConnectedSimulators(
     Logger logger, {
     ProcessUtils? processUtils,
-    bool includeShutdown = false,
+    String? shutDownUdid,
   }) async {
     final ProcessUtils pUtils = processUtils ?? globals.processUtils;
     final devices = <WatchosDevice>[];
@@ -52,16 +54,19 @@ class WatchosEmulator {
               continue;
             }
             final String state = (sim['state'] as String?) ?? 'Shutdown';
-            if (!includeShutdown && state != 'Booted') {
+            final udid = sim['udid'] as String;
+            final booted = state == 'Booted';
+            if (!booted && udid.toLowerCase() != shutDownUdid?.toLowerCase()) {
               continue;
             }
             devices.add(
               WatchosDevice(
-                sim['udid'] as String,
+                udid,
                 name: sim['name'] as String,
                 logger: logger,
                 isSimulator: true,
                 osVersion: runtimeVersion,
+                isShutDown: !booted,
               ),
             );
           }

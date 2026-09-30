@@ -26,8 +26,18 @@ class WatchosLogsCommand extends LogsCommand {
     if (target is WatchosDevice && !target.isSimulator) {
       throwToolExit(physicalWatchGuidance(target.id));
     }
+    if (target is WatchosDevice && target.isShutDown) {
+      throwToolExit(shutDownSimulatorGuidance(target));
+    }
     return super.runCommand();
   }
+
+  /// What `logs -d <UDID>` prints before it exits, for a Simulator that is
+  /// shut down: there is no log to read until something boots it.
+  static String shutDownSimulatorGuidance(WatchosDevice simulator) =>
+      '${simulator.name} (${simulator.id}) is shut down, so it has no logs to show. '
+      'run boots it:\n'
+      '  flutter-watchos run -d ${simulator.id}';
 
   /// What `logs -d <watch>` prints for the watch [id] before it exits.
   static String physicalWatchGuidance(String id) =>

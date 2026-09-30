@@ -679,6 +679,7 @@ class WatchosDevice extends Device {
     required this.isSimulator,
     this.osVersion,
     this.coreDeviceCapabilities = const <String>{},
+    this.isShutDown = false,
   }) : super(
          category: Category.mobile,
          platformType: PlatformType.custom,
@@ -699,6 +700,11 @@ class WatchosDevice extends Device {
   /// physical watch, such as [captureScreenshotCapability]. Empty for a
   /// Simulator, and for a watch that is not connected.
   final Set<String> coreDeviceCapabilities;
+
+  /// Whether this Simulator was shut down when it was discovered. Only a
+  /// Simulator that `-d` names by its exact UDID is listed shut down; `run`
+  /// boots it, while `logs` has nothing to read from it.
+  final bool isShutDown;
 
   /// The CoreDevice capability behind `devicectl device capture screenshot`.
   static const captureScreenshotCapability = 'com.apple.coredevice.feature.capturescreenshot';
@@ -977,9 +983,9 @@ class WatchosDevice extends Device {
       return LaunchResult.failed();
     }
 
-    // Boot simulator and open Simulator.app window.
+    // Boot the Simulator and open the window that shows it.
     await globals.processUtils.run(<String>['xcrun', 'simctl', 'boot', id]);
-    await globals.processUtils.run(<String>['open', '-a', 'Simulator']);
+    await _openSimulatorWindow();
 
     logger.printStatus('Installing and launching...');
     logger.printTrace('Installing on Apple Watch simulator ($id)...');
@@ -1112,6 +1118,26 @@ class WatchosDevice extends Device {
   /// How long a debug Simulator launch waits for the app's VM Service line
   /// before it fails. Stock waits with no limit.
   static const simulatorVmServiceTimeout = Duration(seconds: 60);
+
+  /// Opens the selected Xcode's Simulator viewer: Device Hub with Xcode 27,
+  /// Simulator.app with Xcode 26 (stock `Xcode.getSimulatorPath`, which
+  /// follows `xcode-select` and `DEVELOPER_DIR`). The window is a
+  /// convenience, so when it cannot open, one hint is printed and the launch
+  /// goes on; stock `emulators --launch` stops instead.
+  Future<void> _openSimulatorWindow() async {
+    final String? path = globals.xcode?.getSimulatorPath();
+    if (path != null) {
+      final RunResult result = await globals.processUtils.run(<String>['open', '-a', path]);
+      if (result.exitCode == 0) {
+        return;
+      }
+      logger.printTrace('open -a $path failed: ${result.stderr}');
+    }
+    logger.printStatus(
+      'Could not open the Simulator window. The app still installs and runs; to see it, '
+      'open Device Hub (Xcode 27) or Simulator (Xcode 26) from Xcode.',
+    );
+  }
 
   Future<LaunchResult> _startAppOnDevice(
     FlutterProject project,
