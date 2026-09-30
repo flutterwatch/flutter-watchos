@@ -16,6 +16,7 @@ import '../watchos_build_registry.dart';
 import '../watchos_builder.dart';
 import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
+import 'stock_build_stub.dart';
 
 /// Builds the watchOS app bundle for `build watchos`.
 ///
@@ -35,29 +36,20 @@ const String kWatchosSizeAnalysisRefusal =
     'Run the build without them:\n'
     '  flutter-watchos build watchos --release';
 
-class WatchosBuildCommand extends BuildCommand {
+/// `build`: the watchOS build, `build watchos`.
+///
+/// Stock `BuildCommand` adds a subcommand for every stock target, which would
+/// run under the watchOS overrides, untested. This command has `watchos`, and
+/// a hidden [StockBuildStubCommand] for each stock target name, which says to
+/// use stock `flutter build <name>`.
+class WatchosBuildCommand extends FlutterCommand {
+  /// The `build` command; the seams are passed on to `build watchos`.
   WatchosBuildCommand({
-    required super.artifacts,
-    required super.cache,
-    required super.fileSystem,
-    required super.flutterVersion,
-    required super.buildSystem,
-    required super.osUtils,
     required Logger logger,
-    required super.androidSdk,
-    required super.config,
-    required super.platform,
-    required super.processUtils,
-    required super.processManager,
-    required super.fileSystemUtils,
-    required super.templateRenderer,
-    required super.terminal,
-    required super.plistParser,
-    required super.xcode,
     required bool verboseHelp,
     @visibleForTesting WatchosBundleBuilder? bundleBuilder,
     @visibleForTesting BuildRegistryPost? registryPost,
-  }) : super(logger: logger, verboseHelp: verboseHelp) {
+  }) {
     addSubcommand(
       BuildWatchosCommand(
         logger: logger,
@@ -66,7 +58,20 @@ class WatchosBuildCommand extends BuildCommand {
         registryPost: registryPost,
       ),
     );
+    kStockBuildSubcommands.map(StockBuildStubCommand.new).forEach(addSubcommand);
   }
+
+  @override
+  final String name = 'build';
+
+  @override
+  final String description = 'Build the watchOS app.';
+
+  @override
+  String get category => FlutterCommandCategory.project;
+
+  @override
+  Future<FlutterCommandResult> runCommand() async => FlutterCommandResult.fail();
 }
 
 class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts {

@@ -3,19 +3,19 @@
 // found in the LICENSE file.
 
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
-import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_watchos/commands/build.dart';
+import 'package:flutter_watchos/commands/stock_build_stub.dart';
 import 'package:flutter_watchos/watchos_build_info.dart';
 
-import '../../../flutter/packages/flutter_tools/test/src/test_build_system.dart';
 import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/fakes.dart';
@@ -86,23 +86,7 @@ void main() {
     Future<int> Function(Uri uri, String token, Map<String, Object?> body)? post,
   }) {
     return WatchosBuildCommand(
-      artifacts: FakeArtifacts(),
-      cache: FakeCache(),
-      fileSystem: fileSystem,
-      flutterVersion: FakeFlutterVersion(),
-      buildSystem: TestBuildSystem.all(BuildResult(success: true)),
-      osUtils: FakeOperatingSystemUtils(),
       logger: logger,
-      androidSdk: FakeAndroidSdk(),
-      config: FakeConfig(),
-      platform: FakePlatform(),
-      processUtils: FakeProcessUtils(),
-      processManager: FakeProcessManager.empty(),
-      fileSystemUtils: FakeFileSystemUtils(),
-      templateRenderer: FakeTemplateRenderer(),
-      terminal: FakeTerminal(),
-      plistParser: FakePlistParser(),
-      xcode: FakeXcode(),
       verboseHelp: false,
       bundleBuilder: fakeBuild,
       registryPost:
@@ -302,5 +286,121 @@ void main() {
       expect(logger.statusText, isNot(contains('\n    --[no-]analyze-size')));
       expect(logger.statusText, isNot(contains('\n    --code-size-directory')));
     }, overrides: overrides());
+  });
+  group('build subcommands', () {
+    /// The lines under "Available subcommands:" in `build -h`.
+    List<String> listedSubcommands(String usage) {
+      final List<String> lines = usage.split('\n');
+      final int start = lines.indexOf('Available subcommands:') + 1;
+      return lines
+          .skip(start)
+          .takeWhile((String line) => line.isNotEmpty)
+          .map((String line) => line.trim().split(' ').first)
+          .toList();
+    }
+
+    testUsingContext('build -h lists only watchos', () async {
+      await createTestCommandRunner(buildCommand()).run(<String>['build', '-h']);
+
+      expect(listedSubcommands(logger.statusText), <String>['watchos']);
+    }, overrides: overrides());
+
+    testUsingContext('the stubs cover every stock build target', () async {
+      final Set<String> stubs = buildCommand().subcommands.keys.toSet()..remove('watchos');
+
+      expect(stubs, <String>{...kStockBuildSubcommands, 'aab', 'xcarchive'});
+      expect(kStockBuildSubcommands, hasLength(13));
+    });
+
+    for (final String name in kStockBuildSubcommands.where((String name) => name != 'ipa')) {
+      testUsingContext('build $name is refused and names flutter build $name', () async {
+        Object? caught;
+        try {
+          await createTestCommandRunner(buildCommand()).run(<String>['build', name]);
+        } on ToolExit catch (error) {
+          caught = error;
+        }
+
+        expect(caught, isA<ToolExit>());
+        final exit = caught! as ToolExit;
+        expect(exit.exitCode, 1);
+        expect(exit.message, contains('flutter-watchos build $name is not available'));
+        expect(exit.message, endsWith('\n  flutter build $name'));
+        expect(forbiddenWordsIn(exit.message!), isEmpty);
+        expect(builds, isEmpty);
+      }, overrides: overrides());
+    }
+
+    for (final args in <List<String>>[
+      <String>['apk', '--split-per-abi'],
+      <String>['ipa', '--release', '--export-options-plist=x'],
+      <String>['aab', '--release'],
+      <String>['xcarchive'],
+      <String>['web', '--wasm', 'extra'],
+    ]) {
+      testUsingContext(
+        '"build ${args.join(' ')}" reaches the refusal, not a usage error',
+        () async {
+          await expectLater(
+            createTestCommandRunner(buildCommand()).run(<String>['build', ...args]),
+            throwsToolExit(
+              message: 'is not available: flutter-watchos builds only the watchOS app.',
+            ),
+          );
+          expect(builds, isEmpty);
+        },
+        overrides: overrides(),
+      );
+    }
+
+    testUsingContext('build ipa in a project with an iOS app gives the companion route', () async {
+      fileSystem.file('/project/ios/Runner.xcodeproj/project.pbxproj').createSync(recursive: true);
+      fileSystem.currentDirectory = fileSystem.directory('/project/lib');
+
+      await expectLater(
+        createTestCommandRunner(buildCommand()).run(<String>['build', 'ipa', '--release']),
+        throwsToolExit(
+          message:
+              'This project has an iOS app, and the watch app ships inside it. '
+              'Build the watch app first, then the iOS archive with stock Flutter:\n'
+              '  flutter-watchos build watchos --release\n'
+              '  flutter build ipa',
+        ),
+      );
+      expect(builds, isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('build ipa in a watch-only project gives the Xcode route', () async {
+      await expectLater(
+        createTestCommandRunner(buildCommand()).run(<String>['build', 'ipa']),
+        throwsToolExit(
+          message:
+              'Product → Archive → Distribute App:\n'
+              '  flutter-watchos build watchos --release\n'
+              'To upload an .ipa exported from Xcode, run:\n'
+              '  flutter-watchos upload --ipa <file>',
+        ),
+      );
+      expect(builds, isEmpty);
+    }, overrides: overrides());
+
+    test('every refusal offers bare commands and no forbidden word', () {
+      for (final String name in kStockBuildSubcommands) {
+        for (final companion in <bool>[false, true]) {
+          final String message = stockBuildRefusal(name, companion: companion);
+          final Iterable<String> commandLines = message
+              .split('\n')
+              .where((String line) => line.startsWith('  '));
+
+          expect(commandLines, isNotEmpty, reason: name);
+          for (final line in commandLines) {
+            expect(line, matches(RegExp(r'^  (flutter|flutter-watchos) [a-z]')), reason: line);
+            expect(line, isNot(contains('#')), reason: line);
+            expect(line, isNot(contains('(')), reason: line);
+          }
+          expect(forbiddenWordsIn(message), isEmpty, reason: name);
+        }
+      }
+    });
   });
 }
