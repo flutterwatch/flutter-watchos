@@ -175,6 +175,26 @@ bool flutter_watchos_always_on_supported(void) {
     return reported;
 }
 
+// --- Clock band -------------------------------------------------------------
+// Written by the watch host on every safe-area report (main thread), read by
+// Dart (UI thread). Same lock discipline as the Always-On state. -1 means no
+// host has reported: off the watch, or a host module that predates the report.
+static os_unfair_lock s_clock_band_lock = OS_UNFAIR_LOCK_INIT;
+static double s_clock_band_height = -1.0;
+
+void flutter_watchos_set_clock_band_height(double points) {
+    os_unfair_lock_lock(&s_clock_band_lock);
+    s_clock_band_height = points;
+    os_unfair_lock_unlock(&s_clock_band_lock);
+}
+
+double flutter_watchos_clock_band_height(void) {
+    os_unfair_lock_lock(&s_clock_band_lock);
+    double points = s_clock_band_height;
+    os_unfair_lock_unlock(&s_clock_band_lock);
+    return points;
+}
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // Shared state between the watch host (pushes rotation, reads mode — main
 // thread) and Dart (sets mode, drains rotation — UI thread). Pure C, so it

@@ -12,7 +12,8 @@
 /// can replace it. Extend it through [WatchOSNativeBindings.forTesting],
 /// override the members the code under test reads, and pass the fake to a
 /// `bindingsOverride` setter: `WatchOSInfo`, `WatchAlwaysOn`,
-/// `WatchPlatformView` and `WatchCrown.instance` each have one. In a test on the Dart VM, the members of a `forTesting` object that
+/// `WatchStatusBar`, `WatchPlatformView` and `WatchCrown.instance` each have
+/// one. In a test on the Dart VM, the members of a `forTesting` object that
 /// read the device, play a haptic or report memory throw unless the fake
 /// overrides them; the other members return the defaults listed below.
 ///
@@ -84,6 +85,10 @@ class WatchOSNativeBindings {
   /// Whether the watch host reports the Always-On state at all. False on the
   /// Web.
   bool get alwaysOnSupported => false;
+
+  /// The clock band height the watch host reported, in logical pixels, or a
+  /// negative value when no host has reported one. -1 on the Web.
+  double get clockBandHeight => -1.0;
 
   /// Where Digital Crown rotation goes: 0 scrolls, 1 delivers it raw to the
   /// app. 0 on the Web.

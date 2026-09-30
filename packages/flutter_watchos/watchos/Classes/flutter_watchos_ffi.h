@@ -88,6 +88,25 @@ FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_always_on_active(bool active);
 /// forever rather than tracking the display.
 FLUTTER_WATCHOS_EXPORT bool flutter_watchos_always_on_supported(void);
 
+// --- Clock band -------------------------------------------------------------
+// The band at the top of the screen that the clock sits in. The engine sends
+// Flutter one set of safe-area insets, and in the default `corners` mode those
+// leave the clock out, so nothing else carries the band to Dart. The watch host
+// (main thread) reports watchOS's own top inset here on every safe-area report,
+// and Dart (FFI/UI thread) reads it via WatchStatusBar.heightOf. The host
+// resolves the setter with dlsym, so an app without this package still builds
+// and runs.
+
+/// Sets the clock band height: the top inset watchOS reports, divided by the
+/// content scale, in points. Called from the watch host on every safe-area
+/// report, in both safe-area modes.
+FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_clock_band_height(
+    double points);
+
+/// The clock band height the watch host last reported, or -1 until the first
+/// report (off the watch, or under a host module that predates this bridge).
+FLUTTER_WATCHOS_EXPORT double flutter_watchos_clock_band_height(void);
+
 // --- Raw Digital Crown bridge ---------------------------------------------
 // By default the watch host forwards Digital Crown rotation to Flutter as
 // trackpad scroll. An app that wants the crown as a direct input (a game, a

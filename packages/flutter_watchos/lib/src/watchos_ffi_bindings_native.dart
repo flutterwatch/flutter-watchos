@@ -94,6 +94,10 @@ class WatchOSNativeBindings {
       .lookupFunction<Bool Function(), bool Function()>(
           'flutter_watchos_always_on_supported');
 
+  late final double Function() _clockBandHeight = _lib!
+      .lookupFunction<Double Function(), double Function()>(
+          'flutter_watchos_clock_band_height');
+
   late final int Function() _crownMode = _lib!
       .lookupFunction<Int32 Function(), int Function()>(
           'flutter_watchos_crown_mode');
@@ -256,6 +260,19 @@ class WatchOSNativeBindings {
   /// Whether the watch host reports Always-On state at all (false under a
   /// host module built before the bridge existed).
   bool get alwaysOnSupported => _lib == null ? false : _alwaysOnSupported();
+
+  // --- Clock band ---
+  // Read-only from Dart: the watch host is the only writer. Null-safe against
+  // [WatchOSNativeBindings.forTesting]: it reads -1, "nothing has reported".
+
+  /// The clock band height the watch host reported, in logical pixels, or a
+  /// negative value when no host has reported one.
+  ///
+  /// The host reports the top inset watchOS gives the app, divided by the
+  /// content scale, on every safe-area report. -1 on a
+  /// [WatchOSNativeBindings.forTesting] object. Apps read it through
+  /// `WatchStatusBar.heightOf`.
+  double get clockBandHeight => _lib == null ? -1.0 : _clockBandHeight();
 
   // --- Raw Digital Crown bridge ---
   // Null-safe against the [WatchOSNativeBindings.forTesting] constructor (no
