@@ -1,6 +1,8 @@
 ## 0.1.0
 
-* The same code and API as the previous version, released as 0.1.0.
+The package's code and API are the same as in the last published build.
+The example and the API docs changed:
+
 * **Example:** the home list no longer sits inside a `SafeArea`. It covers
   the whole screen and adds the safe-area insets to its padding, so its rows
   scroll under the clock and down to the bottom edge, as in a native watchOS
@@ -8,121 +10,42 @@
 * **Docs:** every public member now has API documentation, the Web side of
   `WatchOSNativeBindings` included.
 
-## 0.1.0-beta.9
+An app already on the last published build needs no change. An app on an
+older build should check two things:
 
-* **Changed:** `WatchPlatformView` is now a real platform view in the layer
-  tree on engines that composite platform views (`WatchPlatformView.isComposited`).
-  The native SwiftUI view is composited at the widget's position in **paint
-  order**: Flutter content painted before the widget is below it, content
-  painted after it (dialogs, snackbars, badges, a `Stack` sibling) is above
-  it. Geometry comes from the layer tree — ancestor clips, opacity and
-  transforms apply — and the view hides whenever it is not painted (scrolled
-  out of the viewport, covered by an opaque route). `layer:` now only decides
-  touch ownership: `aboveFlutter` (default) gives the native view the touches
-  inside its rect unless Flutter content painted above it covers the point;
-  `belowFlutter` sends every touch to Flutter (handle it in Dart with a
-  `GestureDetector`). SwiftUI has no event forwarding, so whichever side owns
-  a touch owns the whole gesture. No API changes: existing apps compile
-  unchanged, and on engines that predate the compositor the previous
-  overlay/underlay behaviour still applies.
-* **New:** `WatchPlatformView.isComposited` reports whether the running engine
-  composites platform views from the layer tree.
+* **Web only:** `extension FlutterWatchosPlatformExt on Platform` exists only
+  where `dart:io` does, so Web code cannot use it. Code that also builds for
+  the Web uses the static `FlutterWatchosPlatform` getters, which work on
+  every platform.
+* **`WatchPlatformView`:** on engines that composite platform views
+  (`WatchPlatformView.isComposited`), the native view is drawn in paint order
+  with the Flutter content around it, and `layer:` only decides which side
+  owns the touches inside the view. On engines that do not, `layer:` also
+  still picks whether the view is drawn above or below Flutter.
 
-## 0.1.0-beta.8
+What the package gives a Flutter app on Apple Watch:
 
-* **New:** `WatchMemory` — how much memory the process has left before watchOS
-  kills it. watchOS enforces a hard per-process limit and terminates with a
-  bare SIGKILL on the way past it, and Dart's `ProcessInfo.currentRss` cannot
-  see it coming: RSS omits the GPU and IOKit allocations the kernel charges to
-  the process. A run measured at 111 MB of RSS was killed by jetsam at
-  302.4 MB.
+* `FlutterWatchosPlatform.isWatch`, `isIos` and `isAppleMobile` tell Apple
+  Watch apart from iPhone and iPad, which both report `Platform.isIOS`. They
+  are safe to call from shared code on every platform, the Web included,
+  where all three are `false`.
+* `WatchOSInfo`: synchronous device information (watchOS version, model,
+  machine id, Simulator flag, screen size and scale).
+* `WatchHaptics`: Taptic Engine feedback through
+  `WKInterfaceDevice.playHaptic`.
+* `WatchStatusBar`: shows or hides the clock watchOS draws over every app.
+* `WatchCrownScroll`, `WatchScrollPhysics` and `WatchScrollBehavior`: the
+  native watch scroll feel, a firm, shallow edge bounce with no haptic at
+  the list edges. `WatchCrownScrolling` sets the crown's scroll sensitivity
+  and turns its detent clicks on or off.
+* `WatchCrown`: raw Digital Crown rotation, as a stream or per frame with
+  `drain()`, for games and custom controls.
+* `WatchPlatformView`: a native SwiftUI view at its place in the Flutter
+  layout, composited in paint order with the Flutter content around it.
+* `WatchAlwaysOn` and `WatchAlwaysOnBuilder`: whether watchOS is showing
+  the app dimmed in the Always-On state.
+* `WatchMemory`: how much memory the process may still allocate before
+  watchOS stops it, and its current footprint.
 
-  `WatchMemory.available` is `os_proc_available_memory()`, the figure that
-  actually governs; `WatchMemory.footprint` is `phys_footprint`, the quantity
-  jetsam compares against the limit. `available` returns 0 where the platform
-  cannot answer — the Simulator has no jetsam limit to report against — so
-  check `WatchMemory.availableIsSupported` to tell "no headroom" apart from
-  "no answer".
-
-## 0.1.0-beta.7
-
-* **Fix:** the package is now Web-safe. `FlutterWatchosPlatform` is the guard
-  this package tells cross-platform apps to write instead of `Platform.isIOS`,
-  but it imported `dart:io` unconditionally, so following that advice broke the
-  app's Web build — an `UnsupportedError: Platform._operatingSystem` on the
-  first `isWatch` read (a compile error on older SDKs). It now resolves through
-  a conditional import: on Web `isWatch`, `isIos`, and `isAppleMobile` are all
-  `false`.
-* **Breaking (Web only):** `extension FlutterWatchosPlatformExt on Platform` is
-  native-only API now — it extends the `dart:io` `Platform` type, which does not
-  exist on Web. Nothing changes for iOS/watchOS/Android/desktop code; Web code
-  that needs the check should use the static `FlutterWatchosPlatform` getters.
-
-## 0.1.0-beta.6
-
-* **New:** `WatchAlwaysOn` / `WatchAlwaysOnBuilder` — react to the watchOS
-  Always-On display, i.e. the wrist going down and the system showing the app
-  dimmed instead of blanking it. Apps use it to pause animations, hide private
-  content, and drop bright fills, per the watchOS HIG. The state comes from
-  SwiftUI's `\.isLuminanceReduced`, so unlike `AppLifecycleState.inactive` it
-  does not also fire for notification banners and Control Center.
-  `WatchAlwaysOn.isSupported` reports whether the app's watch host reports the
-  state at all (false under a host module built by an older CLI, where
-  `isActive` would read false regardless of the display).
-
-## 0.1.0-beta.5
-
-* **New:** `WatchPlatformView` — embeds a native SwiftUI view at its slot in
-  the Flutter layout. Register a factory per `viewType` with
-  `WatchPlatformViewRegistry.register` in the app's runner, then place the
-  widget like any other box. `layer:` picks the composition side:
-  `WatchPlatformViewLayer.aboveFlutter` (default) for interactive native
-  controls, `belowFlutter` to let Flutter content (dialogs, snackbars,
-  badges) draw over the view. `WatchPlatformView.isSupported` and
-  `isUnderlaySupported` report engine support; the widget renders nothing on
-  non-watchOS platforms and on engines that predate the feature.
-
-## 0.1.0-beta.4
-
-* **Meta:** add pub.dev `topics` and a `documentation` link. No API changes.
-
-## 0.1.0-beta.3
-
-* **Docs:** README now links to the GitHub source/issues and drops a broken
-  relative link. No API changes.
-
-## 0.1.0-beta.2
-
-* **Fix:** the package now no-ops correctly on iPhone/iPad. The native-symbol
-  gate used `Platform.isIOS`, which is also `true` on real iOS, so
-  cross-platform apps crashed with "symbol not found" when calling
-  `WatchCrown`, `WatchHaptics`, `WatchStatusBar`, `WatchCrownScrolling`, or
-  `WatchOSInfo` off-watch. The gate now checks for an actual watchOS process
-  (`Platform.operatingSystem == 'watchos'`), so the documented
-  "safe no-op on non-watchOS platforms" behavior holds everywhere: haptics and
-  status-bar calls do nothing, the crown stream never emits, `drain()`
-  returns 0, and `WatchOSInfo.isWatchOS` reports `false`.
-
-## 0.1.0-beta.1
-
-* Initial beta release.
-* `WatchStatusBar` — show/hide the system status bar (the clock watchOS
-  draws over every app). Visible by default, per the watchOS HIG; set
-  `WatchStatusBar.hidden = true` for immersive UIs.
-* `WatchOSInfo` — synchronous FFI device info (version, model, machine id,
-  simulator, screen size/scale).
-* `FlutterWatchosPlatform` — cheap `isWatch` / `isIos` platform detection that
-  disambiguates Apple Watch from iPhone/iPad (both report `Platform.isIOS`).
-* `WatchHaptics` — Taptic Engine feedback via `WKInterfaceDevice.playHaptic`.
-* `WatchCrownScroll` — the native scroll feel for a subtree: installs
-  `WatchScrollPhysics` (firm, live, shallow watch-style edge bounce instead
-  of the iPhone deep stretch; no haptic at the list edges, matching native
-  watchOS 26).
-* `WatchScrollPhysics` / `WatchScrollBehavior` — the watch-tuned physics on
-  their own, per scrollable or app-wide.
-* `WatchCrownScrolling` — the native-parity crown scroll options:
-  `sensitivity` (low/medium/high) and `detentHaptics` on/off, applied by the
-  engine per crown sample.
-* `WatchCrown` — raw Digital Crown input (rotation stream or per-frame
-  `drain()`) for games and custom controls, switching the crown out of scroll
-  mode while active.
+On other platforms the package calls no native code: the device getters
+return defaults, and haptics, clock and crown calls do nothing.
