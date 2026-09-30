@@ -41,10 +41,10 @@ class Scaffolder {
   ///
   /// When [dryRun] is true no files are written; the call still produces a
   /// [ScaffoldResult] reporting which paths *would* have been written and
-  /// the findings collected from the source (so `--dry-run` can preview the
-  /// report). When [overwrite] is false and [outputDirectory] already
-  /// exists, throws. When [emitReport] is false, `PORTING_REPORT.md` is not
-  /// written (`--no-report`).
+  /// the findings collected from the source (so `--dry-run` can show the
+  /// report without writing it). When [overwrite] is false and
+  /// [outputDirectory] already exists, throws. When [emitReport] is false,
+  /// `PORTING_REPORT.md` is not written (`--no-report`).
   ScaffoldResult scaffold({
     required PluginSource source,
     required Directory outputDirectory,

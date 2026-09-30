@@ -42,7 +42,7 @@ import 'package:meta/meta.dart' show visibleForTesting;
 ///
 /// The wire format has no such restriction. `target_os` is a plain string on
 /// both sides of the protocol, and a hook resolving code_assets 2.0.0 — which
-/// an app is free to do, its dependencies being resolved separately from the
+/// an app may well do, its dependencies being resolved separately from the
 /// tool's — reads an unfamiliar name back as an ordinary [OS]. So watchOS can
 /// introduce itself by name even while the tool's own copy of the library has
 /// no word for it.
@@ -72,9 +72,12 @@ const String watchOSName = 'watchos';
 /// The architecture watchOS builds target.
 ///
 /// The engine and the AOT snapshot are arm64-only, on device and in the
-/// simulator alike, so there is one value here rather than a list. (An
-/// `arm64_32` slice is added at packaging time for older deployment targets;
-/// nothing is compiled for it, so no hook is ever asked to build for it.)
+/// simulator alike, so there is one value here rather than a list. (Below a
+/// watchOS 27.0 deployment target, Xcode's Standard Architectures also build
+/// an `arm64_32` slice, and the template's `#if arch(arm64_32)` makes that
+/// slice a stub without Flutter: the one Series 6–8, SE (2nd generation) and
+/// Ultra (1st generation) run. The host module and `App.swift` are compiled
+/// for it, but no hook is ever asked to build for it.)
 ///
 /// Which also means the architecture cannot separate the two, and neither can
 /// anything else on this path: a device build and a simulator build produce
