@@ -78,6 +78,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
     private var bufferedPayloads: [[AnyHashable: Any]] = []
     private static let maxBufferedPayloads = 16
 
+    /// Makes this object the `UNUserNotificationCenter` delegate and starts
+    /// listening for `FlutterWatchOSRemoteNotification.observersReady`.
+    /// WatchKit creates it through `@WKApplicationDelegateAdaptor`.
     override public required init() {
         super.init()
         // The notification-center delegate must be in place before the app
@@ -121,6 +124,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
 
     // WKApplicationDelegate ------------------------------------------------
 
+    /// Posts `FlutterWatchOSRemoteNotification.didRegister` with the APNs
+    /// device token, and keeps the token for replay until a plugin posts
+    /// `observersReady`. WatchKit calls it on the main thread.
     public func didRegisterForRemoteNotifications(withDeviceToken deviceToken: Data) {
         if !observersReady {
             bufferedToken = deviceToken
@@ -130,6 +136,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
              userInfo: ["deviceToken": deviceToken])
     }
 
+    /// Posts `FlutterWatchOSRemoteNotification.didFail` with the error, and
+    /// keeps the error for replay until a plugin posts `observersReady`.
+    /// WatchKit calls it on the main thread.
     public func didFailToRegisterForRemoteNotificationsWithError(_ error: Error) {
         if !observersReady {
             bufferedError = error
@@ -139,6 +148,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
              userInfo: ["error": error])
     }
 
+    /// Posts `FlutterWatchOSRemoteNotification.didReceive` with the APNs
+    /// payload, keeping up to 16 payloads for replay until a plugin posts
+    /// `observersReady`, then reports `.newData` to WatchKit.
     public func didReceiveRemoteNotification(
         _ userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler:
@@ -155,6 +167,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
 
     // UNUserNotificationCenterDelegate ------------------------------------
 
+    /// Posts `FlutterWatchOSRemoteNotification.willPresent` on the main
+    /// thread and completes with the presentation options an observer wrote
+    /// into its `options` dictionary, or none when no observer did.
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
@@ -172,6 +187,9 @@ public class FlutterWatchOSAppDelegate: NSObject, WKApplicationDelegate,
         }
     }
 
+    /// Posts `FlutterWatchOSRemoteNotification.didReceiveResponse` on the
+    /// main thread with the payload and the action the user chose, then
+    /// calls the completion handler.
     public func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,

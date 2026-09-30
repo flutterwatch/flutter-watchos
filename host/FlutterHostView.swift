@@ -65,6 +65,8 @@ public struct FlutterHostView<Splash: View>: View {
         self.splashScreen = splashScreen()
     }
 
+    /// The Flutter frame with its native overlays, the touch and Digital
+    /// Crown input, and the launch placeholder until the first frame.
     public var body: some View {
         GeometryReader { _ in
             // The frame itself lives in its own leaf view, which is the only

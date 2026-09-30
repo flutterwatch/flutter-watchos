@@ -394,6 +394,88 @@ void main() {
     });
   });
 
+  group('host API comments', () {
+    // Spec 0007, criterion 27: the host module is the Swift API every app
+    // compiles against, and its C header is the contract with the engine, so
+    // both carry their documentation in the source.
+    test('every public or open Swift declaration has a doc comment', () {
+      final documented = <String>[];
+      final undocumented = <String>[];
+      for (final io.FileSystemEntity entity in io.Directory(cliRootPath('host')).listSync()) {
+        if (entity is! io.File || !entity.path.endsWith('.swift')) {
+          continue;
+        }
+        final String name = entity.uri.pathSegments.last;
+        final List<String> lines = readHostSource(name).split('\n');
+        final List<String> code = _withoutComments(readHostSource(name)).split('\n');
+        for (var i = 0; i < code.length; i++) {
+          if (!_publicSwiftDeclaration.hasMatch(code[i])) {
+            continue;
+          }
+          // The doc comment sits above the declaration or above its
+          // attributes (`@objc`, `@discardableResult`, …).
+          int above = i - 1;
+          while (above >= 0 && _swiftAttributeLine.hasMatch(lines[above])) {
+            above--;
+          }
+          final where = '$name:${i + 1}: ${lines[i].trim()}';
+          if (above >= 0 && lines[above].trimLeft().startsWith('///')) {
+            documented.add(where);
+          } else {
+            undocumented.add(where);
+          }
+        }
+      }
+      // 24 when the spec was written; more is fine, fewer means the scan
+      // stopped finding them.
+      expect(documented.length, greaterThanOrEqualTo(24));
+      expect(undocumented, isEmpty);
+    });
+
+    test('the header says the thread and pointer ownership of 18 prototypes', () {
+      const names = <String>[
+        'FlutterWatchOSTextInputCopyFields',
+        'FlutterWatchOSTextInputGeneration',
+        'FlutterWatchOSTextInputSetChangeCallback',
+        'FlutterWatchOSTextInputGetText',
+        'FlutterWatchOSTextInputBeginEditing',
+        'FlutterWatchOSTextInputSetText',
+        'FlutterWatchOSTextInputSubmitEditing',
+        'FlutterWatchOSTextInputEndEditing',
+        'FlutterWatchOSPlatformViewsCopy',
+        'FlutterWatchOSPlatformViewsGeneration',
+        'FlutterWatchOSPlatformViewsSetChangeCallback',
+        'FlutterWatchOSA11yCopyElements',
+        'FlutterWatchOSA11yGeneration',
+        'FlutterWatchOSA11ySetChangeCallback',
+        'FlutterWatchOSA11yFocusGained',
+        'FlutterWatchOSA11yFocusLost',
+        'FlutterWatchOSA11yPerformAction',
+        'FlutterWatchOSA11yPerformCustomAction',
+      ];
+      final String header = readHostSource('flutter_watchos_host.h');
+      final List<String> lines = header.split('\n');
+      final List<String> code = _withoutComments(header).split('\n');
+      final List<String> declared = _declaredHostFunctions(header);
+      for (final name in names) {
+        expect(declared, contains(name));
+        final int at = code.indexWhere(
+          (String line) => RegExp('\\b${RegExp.escape(name)}\\s*\\(').hasMatch(line),
+        );
+        expect(at, greaterThan(0), reason: name);
+        expect(lines[at - 1].trimLeft(), startsWith('//'), reason: 'no comment above $name');
+        // The comment says which thread may call it or where its callback
+        // runs.
+        final int start = lines.lastIndexWhere(
+          (String line) => !line.trimLeft().startsWith('//'),
+          at - 1,
+        );
+        final String comment = lines.sublist(start + 1, at).join(' ');
+        expect(comment, contains('thread'), reason: name);
+      }
+    });
+  });
+
   group('host module sources', () {
     final String runner = readHostSource('FlutterRunner.swift');
     final String hostView = readHostSource('FlutterHostView.swift');
@@ -669,3 +751,15 @@ String _withoutComments(String source) {
   }
   return out.toString();
 }
+
+/// A line of Swift code that declares something `public` or `open`, after
+/// any attributes and modifiers.
+final _publicSwiftDeclaration = RegExp(
+  r'^\s*(?:@\w+(?:\([^)]*\))?\s+)*'
+  r'(?:(?:override|final|required|convenience|static|class|nonisolated|mutating)\s+)*'
+  r'(?:public|open)\s',
+);
+
+/// A line that holds only a Swift attribute, such as `@objc` or
+/// `@available(watchOS 26, *)`.
+final _swiftAttributeLine = RegExp(r'^\s*@\w+(?:\(.*\))?\s*$');

@@ -730,6 +730,7 @@ import Foundation
 /// has to exist in every configuration — but in a shipping app it does
 /// nothing, and no URLSession, socket or compression code is linked in.
 @objc public final class FlutterWatchOSVmBridge: NSObject {
+    /// Does nothing: a release build has no VM Service bridge.
     @objc public static func startIfConfigured() {}
 }
 
