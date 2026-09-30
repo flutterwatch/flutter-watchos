@@ -81,7 +81,16 @@ void main() {
 
       await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: _Recorder().post);
       expect(logger.statusText, contains('nothing is added to your app'));
-      expect(logger.statusText, contains('flutter-watchos build-registry --disable'));
+      // Each way to turn it off is a bare command on its own line, ready to
+      // paste: no "(or ...)" beside it, and no variable assignment without
+      // `export`, which a shell would keep to itself.
+      final List<String> lines = logger.statusText.split('\n');
+      expect(
+        lines.where((String line) => line.startsWith('  flutter-watchos ') || line.startsWith('  export ')),
+        <String>['  flutter-watchos build-registry --disable', '  export FLUTTER_WATCHOS_BUILD_REGISTRY=0'],
+      );
+      expect(logger.statusText, isNot(contains('(or')));
+      expect(lines.where((String line) => line.trimLeft().startsWith('$kBuildRegistryEnv=')), isEmpty);
       // Printed in the app's directory, which has no doc/ folder.
       expect(
         logger.statusText,
