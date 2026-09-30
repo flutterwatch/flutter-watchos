@@ -391,7 +391,9 @@ class WatchosValidator extends DoctorValidator {
     return runtimes;
   }
 
-  /// Checks that CocoaPods is installed (needed for plugin support).
+  /// Checks that CocoaPods is installed. Only a `watchos/Podfile` needs it:
+  /// the build runs `pod install` for one and for nothing else, and plugins
+  /// build without it.
   Future<void> _checkCocoaPods(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>['pod', '--version']);
@@ -406,8 +408,8 @@ class WatchosValidator extends DoctorValidator {
 
     messages.add(
       const ValidationMessage.hint(
-        'CocoaPods not installed. Install with: brew install cocoapods\n'
-        'CocoaPods is required for plugins with native watchOS code.',
+        'CocoaPods not installed. You need it only if your watchos/ folder has a Podfile.\n'
+        'Install it with: brew install cocoapods',
       ),
     );
   }

@@ -200,7 +200,15 @@ void main() {
 
       final ValidationResult result = await validator.validate();
       expect(result.type, equals(ValidationType.success));
-      expect(_texts(result), contains(contains('CocoaPods not installed')));
+      // Only a watchos/Podfile makes the build run `pod install`; plugins
+      // build without CocoaPods, so the hint must not say they need it.
+      final ValidationMessage hint = result.messages.singleWhere(
+        (ValidationMessage m) => m.message.startsWith('CocoaPods not installed'),
+      );
+      expect(hint.isHint, isTrue);
+      expect(hint.message, contains('only if your watchos/ folder has a Podfile'));
+      expect(hint.message, contains('brew install cocoapods'));
+      expect(hint.message, isNot(contains('plugins')));
     });
 
     testWithoutContext('absent engine artifacts is a hint, not a failure', () async {
