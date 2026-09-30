@@ -10,9 +10,13 @@ import 'package:flutter_tools/runner.dart' as runner;
 import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/config.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/os.dart' show findProjectRoot;
+// Prefixed: dart:io has a Platform too, which [rootPath] reads.
+import 'package:flutter_tools/src/base/platform.dart' as tools show Platform;
 import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -32,12 +36,16 @@ import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/flutter_features.dart';
+import 'package:flutter_tools/src/flutter_features_config.dart';
+import 'package:flutter_tools/src/flutter_manifest.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
 import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
 import 'package:flutter_tools/src/project_validator.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/version.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
@@ -141,6 +149,21 @@ Future<void> main(List<String> args) async {
         processManager: globals.processManager,
       ),
       TemplateRenderer: () => const MustacheTemplateRenderer(),
+      // Stock's flags, as stock's context builds them, with custom devices on
+      // unless configured off: see [createWatchosFeatureFlags].
+      FeatureFlags: () => createWatchosFeatureFlags(
+        flutterVersion: globals.flutterVersion,
+        globalConfig: globals.config,
+        platform: globals.platform,
+        projectManifest: FlutterManifest.createFromPath(
+          globals.fs.path.join(
+            findProjectRoot(globals.fs) ?? globals.fs.currentDirectory.path,
+            'pubspec.yaml',
+          ),
+          fileSystem: globals.fs,
+          logger: globals.logger,
+        ),
+      ),
       Artifacts: () => WatchosArtifacts(
         fileSystem: globals.fs,
         cache: globals.cache,
@@ -192,6 +215,49 @@ Future<void> main(List<String> args) async {
     },
     shutdownHooks: globals.shutdownHooks,
   );
+}
+
+/// Stock's [FlutterFeatureFlags], with custom devices on unless configured
+/// off.
+///
+/// An IDE asks `daemon.getSupportedPlatforms` whether custom devices are
+/// supported before it offers a device outside Flutter's own platforms, such
+/// as a watch. Stock turns the feature on only through `flutter config
+/// --enable-custom-devices`, which writes the settings file that stock Flutter
+/// shares. Here it is on when nothing configures it, and nothing is written:
+/// the pubspec, `flutter config` and `FLUTTER_CUSTOM_DEVICES` still decide, in
+/// stock's order. Every other feature is stock's. With the feature on, stock's
+/// custom-device discovery also lists the devices configured for stock
+/// Flutter, if there are any.
+///
+/// The arguments are the ones stock's context builds its flags from.
+FeatureFlags createWatchosFeatureFlags({
+  required FlutterVersion flutterVersion,
+  required Config globalConfig,
+  required tools.Platform platform,
+  required FlutterManifest? projectManifest,
+}) => FlutterFeatureFlags(
+  flutterVersion: flutterVersion,
+  featuresConfig: _WatchosFeaturesConfig(
+    FlutterFeaturesConfig(
+      globalConfig: globalConfig,
+      platform: platform,
+      projectManifest: projectManifest,
+    ),
+  ),
+  platform: platform,
+);
+
+/// Stock's feature configuration, which says "on" for custom devices when it
+/// has no value of its own.
+class _WatchosFeaturesConfig implements FlutterFeaturesConfig {
+  const _WatchosFeaturesConfig(this._stock);
+
+  final FlutterFeaturesConfig _stock;
+
+  @override
+  bool? isEnabled(Feature feature) =>
+      _stock.isEnabled(feature) ?? (feature == flutterCustomDevicesFeature ? true : null);
 }
 
 /// The commands flutter-watchos registers.
