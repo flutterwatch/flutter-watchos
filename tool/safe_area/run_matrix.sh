@@ -34,7 +34,7 @@
 #   --scale <x>        FlutterWatchOSContentScale for every build (default: unset)
 #   --pages <list>     probe pages to launch (default: 0,3,4,5); a created app
 #                      has one, the native probe's default is 0,1,2,3,4
-#   --min-gib <n>      stop before a build when `df -g /System/Volumes/Data`
+#   --min-gib <n>      stop before a build or a new Simulator when `df -g /System/Volumes/Data`
 #                      shows less than this available (default: 15)
 #
 # Each build is labelled with --dart-define=MODE=platform or MODE=corners, the
@@ -251,6 +251,8 @@ run_device() {
   local type="$1" udid index page stem start first prefix process tag
   if [[ "$APP" == native ]]; then prefix=nprobe; process=NativeProbe; tag=NPROBE; else
     prefix=saprobe; process=Runner; tag=SAFEAREA; fi
+  # A new Simulator takes disk too: the same floor as a build.
+  check_disk
   udid="$(xcrun simctl create "fw-safe-area $type" "com.apple.CoreSimulator.SimDeviceType.$type" "$RUNTIME")" ||
     die "cannot create $type on $RUNTIME"
   CREATED_SIMS+=("$udid")

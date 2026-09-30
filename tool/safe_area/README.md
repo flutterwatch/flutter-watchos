@@ -31,7 +31,8 @@ tool/safe_area/run_matrix.sh --work /tmp --out /tmp/safe-area-run \
 ```
 
 Each build and each Simulator is a heavy step: the script stops before a build
-when less than `--min-gib` (15 by default) is available on the Data volume, and
+or a new Simulator when less than `--min-gib` (15 by default) is available on
+the Data volume, and
 deletes its builds, its Xcode DerivedData and its Simulators when it ends.
 Simulator builds are debug builds; release insets are a check on a physical
 watch.
