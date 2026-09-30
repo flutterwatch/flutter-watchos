@@ -139,6 +139,44 @@ void main() {
     });
   });
 
+  group('watchOS safe area: the clock band', () {
+    late final String body = _flat(
+      _block(runner, runner.indexOf('func reportSafeArea(_ insets: EdgeInsets)')),
+    );
+    const call = 'Self.setClockBandHeightFn?(insets.top / scale)';
+
+    test('resolves the package setter with dlsym, so an app without the package runs', () {
+      final String resolver = _flat(
+        _block(runner, runner.indexOf('private static let setClockBandHeightFn')),
+      );
+      expect(
+        resolver,
+        contains(
+          'guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), '
+          '"flutter_watchos_set_clock_band_height") else { return nil }',
+        ),
+      );
+      expect(
+        resolver,
+        contains('return unsafeBitCast(sym, to: (@convention(c) (Double) -> Void).self)'),
+      );
+    });
+
+    test(
+      "reports watchOS's top inset over the content scale, before the insets, in both modes",
+      () {
+        // Once, unconditionally, before the mode branch and before either
+        // FlutterWatchOSHostSetSafeAreaInsets call.
+        expect(call.allMatches(body).length, 1);
+        final int at = body.indexOf(call);
+        expect(at, greaterThan(body.indexOf('let scale = WatchContentScale.value')));
+        expect(at, lessThan(body.indexOf('if WatchSafeAreaMode.usesCornerInset')));
+        expect(at, lessThan(body.indexOf('FlutterWatchOSHostSetSafeAreaInsets(')));
+        expect('setClockBandHeightFn'.allMatches(runner).length, 2);
+      },
+    );
+  });
+
   group('watchOS safe area: FlutterWatchOSSafeArea', () {
     late final String mode = _flat(_block(runner, runner.indexOf('enum WatchSafeAreaMode')));
 

@@ -725,6 +725,16 @@ final class FlutterRunner: ObservableObject {
         return unsafeBitCast(sym, to: (@convention(c) (Bool) -> Void).self)
     }()
 
+    /// Likewise dlsym-resolved: nil when the app doesn't link
+    /// package:flutter_watchos, or links a version predating
+    /// `WatchStatusBar.heightOf`. Takes the clock band's height in logical
+    /// points.
+    private static let setClockBandHeightFn: (@convention(c) (Double) -> Void)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                              "flutter_watchos_set_clock_band_height") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (Double) -> Void).self)
+    }()
+
     /// The EXPERIMENTAL texture-delivery ABI (`WatchPresentMode.texture`),
     /// dlsym-resolved so this host still links against an engine that predates
     /// it — in which case the mode silently stays `image`.
@@ -988,8 +998,19 @@ final class FlutterRunner: ObservableObject {
     /// `leading`/`trailing` map to left/right, which is exact under LTR. Every
     /// watch measured reports the two sides equal (2pt), so RTL sees the same
     /// rectangle either way.
+    ///
+    /// The clock band is reported first, in both modes: watchOS's own top
+    /// inset, divided by the content scale like the rest, which
+    /// `WatchStatusBar.heightOf` in package:flutter_watchos returns. In
+    /// `corners` mode nothing else carries it to Dart.
     func reportSafeArea(_ insets: EdgeInsets) {
         let scale = WatchContentScale.value
+
+        // The band goes before the insets, whichever branch follows: the
+        // metrics event that carries a new padding then finds the band already
+        // set, and a widget that read it, which depends on the padding,
+        // rebuilds with the new value. Without the package this does nothing.
+        Self.setClockBandHeightFn?(insets.top / scale)
 
         // `corners` mode, the default: report only what the display's
         // curvature costs, and let content sit under the clock. See
