@@ -41,6 +41,60 @@ jobs:
       - name: Command tests
         run: ./flutter/bin/dart test --timeout 2s test/commands.shard/hermetic
 
+  host-typecheck:
+    # The CLI compiles host/*.swift into every app, with the Xcode on the
+    # user's machine, for three targets and with up to two compile
+    # conditions: FLUTTER_WATCHOS_VM_BRIDGE (debug and profile) and
+    # FLUTTER_WATCHOS_STATUS_BAR_SPI (apps that use the flutter_watchos
+    # package). Typecheck every combination with the first Xcode 26 release
+    # and with the image default, so neither can break an app build unseen.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      HOST_TYPECHECK_XCODES: >-
+        /Applications/Xcode_26.0.1.app/Contents/Developer
+        /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Typecheck host/*.swift (3 targets x 4 define sets per Xcode)
+        run: |
+          status=0
+          for developer_dir in $HOST_TYPECHECK_XCODES; do
+            if [ ! -d "$developer_dir" ]; then
+              echo "FAILED no Xcode at $developer_dir"
+              status=1
+              continue
+            fi
+            export DEVELOPER_DIR="$developer_dir"
+            xcode="$(xcodebuild -version | head -n 1)"
+            for target in \
+                watchos:arm64-apple-watchos26.0 \
+                watchos:arm64_32-apple-watchos26.0 \
+                watchsimulator:arm64-apple-watchos26.0-simulator; do
+              sdk="${target%%:*}"
+              triple="${target#*:}"
+              for defines in \
+                  "" \
+                  "-D FLUTTER_WATCHOS_VM_BRIDGE" \
+                  "-D FLUTTER_WATCHOS_STATUS_BAR_SPI" \
+                  "-D FLUTTER_WATCHOS_VM_BRIDGE -D FLUTTER_WATCHOS_STATUS_BAR_SPI"; do
+                # $defines is split into its words on purpose.
+                # shellcheck disable=SC2086
+                if output="$(xcrun -sdk "$sdk" swiftc -typecheck -target "$triple" \
+                    -parse-as-library -module-name FlutterWatchOS -I host \
+                    $defines host/*.swift 2>&1)" && ! grep -q 'warning:' <<< "$output"; then
+                  echo "ok     $xcode  $triple  [$defines]"
+                else
+                  echo "FAILED $xcode  $triple  [$defines]"
+                  echo "$output"
+                  status=1
+                fi
+              done
+            done
+          done
+          exit "$status"
+
   package:
     # The flutter_watchos package and its example, with the pinned SDK. The
     # CLI's own analyze leaves packages/ out (analysis_options.yaml), so this
