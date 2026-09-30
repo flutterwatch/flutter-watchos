@@ -21,7 +21,8 @@ analyzer:
     # separate package with its own pubspec + analysis_options (flutter_test,
     # flutter_lints). The CLI's root analyze must not pull it in: on a clean
     # checkout its deps aren't resolved, so `expect`/`test`/widget types read
-    # as undefined and fail CI. It is analysed on its own, from its own dir.
+    # as undefined and fail CI. It is analysed and tested on its own, from its
+    # own dir, by the `package` job in `.github/workflows/ci.yml`.
     - "packages/**"
     # `runtime/` is app-side code the tool compiles into every watch app (the
     # native crown runtime), a Flutter package with its own pubspec and
