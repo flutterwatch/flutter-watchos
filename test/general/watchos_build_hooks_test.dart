@@ -57,7 +57,11 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     this.alwaysFails = false,
     this.assets = const <EncodedAsset>[],
     this.dependencies = const <Uri>[],
+    this.packagesWithHooks = const <String>['some_package'],
   });
+
+  /// The packages that have a build hook.
+  final List<String> packagesWithHooks;
 
   /// What the hooks "produced". Empty in tests that only care about the input.
   final List<EncodedAsset> assets;
@@ -77,7 +81,7 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
   BuildInput? get lastInput => inputs.isEmpty ? null : inputs.last;
 
   @override
-  Future<List<String>> packagesWithNativeAssets() async => const <String>['some_package'];
+  Future<List<String>> packagesWithNativeAssets() async => packagesWithHooks;
 
   @override
   Future<BuildResult?> build({
@@ -416,5 +420,114 @@ void main() {
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
     });
+  });
+
+  // The data-assets notice names only packages the watch build uses.
+  group('packagesWithHooksForWatch', () {
+    /// Writes a package graph in the shape pub writes it: [roots], and each
+    /// package with its dependencies.
+    File graphOf(List<String> roots, Map<String, List<String>> dependencies) {
+      return fileSystem.file('/graph/package_graph.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, Object?>{
+            'roots': roots,
+            'packages': <Object?>[
+              for (final MapEntry<String, List<String>> package in dependencies.entries)
+                <String, Object?>{
+                  'name': package.key,
+                  'dependencies': package.value,
+                  if (roots.contains(package.key)) 'devDependencies': <String>[],
+                },
+            ],
+            'configVersion': 1,
+          }),
+        );
+    }
+
+    const pathProvider = <String, List<String>>{
+      'path_provider': <String>['path_provider_foundation', 'path_provider_platform_interface'],
+      'path_provider_foundation': <String>['objective_c'],
+      'path_provider_platform_interface': <String>[],
+      'objective_c': <String>[],
+    };
+
+    testWithoutContext('leaves out a package reached only through another platform', () {
+      final File graph = graphOf(
+        <String>['app'],
+        <String, List<String>>{
+          'app': <String>['path_provider'],
+          ...pathProvider,
+        },
+      );
+
+      expect(packagesWithHooksForWatch(<String>['objective_c'], graph), isEmpty);
+    });
+
+    testWithoutContext('keeps a package the app reaches directly', () {
+      final File graph = graphOf(
+        <String>['app'],
+        <String, List<String>>{
+          'app': <String>['path_provider', 'objective_c'],
+          ...pathProvider,
+        },
+      );
+
+      expect(packagesWithHooksForWatch(<String>['objective_c'], graph), <String>['objective_c']);
+    });
+
+    testWithoutContext('keeps every package when the graph cannot be read', () {
+      final File missing = fileSystem.file('/graph/package_graph.json');
+      expect(packagesWithHooksForWatch(<String>['objective_c'], missing), <String>['objective_c']);
+
+      missing
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{');
+      expect(packagesWithHooksForWatch(<String>['objective_c'], missing), <String>['objective_c']);
+    });
+
+    testWithoutContext('keeps a package the graph does not know', () {
+      final File graph = graphOf(<String>['app'], <String, List<String>>{'app': <String>[]});
+
+      expect(packagesWithHooksForWatch(<String>['some_package'], graph), <String>['some_package']);
+    });
+
+    for (final direct in <bool>[false, true]) {
+      testUsingContext(
+        'the notice ${direct ? 'names' : 'leaves out'} objective_c '
+        '${direct ? 'reached directly' : 'reached only through path_provider_foundation'}',
+        () async {
+          writePackageConfigFiles(
+            directory: fileSystem.currentDirectory,
+            mainLibName: 'example',
+            packages: <String, String>{for (final String name in pathProvider.keys) name: name},
+          );
+          // The same graph, with the plugin chain written out.
+          graphOf(
+            <String>['example'],
+            <String, List<String>>{
+              'example': <String>['path_provider', if (direct) 'objective_c'],
+              ...pathProvider,
+            },
+          ).copySync('.dart_tool/package_graph.json');
+          final runner = _RecordingBuildRunner(packagesWithHooks: const <String>['objective_c']);
+          final logger = BufferLogger.test();
+
+          await WatchosBuildHooks(buildRunner: runner).build(buildEnv(logger: logger));
+
+          expect(runner.inputs, isEmpty);
+          if (direct) {
+            expect(logger.warningText, contains('the build hooks in objective_c were not run'));
+          } else {
+            expect(logger.warningText, isEmpty);
+          }
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => FakeProcessManager.any(),
+          FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true),
+        },
+      );
+    }
   });
 }

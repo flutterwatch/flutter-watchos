@@ -26,6 +26,7 @@ import 'package:flutter_tools/src/isolated/native_assets/macos/native_assets_hos
     show cCompilerConfigMacOS;
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart'
     show FlutterCodeAsset, FlutterNativeAssetsBuildRunner;
+import 'package:flutter_tools/src/package_graph.dart' show PackageGraph;
 import 'package:hooks/hooks.dart'
     show BuildInputBuilder, EncodedAsset, LinkInputBuilder, ProtocolExtension;
 import 'package:hooks_runner/hooks_runner.dart' show BuildResult;
@@ -201,6 +202,53 @@ EnvironmentType _environmentTypeOf(String sdkRoot, FileSystem fileSystem) {
   return name.contains('simulator') ? EnvironmentType.simulator : EnvironmentType.physical;
 }
 
+/// A federated plugin's package for another platform, by the names
+/// flutter/packages gives them: `path_provider_foundation`,
+/// `url_launcher_android`, `camera_avfoundation`, and so on. They are the
+/// names `auditPluginsWithoutWatchosSupport` also passes over.
+final RegExp _otherPlatformPackage = RegExp(
+  r'_(android|ios|linux|macos|windows|web|foundation|darwin|avfoundation)$',
+);
+
+/// The packages among [packagesWithHooks] that a watch build uses, for the
+/// notice that their build hooks did not run.
+///
+/// A federated plugin's packages for other platforms are never part of a
+/// watch app, and neither is what only they depend on: `objective_c`, which
+/// `path_provider_foundation` pulls in, is not used on the watch. So a package
+/// is left out when [packageGraph] (`.dart_tool/package_graph.json`) knows it
+/// and reaches it from its roots only through such packages. When the graph
+/// cannot be read, or does not know a package, the package stays in: naming
+/// one package too many is better than missing one.
+@visibleForTesting
+List<String> packagesWithHooksForWatch(List<String> packagesWithHooks, File packageGraph) {
+  final PackageGraph graph;
+  try {
+    graph = PackageGraph.fromJson(packageGraph, json.decode(packageGraph.readAsStringSync()));
+  } on FileSystemException {
+    return packagesWithHooks;
+  } on FormatException {
+    return packagesWithHooks;
+  }
+  final reached = <String>{};
+  final toVisit = <String>[
+    for (final String root in graph.roots) ...<String>[root, ...?graph.devDependencies[root]],
+  ];
+  while (toVisit.isNotEmpty) {
+    final String name = toVisit.removeLast();
+    if (_otherPlatformPackage.hasMatch(name) && !graph.roots.contains(name)) {
+      continue;
+    }
+    if (reached.add(name)) {
+      toVisit.addAll(graph.dependencies[name] ?? const <String>[]);
+    }
+  }
+  return <String>[
+    for (final String name in packagesWithHooks)
+      if (reached.contains(name) || !graph.dependencies.containsKey(name)) name,
+  ];
+}
+
 /// Runs every package's Dart build hook for a watchOS app, and returns the
 /// data assets they produced.
 ///
@@ -243,11 +291,27 @@ Future<DartHooksResult> runWatchosHooks({
   // `enabledByDefault` on any channel, while `nativeAssets` declares it on all
   // of them, so a guard reading both with `&&` can never fire and this used to
   // run the hooks and silently collect nothing. Say what is off, name the
-  // packages it affects and the one command that turns it on.
+  // packages it affects and the one command that turns it on. A package only
+  // another platform's implementation uses is not affected, so it is not named.
   if (!featureFlags.isDartDataAssetsEnabled) {
+    final List<String> affected = packagesWithHooksForWatch(
+      packagesWithHooks,
+      environment.fileSystem
+          .file(environment.packageConfigPath)
+          .parent
+          .childFile('package_graph.json'),
+    );
+    if (affected.isEmpty) {
+      environment.logger.printTrace(
+        'Dart data assets are disabled. The build hooks in '
+        '${packagesWithHooks.join(', ')} were not run; only packages for other '
+        'platforms use them.',
+      );
+      return DartHooksResult.empty();
+    }
     environment.logger.printWarning(
       'Dart data assets are disabled, so the build hooks in '
-      '${packagesWithHooks.join(', ')} were not run.\n'
+      '${affected.join(', ')} were not run.\n'
       'A package that generates assets for the platform it is built for — '
       'shader bundles and the like — will ship whatever its generated '
       'directory already held, which may be output from a build for another '
