@@ -199,24 +199,54 @@ class WatchOSNativeBindings {
   }
 
   // Public API — override these in fakes for testing.
+  // The device-information, haptic and memory members below look their
+  // symbol up on first use, so on [WatchOSNativeBindings.forTesting] (no
+  // linked library) they throw unless a fake overrides them.
 
+  /// Whether the process is a watchOS app: true when the native code was
+  /// built for watchOS.
   bool get isWatchOS => _isWatchOS();
+
+  /// The watchOS version (`WKInterfaceDevice.systemVersion`), such as "26.0".
   String get systemVersion => _systemVersion().toDartString();
+
+  /// The device model (`WKInterfaceDevice.model`), such as "Apple Watch".
   String get deviceModel => _deviceModel().toDartString();
+
+  /// The hardware model identifier, such as "Watch7,1". In the Simulator it
+  /// is the simulated watch's identifier, not the Mac's.
   String get machineId => _machineId().toDartString();
+
+  /// Whether the app runs in the watchOS Simulator.
   bool get isSimulator => _isSimulator();
+
+  /// The screen width in pixels.
   int get screenWidth => _screenWidth();
+
+  /// The screen height in pixels.
   int get screenHeight => _screenHeight();
+
+  /// The screen's pixels per point (`WKInterfaceDevice.screenScale`), such
+  /// as 2.0.
   double get screenScale => _screenScale();
+
+  /// The screen size in pixels as width x height, such as "396x484".
   String get screenResolution => '${screenWidth}x$screenHeight';
 
   /// Plays a Taptic Engine haptic by raw `WKHapticType` value.
   void playHaptic(int type) => _playHaptic(type);
 
+  /// The bytes the process may still allocate before watchOS stops it
+  /// (`os_proc_available_memory`), or 0 where the platform cannot tell (the
+  /// Simulator has no limit to report).
   int availableMemory() => _availableMemory();
 
+  /// Whether [availableMemory] reports a real figure. False on the
+  /// Simulator.
   bool availableMemorySupported() => _availableMemorySupported() != 0;
 
+  /// The process's memory footprint in bytes (`phys_footprint`, the figure
+  /// watchOS compares with its limit), or 0 if the kernel call fails.
   int memoryFootprint() => _memoryFootprint();
 
   // --- System status bar (the time overlay) ---

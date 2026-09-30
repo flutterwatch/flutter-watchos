@@ -270,6 +270,10 @@ class RenderWatchPlatformView extends RenderBox {
       _layer == WatchPlatformViewLayer.belowFlutter &&
       _PlatformViewHost.instance.isUnderlaySupported;
 
+  /// Applies the [viewType], [params] and [layer] of a rebuilt
+  /// [WatchPlatformView]. When one of them changed, the view is registered
+  /// again under the same id, and the engine keeps the geometry it has
+  /// published for it.
   void update(
       {required String viewType,
       required String params,

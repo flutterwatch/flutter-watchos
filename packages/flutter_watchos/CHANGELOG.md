@@ -5,6 +5,8 @@
   the whole screen and adds the safe-area insets to its padding, so its rows
   scroll under the clock and down to the bottom edge, as in a native watchOS
   list. The crown screen, which does not scroll, keeps its `SafeArea`.
+* **Docs:** every public member now has API documentation, the Web side of
+  `WatchOSNativeBindings` included.
 
 ## 0.1.0-beta.9
 

@@ -3,4 +3,7 @@
 // found in the LICENSE file.
 
 // Web stub — dart:io is not available on Web.
+
+/// Whether the watchOS native FFI symbols are linked into this process.
+/// Always false on the Web, which has no native code.
 bool get isWatch => false;
