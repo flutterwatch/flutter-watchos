@@ -160,6 +160,11 @@ void main() {
       expect(kWatchosTemplateDeploymentTarget.toString(), '26.0');
     });
 
+    testWithoutContext('the required Xcode is 26.0', () {
+      expect(kWatchosXcodeRequiredVersion, Version(26, 0, null));
+      expect(kWatchosXcodeRequiredVersion.toString(), '26.0');
+    });
+
     testWithoutContext('the template default is not below the supported minimum', () {
       expect(kWatchosTemplateDeploymentTarget >= kWatchosSupportedMinimum, isTrue);
     });

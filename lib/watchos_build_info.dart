@@ -27,6 +27,15 @@ const Version kWatchosSupportedMinimum = Version.withText(26, 0, 0, '26.0');
 /// the three.
 const Version kWatchosTemplateDeploymentTarget = Version.withText(26, 0, 0, '26.0');
 
+/// The oldest Xcode the CLI supports: 26.0.
+///
+/// App Store Connect takes watchOS apps built with the watchOS 26 SDK or
+/// later, which comes with Xcode 26. `doctor` reports an older Xcode as an
+/// error, like stock `xcodeRequiredVersion`. Xcode 26.0 itself is not on
+/// offer anywhere for a test; the lowest 26.x tested is recorded with spec
+/// 0002's criterion 13.
+const Version kWatchosXcodeRequiredVersion = Version.withText(26, 0, 0, '26.0');
+
 /// The clang and swiftc `-target` triple for [arch] on watchOS [osVersion],
 /// with the `-simulator` suffix when [simulator] is true: for example
 /// `arm64-apple-watchos26.0-simulator`.
