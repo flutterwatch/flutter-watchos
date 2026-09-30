@@ -224,12 +224,11 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `plugin`
 
-  Inspect the plugins a project uses and their watchOS support, or
-  scaffold a `*_watchos` FFI package from an existing iOS/macOS plugin
-  (see [plugin-porting.md](plugin-porting.md)).
+  Authoring helpers for watchOS plugins. Today the only one is `port`, which
+  scaffolds a federated `*_watchos` FFI package from an existing iOS or
+  macOS plugin (see [plugin-porting.md](plugin-porting.md)).
 
   ```sh
-  flutter-watchos plugin list
   flutter-watchos plugin port --from-pub url_launcher_ios
   ```
 
