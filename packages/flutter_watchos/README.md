@@ -25,7 +25,12 @@ channels, no async.
 - **Status bar** — `WatchStatusBar.hidden` shows/hides the system clock the
   watch draws over every app (visible by default, per the HIG; hide it for
   games and full-bleed UIs — watchOS cannot reposition it, so a custom
-  placement means hiding it and drawing your own).
+  placement means hiding it and drawing your own). The change shows on the
+  next frame, which the setter requests. Hiding the clock does not change
+  `MediaQuery.padding`, and by default the padding leaves the clock out:
+  content that has to start below the clock takes its top from
+  `WatchStatusBar.heightOf(context)`. See [The clock](#the-clock) and
+  [doc/layout.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md).
 - **Always-On** — `WatchAlwaysOn` / `WatchAlwaysOnBuilder` tell you when the
   wrist is down and watchOS is showing your app dimmed, so you can pause
   animations, hide private content, and drop bright fills (the HIG
@@ -93,6 +98,48 @@ settle. Doing so doesn't disturb your own lifecycle observers.
 An app that would rather blank than dim opts out in its `Info.plist` with
 `WKSupportsAlwaysOnDisplay` = `false`; `isActive` then never becomes true.
 
+### The clock
+
+watchOS draws the time over every app. It stays visible unless the app asks
+otherwise:
+
+```dart
+WatchStatusBar.hidden = true;   // a game, media, a full-bleed screen
+WatchStatusBar.hidden = false;  // back to the default
+```
+
+The change shows on the next frame, which the setter requests, so it works
+on a screen that does not repaint too.
+
+Hiding the clock does not change `MediaQuery.padding`. By default that
+padding leaves the clock out: it keeps content clear of the display's
+rounded corners only, so content that starts at the top of the view can sit
+under the clock, and an app that hides the clock already has its band.
+Content that has to start below the clock takes its top from
+`WatchStatusBar.heightOf(context)`, the height of the clock's band measured
+from the top of the view:
+
+```dart
+ListView(
+  padding: MediaQuery.paddingOf(context).copyWith(
+    top: WatchStatusBar.heightOf(context),
+  ),
+  children: rows,
+)
+```
+
+Below an `AppBar` or inside a `SafeArea`, content already starts below its
+ancestor's top edge, so do not add the height again. An app that sets
+`FlutterWatchOSSafeArea` to `platform` in its `Info.plist` gets padding that
+keeps content below the clock as well. Both safe areas, and how to reclaim
+the top when an app hides the clock in `platform`, are in
+[doc/layout.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md).
+
+The watch host hides the clock with `_statusBarHidden`, an undocumented,
+underscored SwiftUI modifier. The SDK marks it for deprecation in a later
+release, and watchOS has no public replacement, so a later SDK could stop
+`WatchStatusBar.hidden` from working until the host changes.
+
 ### Digital Crown
 
 The crown scrolls with no code. A watch app built with flutter-watchos keeps
@@ -124,6 +171,24 @@ WatchScrollBehavior())`, or pass `physics: const WatchScrollPhysics()` to a
 single scrollable. Without either, a drag uses Flutter's iOS rubber band,
 which resists a little differently; the release and the bounce at the end are
 native either way.
+
+A watchOS list covers the whole screen and scrolls its rows under the clock
+and down to the bottom edge. To get that, leave a list's `padding` null, or
+add `MediaQuery.paddingOf(context)` to your own, and do not wrap a scrolling
+view in a `SafeArea`: that turns the list into a window between the insets.
+A `SingleChildScrollView` never pads itself, so give it the insets, and in a
+`CustomScrollView` put the slivers in a `SliverSafeArea`:
+
+```dart
+SingleChildScrollView(
+  padding: MediaQuery.paddingOf(context),
+  child: Column(children: rows),
+);
+
+CustomScrollView(
+  slivers: [SliverSafeArea(sliver: SliverList.list(children: rows))],
+);
+```
 
 For a game or custom control, take the crown as **raw** input instead. While a
 `WatchCrown` subscription (or `enable()`) is active, the crown stops scrolling

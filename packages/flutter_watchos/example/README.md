@@ -46,6 +46,10 @@ WatchStatusBar.hidden = true;   // immersive
 WatchStatusBar.hidden = false;  // back to default
 ```
 
+The change shows on the next frame, which the setter requests, so it takes
+effect even on a screen that does not repaint. Hiding the clock does not change
+`MediaQuery.padding`.
+
 watchOS can't *reposition* the clock, so to place the time yourself, hide the
 system one and draw your own clock widget.
 
@@ -75,6 +79,41 @@ WatchCrownScroll(
   child: ListView(children: const [/* ... */]),
 )
 ```
+
+The home list covers the whole screen, the way a native watchOS list does: its
+rows scroll under the clock and down to the bottom edge. For that, leave a
+list's `padding` null, or add `MediaQuery.paddingOf(context)` to your own, and
+do not wrap a scrolling view in a `SafeArea`, which would turn the list into a
+window between the insets. By default the watch's safe area leaves the clock
+out, so a list with no padding starts its first row under the clock. The home
+list adds the insets to its own padding, and takes its top from
+`WatchStatusBar.heightOf(context)`, the height of the clock's band, so that its
+first row starts below the clock:
+
+```dart
+ListView(
+  padding: MediaQuery.paddingOf(context)
+          .copyWith(top: WatchStatusBar.heightOf(context)) +
+      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+  children: const [/* ... */],
+)
+```
+
+A `SingleChildScrollView` never pads itself, so give it the insets, and in a
+`CustomScrollView` put the slivers in a `SliverSafeArea`:
+
+```dart
+SingleChildScrollView(
+  padding: MediaQuery.paddingOf(context),
+  child: Column(children: const [/* ... */]),
+);
+
+CustomScrollView(
+  slivers: [SliverSafeArea(sliver: SliverList.list(children: const [/* ... */]))],
+);
+```
+
+The crown demo screen does not scroll, so it keeps a `SafeArea`.
 
 App-wide instead of per-subtree:
 

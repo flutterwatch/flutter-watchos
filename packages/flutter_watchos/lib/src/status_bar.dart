@@ -33,6 +33,29 @@ import 'watchos_info_platform.dart' as platform;
 /// and renders its own clock widget in Flutter.
 ///
 /// On non-watchOS platforms this is a safe no-op ([hidden] reads `false`).
+///
+/// ## The clock and the safe area
+///
+/// Hiding the clock does not change `MediaQuery.padding`: the insets are the
+/// same whether the clock shows or not. By default the padding leaves the
+/// clock out. It keeps content clear of the display's rounded corners only,
+/// so content that starts at the top of the view can sit under the clock,
+/// and an app that hides the clock already has the band to use. Content that
+/// has to start below the clock takes its top from [heightOf].
+///
+/// An app that sets `FlutterWatchOSSafeArea` to `platform` in its
+/// `Info.plist` gets padding that keeps content below the clock as well, and
+/// hiding the clock leaves that band empty. How to reclaim the top there, and
+/// how to lay out each kind of screen in both safe areas, is in
+/// https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md.
+///
+/// ## How the watch hides the clock
+///
+/// The watch host hides the clock with `_statusBarHidden`, an undocumented,
+/// underscored SwiftUI modifier. The SDK marks it for deprecation in a later
+/// release, and watchOS has no public replacement. A later SDK may warn about
+/// it when the host is built, or remove it; [hidden] would then need a host
+/// change, or stop hiding the clock.
 abstract final class WatchStatusBar {
   static WatchOSNativeBindings? _bindings;
 

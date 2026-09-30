@@ -42,6 +42,48 @@ const String _crownScrollMarker = 'flutter_watchos.crownScroll';
 /// native scroll view. Scrollables that pass an explicit `physics:` keep it;
 /// set [nativePhysics] to false to keep the ambient physics for the whole
 /// subtree. On other platforms this only applies the physics.
+///
+/// ## Lists and the safe area
+///
+/// A watchOS list covers the whole screen and scrolls its rows under the
+/// clock and down to the bottom edge. To get that, leave a list's `padding`
+/// null, or add `MediaQuery.paddingOf(context)` to your own, and do not wrap
+/// a scrolling view in a `SafeArea`: that turns the list into a window
+/// between the insets, and no row ever shows above or below it.
+///
+/// ```dart
+/// // A ListView or GridView with no padding takes the insets itself.
+/// WatchCrownScroll(child: ListView(children: rows));
+///
+/// // With your own padding, add the insets to it.
+/// WatchCrownScroll(
+///   child: ListView(
+///     padding: MediaQuery.paddingOf(context) +
+///         const EdgeInsets.symmetric(horizontal: 10),
+///     children: rows,
+///   ),
+/// );
+///
+/// // A SingleChildScrollView never pads itself: give it the insets.
+/// WatchCrownScroll(
+///   child: SingleChildScrollView(
+///     padding: MediaQuery.paddingOf(context),
+///     child: Column(children: rows),
+///   ),
+/// );
+///
+/// // In a CustomScrollView, a SliverSafeArea insets the slivers.
+/// WatchCrownScroll(
+///   child: CustomScrollView(
+///     slivers: [SliverSafeArea(sliver: SliverList.list(children: rows))],
+///   ),
+/// );
+/// ```
+///
+/// By default the watch's safe area leaves the clock out, so the first row
+/// of such a list starts under the clock. A list whose first row must start
+/// below the clock takes its top padding from `WatchStatusBar.heightOf`
+/// instead.
 class WatchCrownScroll extends StatelessWidget {
   /// Applies the crown options to the scrollables in [child].
   const WatchCrownScroll({
