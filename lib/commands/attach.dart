@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/commands/attach.dart';
+import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/project.dart';
 
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
 
 class WatchosAttachCommand extends AttachCommand {
   WatchosAttachCommand({
@@ -23,6 +26,13 @@ class WatchosAttachCommand extends AttachCommand {
   Future<void> validateCommand() async {
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // super found the target device, or stopped; this lookup is cached.
+    final Device? device = await findTargetDevice();
+    throwIfWatchCannotRunMode(
+      command: WatchosModeCommand.attach,
+      mode: getBuildMode(),
+      devices: <Device>[?device],
+    );
   }
 }

@@ -3,10 +3,13 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/commands/run.dart';
+import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/project.dart';
 
 import '../watchos_cache.dart';
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
 
 class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts {
   WatchosRunCommand({required super.verboseHelp});
@@ -15,7 +18,14 @@ class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts {
   Future<void> validateCommand() async {
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // super found the target devices; a watch that cannot run the mode stops
+    // here, before anything is built.
+    throwIfWatchCannotRunMode(
+      command: WatchosModeCommand.run,
+      mode: getBuildMode(),
+      devices: devices ?? const <Device>[],
+    );
   }
 
   // Let the base RunCommand.runCommand() handle everything:
