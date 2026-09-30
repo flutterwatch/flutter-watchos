@@ -20,6 +20,7 @@ import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
+import 'src/words.dart';
 
 const String _flutterRoot = '/flutter-watchos/flutter';
 const String _home = '/home/user';
@@ -227,6 +228,79 @@ void main() {
 
       expect(builds, hasLength(1));
       expect(logger.statusText, isNot(contains('Registered')));
+    }, overrides: overrides());
+  });
+
+  group('build watchos size analysis', () {
+    /// A `watchos/` folder, so the tooling check would write the plugin
+    /// list if it ran.
+    File pluginList() {
+      fileSystem.directory('/project/watchos').createSync();
+      return fileSystem.file('/project/.flutter-plugins');
+    }
+
+    Iterable<String> sizeDirectories() => fileSystem
+        .directory('/project/build')
+        .listSync(recursive: true)
+        .map((FileSystemEntity entity) => entity.basename)
+        .where((String name) => name.startsWith('flutter_size_'));
+
+    for (final args in <List<String>>[
+      <String>['--release', '--analyze-size'],
+      <String>['--release', '--analyze-size', '--code-size-directory', 'd'],
+      <String>['--release', '--code-size-directory', 'd'],
+      <String>['--code-size-directory=d'],
+    ]) {
+      testUsingContext('"${args.join(' ')}" is refused before any build', () async {
+        final File plugins = pluginList();
+
+        await expectLater(
+          createTestCommandRunner(
+            buildCommand(),
+          ).run(<String>['build', 'watchos', ...args, '--no-pub']),
+          throwsToolExit(message: 'Size analysis is not available for watchOS builds'),
+        );
+
+        expect(builds, isEmpty);
+        expect(registrations, isEmpty);
+        // validateCommand refused before the tooling check ran.
+        expect(plugins.existsSync(), isFalse);
+        expect(fileSystem.directory('/project/build').existsSync(), isFalse);
+        expect(fileSystem.directory('/project/d').existsSync(), isFalse);
+      }, overrides: overrides());
+    }
+
+    testUsingContext('the refusal names a bare command to run instead', () async {
+      final List<String> commandLines = kWatchosSizeAnalysisRefusal
+          .split('\n')
+          .where((String line) => line.startsWith('  flutter-watchos '))
+          .toList();
+
+      expect(commandLines, <String>['  flutter-watchos build watchos --release']);
+      expect(forbiddenWordsIn(kWatchosSizeAnalysisRefusal), isEmpty);
+    });
+
+    testUsingContext('--no-analyze-size builds as before', () async {
+      final File plugins = pluginList();
+
+      await createTestCommandRunner(
+        buildCommand(),
+      ).run(<String>['build', 'watchos', '--release', '--no-analyze-size', '--no-pub']);
+
+      expect(builds, hasLength(1));
+      // The tooling check ran for this build.
+      expect(plugins.existsSync(), isTrue);
+      expect(sizeDirectories(), isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('build watchos -h lists neither flag', () async {
+      await createTestCommandRunner(buildCommand()).run(<String>['build', 'watchos', '-h']);
+
+      // Stock's --split-debug-info help still names --analyze-size in a
+      // sentence; neither option has a line of its own.
+      expect(logger.statusText, contains('\n    --[no-]simulator '));
+      expect(logger.statusText, isNot(contains('\n    --[no-]analyze-size')));
+      expect(logger.statusText, isNot(contains('\n    --code-size-directory')));
     }, overrides: overrides());
   });
 }

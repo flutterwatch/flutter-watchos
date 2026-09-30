@@ -28,6 +28,13 @@ typedef WatchosBundleBuilder =
       required String targetFile,
     });
 
+/// What `build watchos` says when asked for a size analysis.
+const String kWatchosSizeAnalysisRefusal =
+    'Size analysis is not available for watchOS builds: --analyze-size and '
+    '--code-size-directory make no report for a watch app.\n'
+    'Run the build without them:\n'
+    '  flutter-watchos build watchos --release';
+
 class WatchosBuildCommand extends BuildCommand {
   WatchosBuildCommand({
     required super.artifacts,
@@ -96,8 +103,26 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
   @override
   final String description = 'Build an Apple watchOS application.';
 
+  /// Adds `--analyze-size` and `--code-size-directory` hidden.
+  ///
+  /// Stock `addCommonDesktopBuildOptions` adds them for every build, but no
+  /// size report is made for a watchOS build, so [validateCommand] refuses
+  /// them. They stay parsable, so a script that passes one gets that refusal
+  /// rather than a usage error.
+  @override
+  void usesAnalyzeSizeFlag() {
+    argParser.addFlag(FlutterOptions.kAnalyzeSize, hide: true);
+    argParser.addOption(FlutterOptions.kCodeSizeDirectory, hide: true);
+  }
+
   @override
   Future<void> validateCommand() async {
+    // Before the tooling check, which can rewrite the host-mode wiring: a
+    // refused build changes nothing.
+    if (boolArg(FlutterOptions.kAnalyzeSize) ||
+        stringArg(FlutterOptions.kCodeSizeDirectory) != null) {
+      throwToolExit(kWatchosSizeAnalysisRefusal);
+    }
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
     return super.validateCommand();
