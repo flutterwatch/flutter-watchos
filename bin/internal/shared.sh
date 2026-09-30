@@ -135,6 +135,15 @@ function setup_proxy_root() {
 exec "$ROOT_DIR/bin/flutter-watchos" "\$@"
 ENDSCRIPT
   chmod +x "$flutter_proxy"
+
+  # proxy_root/bin/cache/dart-sdk and proxy_root/bin/cache/flutter.version.json
+  # → the vendored SDK's, where an IDE given proxy_root as its Flutter SDK
+  # looks for the Dart SDK and the Flutter version. -n replaces an existing
+  # link to a directory instead of following it.
+  mkdir -p "$proxy_root/bin/cache"
+  ln -sfn "$FLUTTER_DIR/bin/cache/dart-sdk" "$proxy_root/bin/cache/dart-sdk"
+  ln -sfn "$FLUTTER_DIR/bin/cache/flutter.version.json" \
+    "$proxy_root/bin/cache/flutter.version.json"
 }
 
 function update_flutter_watchos() {
