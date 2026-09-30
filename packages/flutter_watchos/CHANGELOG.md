@@ -34,6 +34,12 @@ package gives the clock's band to content that has to start below it:
   frame, so the clock hides or shows even on a screen that does not repaint.
   `WatchStatusBar` gains three test seams marked `@visibleForTesting`:
   `bindingsOverride`, `isWatchOverride` and `scheduleFrameOverride`.
+* **Example:** the home list no longer relies on the safe area to keep its
+  first row clear of the clock. It covers the whole screen, starts its first
+  row below the clock with `WatchStatusBar.heightOf`, and adds the safe-area
+  insets to the rest of its padding, so its rows scroll under the clock and
+  down to the bottom edge, as in a native watchOS list. The crown screen,
+  which does not scroll, keeps its `SafeArea`.
 
 The example and the API docs changed too:
 

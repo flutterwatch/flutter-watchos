@@ -39,11 +39,15 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: Colors.black,
       // No SafeArea around the list, so it fills the screen the way a native
       // watchOS list does: rows scroll under the clock and down to the bottom
-      // edge. The safe-area insets go into the list's padding instead, so the
-      // first row starts below the clock and the last one scrolls clear of
-      // the bottom edge. The rows still see the full MediaQuery padding, so a
-      // SafeArea inside a row would inset it a second time. The crown screen
-      // below does not scroll, so it keeps its SafeArea.
+      // edge. The safe-area insets go into the list's padding instead, except
+      // at the top: the default safe area leaves the clock out, so the first
+      // row starts WatchStatusBar.heightOf(context) down, below the clock's
+      // band, whichever safe area the app selects. The other sides take the
+      // insets, so the rows stay clear of the rounded corners and the last one
+      // scrolls clear of the bottom edge. The rows still see the full
+      // MediaQuery padding, so a SafeArea inside a row would inset it a second
+      // time. The crown screen below does not scroll, so it keeps its
+      // SafeArea.
       //
       // The crown scrolls this list as a native scroll view (watchOS supplies
       // the acceleration, momentum, detent haptics and edge spring).
@@ -51,7 +55,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // finger the same native feel.
       body: WatchCrownScroll(
         child: ListView(
-          padding: MediaQuery.paddingOf(context) +
+          padding: MediaQuery.paddingOf(context)
+                  .copyWith(top: WatchStatusBar.heightOf(context)) +
               const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           children: [
             const Text(
@@ -153,6 +158,13 @@ class _CrownDemoScreenState extends State<CrownDemoScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
+      // This screen does not scroll, so a SafeArea keeps it clear of the
+      // edges. Under the default safe area (`corners`) that is the rounded
+      // corners only, the same inset on every side, so the back button sits
+      // at the top left inside the clock's band; the clock is at the top
+      // right. With FlutterWatchOSSafeArea set to `platform` in Info.plist,
+      // the SafeArea also keeps the whole screen below the clock. See
+      // https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md.
       body: SafeArea(
         child: Stack(
           children: [
