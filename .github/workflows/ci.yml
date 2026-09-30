@@ -41,6 +41,9 @@ jobs:
       - name: Command tests
         run: ./flutter/bin/dart test --timeout 2s test/commands.shard/hermetic
 
+      - name: Script tests
+        run: tool/check_untested_commits.sh --self-test
+
   host-typecheck:
     # The CLI compiles host/*.swift into every app, with the Xcode on the
     # user's machine, for three targets and with up to two compile
