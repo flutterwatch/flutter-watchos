@@ -16,7 +16,16 @@ import '../../src/test_flutter_command_runner.dart';
 import 'src/words.dart';
 
 /// The commands whose help has stock's port options.
-const List<String> _portCommands = <String>['run', 'drive', 'attach'];
+const List<String> _portCommands = <String>['run', 'drive', 'attach', 'debug-adapter'];
+
+/// The phrases each command's help has; `debug-adapter` has only
+/// `--dds-port`.
+const Map<String, List<String>> _phrases = <String, List<String>>{
+  'run': <String>['random unused port', 'random unused host port'],
+  'drive': <String>['random unused port', 'random unused host port'],
+  'attach': <String>['random unused port', 'random unused host port'],
+  'debug-adapter': <String>['random unused port'],
+};
 
 void main() {
   late BufferLogger logger;
@@ -77,8 +86,9 @@ void main() {
           command(name, verboseHelp: verboseHelp),
         ).run(<String>[if (verboseHelp) '-v', name, '--help']);
 
-        expect(logger.statusText, contains('random unused port'));
-        expect(logger.statusText, contains('random unused host port'));
+        for (final String phrase in _phrases[name]!) {
+          expect(logger.statusText, contains(phrase));
+        }
         expect(forbiddenWordsIn(logger.statusText), isEmpty);
       }, overrides: overrides());
     }
@@ -88,7 +98,10 @@ void main() {
       final stock = RunCommand(verboseHelp: true);
 
       expect(ours, isA<UnusedPortHelp>());
-      for (final option in <String>['dds-port', 'host-vmservice-port']) {
+      for (final option in <String>[
+        'dds-port',
+        if (name != 'debug-adapter') 'host-vmservice-port',
+      ]) {
         expect(
           ours.argParser.options[option]!.help,
           stock.argParser.options[option]!.help,

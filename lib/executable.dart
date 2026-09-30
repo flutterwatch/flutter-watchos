@@ -19,7 +19,6 @@ import 'package:flutter_tools/src/commands/analyze.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/commands/daemon.dart';
-import 'package:flutter_tools/src/commands/debug_adapter.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
@@ -49,6 +48,7 @@ import 'commands/build_registry.dart';
 import 'commands/channel.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
+import 'commands/debug_adapter.dart';
 import 'commands/devices.dart';
 import 'commands/downgrade.dart';
 import 'commands/drive.dart';
@@ -229,7 +229,7 @@ List<FlutterCommand> generateWatchosCommands({required bool verboseHelp, require
       AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
       ConfigCommand(verboseHelp: verboseHelp),
       DaemonCommand(hidden: !verboseHelp),
-      DebugAdapterCommand(verboseHelp: verboseHelp),
+      WatchosDebugAdapterCommand(verboseHelp: verboseHelp),
       DoctorCommand(verbose: verbose),
       EmulatorsCommand(),
       GenerateCommand(),
