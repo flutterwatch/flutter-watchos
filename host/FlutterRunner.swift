@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // The FlutterWatchOS host module — generic glue around the Flutter engine,
 // identical for every app. The flutter-watchos CLI compiles this module at
 // build time and stages it into the app's `watchos/Flutter/` directory; the
