@@ -915,6 +915,10 @@ class WatchosDevice extends Device {
           logger: logger,
           processUtils: globals.processUtils,
           xcodeProjectInterpreter: xcodeProjectInterpreter,
+          // Since Flutter 3.47.5, LLDB handles breakpoint stops by hand for a
+          // device at version 27.0 or later, an iOS rule never tried on a
+          // watch. No version keeps that path off.
+          deviceVersion: null,
         );
         final Duration timeout = _lldbAttachTimeout;
         attached = await lldb
