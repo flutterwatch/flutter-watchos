@@ -17,6 +17,7 @@ import '../watchos_builder.dart';
 import '../watchos_cache.dart';
 import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
 import 'stock_build_stub.dart';
 
 /// Builds the watchOS app bundle for `build watchos`.
@@ -131,7 +132,18 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
     }
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // build watchos has no --flavor; a pubspec default-flavor still reaches
+    // FLUTTER_APP_FLAVOR, but not the watch build.
+    final String? defaultFlavor = project.manifest.defaultFlavor;
+    final WatchosFlavorCheck flavorCheck = watchosFlavorCheck(
+      cliFlavor: null,
+      defaultFlavor: defaultFlavor,
+      watchTarget: true,
+    );
+    if (flavorCheck == WatchosFlavorCheck.warn) {
+      globals.printWarning(watchosDefaultFlavorWarning(defaultFlavor!));
+    }
   }
 
   @override

@@ -13,6 +13,7 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_watchos/commands/build.dart';
+import 'package:flutter_watchos/commands/launch_checks.dart';
 import 'package:flutter_watchos/commands/stock_build_stub.dart';
 import 'package:flutter_watchos/watchos_build_info.dart';
 import 'package:flutter_watchos/watchos_mode_guidance.dart';
@@ -228,6 +229,41 @@ void main() {
 
       expect(builds, hasLength(1));
       expect(logger.statusText, isNot(contains('Registered')));
+    }, overrides: overrides());
+  });
+
+  group('build watchos flavor', () {
+    testUsingContext('a pubspec default-flavor gives one warning and the build goes on', () async {
+      fileSystem
+          .file('/project/pubspec.yaml')
+          .writeAsStringSync('name: my_app\nflutter:\n  default-flavor: staging\n');
+
+      await createTestCommandRunner(
+        buildCommand(),
+      ).run(<String>['build', 'watchos', '--simulator', '--no-pub']);
+
+      expect(builds, hasLength(1));
+      expect(watchosDefaultFlavorWarning('staging').allMatches(logger.warningText), hasLength(1));
+      expect(forbiddenWordsIn(logger.warningText), isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('no default-flavor, no warning', () async {
+      await createTestCommandRunner(
+        buildCommand(),
+      ).run(<String>['build', 'watchos', '--simulator', '--no-pub']);
+
+      expect(builds, hasLength(1));
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('--flavor stays a usage error, as build watchos has no such option', () async {
+      await expectLater(
+        createTestCommandRunner(
+          buildCommand(),
+        ).run(<String>['build', 'watchos', '--simulator', '--no-pub', '--flavor', 'x']),
+        throwsUsageException(),
+      );
+      expect(builds, isEmpty);
     }, overrides: overrides());
   });
 

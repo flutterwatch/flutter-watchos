@@ -35,12 +35,29 @@ WatchosDevice physicalWatch() => WatchosDevice(
 
 /// Writes a watch app at `/project` in [fileSystem] and makes it the
 /// current directory: a pubspec, `lib/main.dart`, a driver test and an empty
-/// `watchos/` folder, which is what makes watch targets supported.
-void writeWatchProject(FileSystem fileSystem) {
+/// `watchos/` folder, which is what makes watch targets supported. With
+/// [defaultFlavor], the pubspec sets `default-flavor`.
+void writeWatchProject(FileSystem fileSystem, {String? defaultFlavor}) {
   final Directory project = fileSystem.directory('/project')..createSync();
-  project.childFile('pubspec.yaml').writeAsStringSync('name: my_app\n');
+  project
+      .childFile('pubspec.yaml')
+      .writeAsStringSync(
+        'name: my_app\n'
+        '${defaultFlavor == null ? '' : 'flutter:\n  default-flavor: $defaultFlavor\n'}',
+      );
   project.childDirectory('lib').childFile('main.dart').createSync(recursive: true);
   project.childDirectory('test_driver').childFile('main_test.dart').createSync(recursive: true);
   project.childDirectory('watchos').createSync();
   fileSystem.currentDirectory = project;
 }
+
+/// Every file path under `/` in [fileSystem], sorted: a check that a
+/// refused command changed nothing.
+List<String> allFiles(FileSystem fileSystem) =>
+    fileSystem
+        .directory('/')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .map((File file) => file.path)
+        .toList()
+      ..sort();

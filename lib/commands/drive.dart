@@ -25,6 +25,7 @@ class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts {
 
   @override
   Future<void> validateCommand() async {
+    await refuseFlavorForWatch(this);
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
     await super.validateCommand();
@@ -38,6 +39,11 @@ class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts {
     throwIfWatchCannotRunMode(
       command: WatchosModeCommand.drive,
       mode: getBuildMode(),
+      devices: <Device>[device],
+    );
+    warnIfWatchIgnoresDefaultFlavor(
+      cliFlavor: stringArg('flavor'),
+      defaultFlavor: project.manifest.defaultFlavor,
       devices: <Device>[device],
     );
   }

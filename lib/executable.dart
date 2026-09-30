@@ -24,7 +24,6 @@ import 'package:flutter_tools/src/commands/doctor.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
-import 'package:flutter_tools/src/commands/install.dart';
 import 'package:flutter_tools/src/commands/logs.dart';
 import 'package:flutter_tools/src/commands/packages.dart';
 import 'package:flutter_tools/src/commands/screenshot.dart';
@@ -54,6 +53,7 @@ import 'commands/devices.dart';
 import 'commands/downgrade.dart';
 import 'commands/drive.dart';
 import 'commands/host.dart';
+import 'commands/install.dart';
 import 'commands/login.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
@@ -239,7 +239,7 @@ List<FlutterCommand> generateWatchosCommands({required bool verboseHelp, require
         artifacts: globals.artifacts!,
         processManager: globals.processManager,
       ),
-      InstallCommand(verboseHelp: verboseHelp),
+      WatchosInstallCommand(verboseHelp: verboseHelp),
       LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
       PackagesCommand(),
       ScreenshotCommand(fs: globals.fs),
