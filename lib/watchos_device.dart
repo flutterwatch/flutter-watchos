@@ -150,6 +150,35 @@ Map<String, String> launchOptionSwitches(DebuggingOptions options) => <String, S
   if (options.enableSoftwareRendering) 'FLUTTER_WATCHOS_RENDERER': 'software',
 };
 
+/// Stock's launch options for a profile launch on a physical watch, as
+/// arguments after the bundle id and [appLaunchArguments]' own.
+///
+/// These are stock `getIOSLaunchArguments` for a physical device, without
+/// the flags [isFilteredLaunchArgument] names, and without the ones the watch
+/// launch sets itself: `--enable-dart-profiling` and
+/// `--disable-service-auth-codes` (always, from [appLaunchArguments]),
+/// `--vm-service-host` (its bind address depends on the relay) and
+/// `--vm-service-port` (the relay's pinned port, or `--device-vmservice-port`).
+/// So each of those appears exactly once in the argv.
+@visibleForTesting
+List<String> physicalLaunchArguments(
+  DebuggingOptions options, {
+  String? route,
+  Map<String, Object?> platformArgs = const <String, Object?>{},
+}) => <String>[
+  for (final String argument in options.getIOSLaunchArguments(
+    EnvironmentType.physical,
+    route,
+    platformArgs,
+  ))
+    if (!isFilteredLaunchArgument(argument) &&
+        argument != '--enable-dart-profiling' &&
+        argument != '--disable-service-auth-codes' &&
+        !argument.startsWith('--vm-service-host=') &&
+        !argument.startsWith('--vm-service-port='))
+      argument,
+];
+
 /// What a debug launch on a watch Simulator passes to the app, and where it
 /// looks for the VM Service.
 @immutable
@@ -917,7 +946,13 @@ class WatchosDevice extends Device {
         platformArgs: platformArgs,
       );
     } else {
-      return _startAppOnDevice(project, package, debuggingOptions);
+      return _startAppOnDevice(
+        project,
+        package,
+        debuggingOptions,
+        route: route,
+        platformArgs: platformArgs,
+      );
     }
   }
 
@@ -1081,8 +1116,10 @@ class WatchosDevice extends Device {
   Future<LaunchResult> _startAppOnDevice(
     FlutterProject project,
     ApplicationPackage? package,
-    DebuggingOptions debuggingOptions,
-  ) async {
+    DebuggingOptions debuggingOptions, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) async {
     final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
@@ -1127,22 +1164,33 @@ class WatchosDevice extends Device {
     final wantsRelay = debuggingOptions.buildInfo.mode == BuildMode.profile;
     var relayEnvironment = <String, String>{};
     if (wantsRelay) {
-      relayEnvironment = await _startVmRelay();
+      relayEnvironment = await _startVmRelay(debuggingOptions.deviceVmServicePort);
     }
+    // A release engine has no Dart VM Service, and a release app should not
+    // be launched asking for one, nor with any of stock's debugging options.
+    final enableVmService = debuggingOptions.buildInfo.mode != BuildMode.release;
+    // Pin the port so the in-app bridge knows where the VM Service is without
+    // having to discover it; --device-vmservice-port chooses the pinned port.
+    final int? vmServicePort = relayEnvironment.isNotEmpty
+        ? _deviceVmServicePort
+        : debuggingOptions.deviceVmServicePort;
 
     await logReader.startLogStreamForBundle(
       id,
       bundleId,
       extraLaunchArguments: <String>[
-        // Pin the port so the in-app bridge knows where the VM Service is
-        // without having to discover it.
-        if (relayEnvironment.isNotEmpty) '--vm-service-port=$_deviceVmServicePort',
+        if (enableVmService) ...<String>[
+          ...physicalLaunchArguments(debuggingOptions, route: route, platformArgs: platformArgs),
+          if (vmServicePort != null) '--vm-service-port=$vmServicePort',
+        ],
         ...engineSwitchArguments(),
       ],
-      environment: <String, String>{...relayEnvironment, ...engineSwitchesFromEnvironment()},
-      // A release engine has no Dart VM Service, and a release app should not
-      // be launched asking for one.
-      enableVmService: debuggingOptions.buildInfo.mode != BuildMode.release,
+      environment: <String, String>{
+        ...relayEnvironment,
+        ...engineSwitchesFromEnvironment(),
+        ...launchOptionSwitches(debuggingOptions),
+      },
+      enableVmService: enableVmService,
     );
 
     // With the relay up, the Mac-reachable VM Service *is* the relay: it speaks
@@ -1543,7 +1591,7 @@ class WatchosDevice extends Device {
   /// Returns the environment the app needs to find it, or an empty map if the
   /// relay could not be started — in which case the run continues without live
   /// DevTools rather than failing outright.
-  Future<Map<String, String>> _startVmRelay() async {
+  Future<Map<String, String>> _startVmRelay(int? devicePort) async {
     try {
       final String? macAddress = await resolveMacLanAddress(
         override: globals.platform.environment['FLUTTER_WATCHOS_RELAY_HOST'],
@@ -1553,7 +1601,7 @@ class WatchosDevice extends Device {
         return const <String, String>{};
       }
       _relayAdvertisedHost = macAddress;
-      _deviceVmServicePort = pickDeviceVmServicePort();
+      _deviceVmServicePort = devicePort ?? pickDeviceVmServicePort();
       final WatchosVmRelay relay = await WatchosVmRelay.start(logTrace: logger.printTrace);
       _vmRelay = relay;
       globals.shutdownHooks.addShutdownHook(relay.dispose);

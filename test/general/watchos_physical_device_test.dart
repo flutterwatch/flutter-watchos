@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -329,6 +330,218 @@ void main() {
         ShutdownHooks: () => shutdownHooks,
         Platform: () => FakePlatform(
           environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10', ...switches},
+        ),
+      },
+    );
+
+    // Stock's options for a physical device reach the app, minus the filtered
+    // flags, with one VM Service host and one port: the relay's (spec 0005
+    // criterion 12).
+    testUsingContext(
+      'a profile launch forwards stock options once, with the relay port',
+      () async {
+        List<String>? launch;
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['xcrun', 'devicectl', 'device', 'install', 'app', '--device', 'watch-1', appPath],
+          ),
+          appsQuery(),
+          FakeCommand(
+            command: <Pattern>[
+              'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
+              '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
+              RegExp('.*'), bundleId, '--enable-dart-profiling', '--disable-service-auth-codes',
+              '--vm-service-host=127.0.0.1', '--start-paused', '--dart-flags="--baz"', //
+              '--trace-systrace', '--route=/r', '--trace-startup', RegExp(r'^--vm-service-port=\d+$'),
+            ],
+            onRun: (List<String> command) => launch = command,
+          ),
+        ]);
+        final device = WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false);
+
+        await device.startApp(
+          WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+          prebuiltApplication: true,
+          route: '/r',
+          platformArgs: const <String, Object?>{'trace-startup': true},
+          debuggingOptions: DebuggingOptions.enabled(
+            BuildInfo.profile,
+            startPaused: true,
+            dartFlags: '--baz',
+            enableSoftwareRendering: true,
+            enableImpeller: ImpellerStatus.enabled,
+            enableFlutterGpu: true,
+            traceSystrace: true,
+          ),
+        );
+
+        expect(processManager, hasNoRemainingExpectations);
+        final environment = jsonDecode(launch![14]) as Map<String, Object?>;
+        expect(launch!.where((String a) => a.startsWith('--vm-service-host')), hasLength(1));
+        expect(launch!.where((String a) => a.startsWith('--vm-service-port')), <String>[
+          '--vm-service-port=${environment['FLUTTER_WATCHOS_VM_PORT']}',
+        ]);
+        expect(environment['FLUTTER_WATCHOS_RENDERER'], 'software');
+        for (final filtered in <String>[
+          '--enable-software-rendering',
+          '--enable-impeller=true',
+          '--enable-flutter-gpu',
+          '--enable-checked-mode',
+          '--verify-entry-points',
+        ]) {
+          expect(launch, isNot(contains(filtered)));
+        }
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        ShutdownHooks: () => shutdownHooks,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10'},
+        ),
+      },
+    );
+
+    testUsingContext(
+      '--device-vmservice-port becomes the pinned port, in the argv and the environment',
+      () async {
+        List<String>? launch;
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['xcrun', 'devicectl', 'device', 'install', 'app', '--device', 'watch-1', appPath],
+          ),
+          appsQuery(),
+          FakeCommand(
+            command: <Pattern>[
+              'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
+              '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
+              RegExp('.*'), bundleId, '--enable-dart-profiling', '--disable-service-auth-codes',
+              '--vm-service-host=127.0.0.1', '--vm-service-port=50999',
+            ],
+            onRun: (List<String> command) => launch = command,
+          ),
+        ]);
+        final device = WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false);
+
+        await device.startApp(
+          WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+          prebuiltApplication: true,
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.profile, deviceVmServicePort: 50999),
+        );
+
+        expect(processManager, hasNoRemainingExpectations);
+        final environment = jsonDecode(launch![14]) as Map<String, Object?>;
+        expect(environment['FLUTTER_WATCHOS_VM_PORT'], '50999');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        ShutdownHooks: () => shutdownHooks,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10'},
+        ),
+      },
+    );
+  });
+
+  // A release launch passes none of stock's options and no VM Service flag:
+  // after the bundle id, only the log-to-file switch when it is asked for
+  // (spec 0005 criterion 12).
+  group('release launch on a physical watch', () {
+    late MemoryFileSystem fileSystem;
+    late FakeProcessManager processManager;
+    late FakeAsync time;
+    const appPath = '/build/watchos/Release-watchos/Runner.app';
+    const bundleId = 'com.example.demo';
+    const launchPrefix = <String>[
+      'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
+      '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
+      '{"OS_ACTIVITY_DT_MODE":"enable"}', bundleId,
+    ];
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      fileSystem.directory(appPath).createSync(recursive: true);
+      processManager = FakeProcessManager.empty();
+      time = FakeAsync();
+    });
+
+    List<FakeCommand> upToTheLaunch() => <FakeCommand>[
+      const FakeCommand(
+        command: <String>['xcrun', 'devicectl', 'device', 'install', 'app', '--device', 'watch-1', appPath],
+      ),
+      FakeCommand(
+        command: <Pattern>[
+          'xcrun', 'devicectl', 'device', 'info', 'apps', '--device', 'watch-1', //
+          '--json-output', RegExp(r'apps_1\.json$'),
+        ],
+        onRun: (List<String> command) {
+          fileSystem.file(command.last).writeAsStringSync(
+            jsonEncode(<String, Object>{
+              'result': <String, Object>{
+                'apps': <Object>[
+                  <String, String>{'bundleIdentifier': bundleId, 'url': 'file:///private/var/app/Runner.app/'},
+                ],
+              },
+            }),
+          );
+        },
+      ),
+    ];
+
+    Future<void> launchInFakeTime() async {
+      final device = WatchosDevice('watch-1', name: 'My Watch', logger: BufferLogger.test(), isSimulator: false);
+      time.run((_) {
+        unawaited(
+          device.startApp(
+            WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+            prebuiltApplication: true,
+            route: '/r',
+            debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
+          ),
+        );
+      });
+      for (var i = 0; i < 40; i++) {
+        time.elapse(const Duration(seconds: 1));
+        await Future<void>.delayed(Duration.zero);
+        time.flushMicrotasks();
+      }
+    }
+
+    testUsingContext(
+      'with no switch set, nothing follows the bundle id',
+      () async {
+        processManager.addCommands(<FakeCommand>[
+          ...upToTheLaunch(),
+          const FakeCommand(command: launchPrefix),
+        ]);
+
+        await launchInFakeTime();
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(environment: <String, String>{}),
+      },
+    );
+
+    testUsingContext(
+      'with FLUTTER_WATCHOS_LOG_TO_FILE=1, --watchos-log-to-file is all that follows it',
+      () async {
+        processManager.addCommands(<FakeCommand>[
+          ...upToTheLaunch(),
+          const FakeCommand(command: <String>[...launchPrefix, '--watchos-log-to-file']),
+        ]);
+
+        await launchInFakeTime();
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'FLUTTER_WATCHOS_LOG_TO_FILE': '1'},
         ),
       },
     );
