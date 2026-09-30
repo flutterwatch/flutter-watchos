@@ -30,9 +30,13 @@ import 'source_analyzer.dart';
 /// caller doesn't override it via `--license-holder`.
 const String kDefaultLicenseHolder = 'The FlutterWatch Authors';
 
-/// Minimum watchOS version the generated `Package.swift` declares. Matches
-/// the SwiftPM floor the flutter-watchos build system uses for the
-/// FlutterFramework package.
+/// The watchOS floor a generated `Package.swift` declares, as
+/// `.watchOS("7.0")` in its `platforms:`.
+///
+/// SwiftPM refuses a package whose floor is above the deployment target of
+/// the app that uses it, so this must be at or below every app's target. It
+/// is not the version the watch build compiles the plugin's sources for.
+/// Every package in the plugins repository declares the same floor.
 const String kMinimumWatchosVersion = '7.0';
 
 /// The example C symbol the scaffold ships, e.g.
