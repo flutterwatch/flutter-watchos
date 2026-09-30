@@ -35,6 +35,18 @@ const _simId = 'sim-1';
 const _bundleId = 'com.example.demo';
 const _appPath = '/build/watchos/Debug-watchsimulator/Runner.app';
 const _preamble = 'Filtering the log data using "eventType = logEvent"';
+
+/// `simctl launch` of a debug run with default options: stock's launch
+/// arguments minus the filtered ones leave only the profiling flag.
+const _launchCommand = <String>[
+  'xcrun',
+  'simctl',
+  'launch',
+  _simId,
+  _bundleId,
+  '--enable-dart-profiling',
+];
+
 // `log stream --style json` prints one field per line.
 const _vmServiceLine =
     '  "eventMessage" : "[flutter:flutter] The Dart VM service is listening on '
@@ -189,7 +201,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
         _run(
-          <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          _launchCommand,
           // The app prints its VM Service line shortly after it starts.
           onRun: (_) =>
               Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
@@ -221,7 +233,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
         FakeCommand(
-          command: const <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          command: _launchCommand,
           environment: <String, String>{
             for (final MapEntry<String, String> e in _switches.entries)
               'SIMCTL_CHILD_${e.key}': e.value,
@@ -281,13 +293,7 @@ void main() {
       var launched = false;
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
-        _run(<String>[
-          'xcrun',
-          'simctl',
-          'launch',
-          _simId,
-          _bundleId,
-        ], onRun: (_) => launched = true),
+        _run(_launchCommand, onRun: (_) => launched = true),
       ]);
 
       start();
@@ -313,10 +319,7 @@ void main() {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
-        const FakeCommand(
-          command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
-          stdout: '$_bundleId: 4242\n',
-        ),
+        const FakeCommand(command: _launchCommand, stdout: '$_bundleId: 4242\n'),
         _run(<String>['ps', '-p', '4242', '-o', 'pid=']),
       ]);
 
@@ -345,10 +348,7 @@ void main() {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
-        const FakeCommand(
-          command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
-          stdout: '$_bundleId: 4242\n',
-        ),
+        const FakeCommand(command: _launchCommand, stdout: '$_bundleId: 4242\n'),
         _run(<String>['ps', '-p', '4242', '-o', 'pid='], exitCode: 1),
       ]);
 
@@ -371,7 +371,7 @@ void main() {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
       processManager.addCommands(<FakeCommand>[
         ...upToTheLogStream(logProcess),
-        _run(<String>['xcrun', 'simctl', 'launch', _simId, _bundleId]),
+        _run(_launchCommand),
       ]);
 
       final List<LaunchResult> results = start(null, DebuggingOptions.disabled(BuildInfo.debug));
@@ -396,10 +396,8 @@ void main() {
     'drive against launches that never print the VM Service fails to start',
     () async {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
-      FakeCommand launch() => const FakeCommand(
-        command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
-        stdout: '$_bundleId: 4242\n',
-      );
+      FakeCommand launch() =>
+          const FakeCommand(command: _launchCommand, stdout: '$_bundleId: 4242\n');
       FakeCommand ps() => _run(<String>['ps', '-p', '4242', '-o', 'pid=']);
       List<FakeCommand> again() => <FakeCommand>[
         _run(<String>['xcrun', 'simctl', 'boot', _simId]),
@@ -473,7 +471,7 @@ void main() {
         ),
         ...upToTheLogStream(logProcess),
         _run(
-          <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          _launchCommand,
           onRun: (_) =>
               Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
         ),
@@ -517,7 +515,7 @@ void main() {
         _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
         // No second log stream.
         _run(
-          <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          _launchCommand,
           onRun: (_) =>
               Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
         ),
@@ -550,6 +548,180 @@ void main() {
       unawaited(time.run((_) => device.stopApp(app())));
       await _advance(time, Duration.zero);
       expect(logProcess.killed, isTrue);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  group('SimulatorLaunchOptions', () {
+    // Mirrors stock simulators_test.dart 'startApp forwards all supported
+    // debugging options', with DDS on, so no host port binds the VM.
+    DebuggingOptions everyOption({int? hostPort, int? devicePort, bool dds = true}) =>
+        DebuggingOptions.enabled(
+          const BuildInfo(
+            BuildMode.debug,
+            'flavor',
+            treeShakeIcons: false,
+            packageConfigPath: '.dart_tool/package_config.json',
+          ),
+          enableSoftwareRendering: true,
+          traceSystrace: true,
+          traceToFile: 'path/to/trace.binpb',
+          startPaused: true,
+          disableServiceAuthCodes: true,
+          skiaDeterministicRendering: true,
+          useTestFonts: true,
+          traceSkia: true,
+          traceAllowlist: 'foo,bar',
+          traceSkiaAllowlist: 'skia.a,skia.b',
+          endlessTraceBuffer: true,
+          profileMicrotasks: true,
+          profileStartup: true,
+          verboseSystemLogs: true,
+          purgePersistentCache: true,
+          dartFlags: '--baz',
+          enableImpeller: ImpellerStatus.disabled,
+          enableFlutterGpu: true,
+          enableDds: dds,
+          hostVmServicePort: hostPort,
+          deviceVmServicePort: devicePort,
+        );
+
+    const forwarded = <String>[
+      '--enable-dart-profiling',
+      '--profile-startup',
+      '--disable-service-auth-codes',
+      '--start-paused',
+      '--dart-flags=--baz',
+      '--use-test-fonts',
+      '--trace-systrace',
+      '--trace-to-file="path/to/trace.binpb"',
+      '--skia-deterministic-rendering',
+      '--trace-skia',
+      '--trace-allowlist="foo,bar"',
+      '--trace-skia-allowlist="skia.a,skia.b"',
+      '--endless-trace-buffer',
+      '--profile-microtasks',
+      '--verbose-logging',
+      '--purge-persistent-cache',
+      '--route=/details',
+      '--trace-startup',
+    ];
+
+    testWithoutContext('forwards stock options minus the filtered flags, each once', () {
+      final options = SimulatorLaunchOptions(
+        everyOption(),
+        route: '/details',
+        platformArgs: const <String, Object?>{'trace-startup': true},
+      );
+
+      expect(options.arguments, unorderedEquals(forwarded));
+      expect(options.arguments.toSet(), hasLength(options.arguments.length));
+      for (final filtered in <String>[
+        '--enable-checked-mode',
+        '--verify-entry-points',
+        '--enable-software-rendering',
+        '--enable-impeller=false',
+        '--enable-flutter-gpu',
+      ]) {
+        expect(options.arguments, isNot(contains(filtered)));
+      }
+      expect(options.environment, <String, String>{'FLUTTER_WATCHOS_RENDERER': 'software'});
+      expect(options.warning, isNull);
+    });
+
+    testWithoutContext('a device port binds the VM on the Simulator', () {
+      final options = SimulatorLaunchOptions(everyOption(devicePort: 50999));
+
+      expect(options.arguments.where((String a) => a.startsWith('--vm-service-port')), <String>[
+        '--vm-service-port=50999',
+      ]);
+      expect(options.discoveryDevicePort, 50999);
+      expect(options.discoveryHostPort, isNull);
+    });
+
+    testWithoutContext('with --no-dds, the device port wins over the host port', () {
+      final options = SimulatorLaunchOptions(
+        everyOption(dds: false, hostPort: 50111, devicePort: 50999),
+      );
+
+      expect(options.arguments.where((String a) => a.startsWith('--vm-service-port')), <String>[
+        '--vm-service-port=50999',
+      ]);
+      expect(options.warning, contains('--host-vmservice-port 50111 is ignored'));
+      expect(options.warning, contains('--device-vmservice-port 50999'));
+      expect(options.discoveryDevicePort, 50999);
+      expect(options.discoveryHostPort, isNull);
+    });
+
+    testWithoutContext('with --no-dds and only a host port, the VM binds it', () {
+      final options = SimulatorLaunchOptions(everyOption(dds: false, hostPort: 50111));
+
+      expect(options.arguments, contains('--vm-service-port=50111'));
+      expect(options.warning, isNull);
+      expect(options.discoveryHostPort, 50111);
+      expect(options.discoveryDevicePort, isNull);
+    });
+
+    testWithoutContext('the same port twice is one flag and no warning', () {
+      final options = SimulatorLaunchOptions(
+        everyOption(dds: false, hostPort: 50999, devicePort: 50999),
+      );
+
+      expect(
+        options.arguments.where((String a) => a.startsWith('--vm-service-port')),
+        hasLength(1),
+      );
+      expect(options.warning, isNull);
+    });
+  });
+
+  testUsingContext(
+    'startApp launches with the options, and waits for the VM on the device port',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        FakeCommand(
+          command: const <String>[
+            'xcrun',
+            'simctl',
+            'launch',
+            _simId,
+            _bundleId,
+            '--enable-dart-profiling',
+            '--start-paused',
+            '--vm-service-port=50999',
+          ],
+          environment: const <String, String>{'SIMCTL_CHILD_FLUTTER_WATCHOS_RENDERER': 'software'},
+          onRun: (_) => Timer(const Duration(milliseconds: 100), () {
+            // A VM Service on another port is not the app's.
+            logProcess.emit(_vmServiceLine);
+            logProcess.emit(_vmServiceLine.replaceAll('50123', '50999'));
+          }),
+        ),
+      ]);
+
+      final List<LaunchResult> results = start(
+        null,
+        DebuggingOptions.enabled(
+          BuildInfo.debug,
+          startPaused: true,
+          enableSoftwareRendering: true,
+          enableDds: false,
+          hostVmServicePort: 50111,
+          deviceVmServicePort: 50999,
+        ),
+      );
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+
+      expect(results.single.vmServiceUri, Uri.parse('http://127.0.0.1:50999/abc=/'));
+      expect(logger.warningText, contains('--host-vmservice-port 50111 is ignored'));
       expect(processManager, hasNoRemainingExpectations);
     },
     overrides: <Type, Generator>{

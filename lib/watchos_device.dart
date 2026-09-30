@@ -126,6 +126,98 @@ List<String> appLaunchArguments({
   ];
 }
 
+/// Whether [argument], from stock `getIOSLaunchArguments`, never reaches a
+/// watch app (spec 0005 D8).
+///
+/// - `--enable-checked-mode` and `--verify-entry-points`: no watch launch ever
+///   passed them, and entry-point checks could stop code that works today.
+/// - `--enable-impeller=true|false`: the engine turns Impeller on itself when
+///   it opens a Metal surface, and a second value would fight that choice.
+/// - `--enable-flutter-gpu`: an app opts in through `FLTEnableFlutterGPU` in
+///   its Info.plist.
+/// - `--enable-software-rendering`: it selects the software renderer through
+///   `FLUTTER_WATCHOS_RENDERER=software` instead, the switch the engine reads.
+bool isFilteredLaunchArgument(String argument) =>
+    argument == '--enable-checked-mode' ||
+    argument == '--verify-entry-points' ||
+    argument.startsWith('--enable-impeller') ||
+    argument == '--enable-flutter-gpu' ||
+    argument == '--enable-software-rendering';
+
+/// The switches [options] turn on through the environment rather than the
+/// argv: `--enable-software-rendering` becomes `FLUTTER_WATCHOS_RENDERER=software`.
+Map<String, String> launchOptionSwitches(DebuggingOptions options) => <String, String>{
+  if (options.enableSoftwareRendering) 'FLUTTER_WATCHOS_RENDERER': 'software',
+};
+
+/// What a debug launch on a watch Simulator passes to the app, and where it
+/// looks for the VM Service.
+@immutable
+class SimulatorLaunchOptions {
+  /// Works out the launch for [options], with the [route] and [platformArgs]
+  /// `run` passes.
+  ///
+  /// The argv is stock `getIOSLaunchArguments` for a Simulator, without the
+  /// flags [isFilteredLaunchArgument] names. On a Simulator the app and the
+  /// tool share one host, so `--device-vmservice-port Q` binds the VM to Q,
+  /// and wins over a host port P that would bind it too (spec 0005 D9): the
+  /// argv then carries `--vm-service-port=Q` once, and [warning] says that P
+  /// is ignored. Stock passes no device port to a Simulator app, and then
+  /// waits for a port the VM never uses.
+  factory SimulatorLaunchOptions(
+    DebuggingOptions options, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) {
+    final int? devicePort = options.deviceVmServicePort;
+    final int? hostPort = options.hostVmServicePort;
+    final int? boundPort = devicePort ?? hostPort;
+    return SimulatorLaunchOptions._(
+      arguments: <String>[
+        for (final String argument in options.getIOSLaunchArguments(
+          EnvironmentType.simulator,
+          route,
+          platformArgs,
+        ))
+          if (!isFilteredLaunchArgument(argument) && !argument.startsWith('--vm-service-port='))
+            argument,
+        if (boundPort != null) '--vm-service-port=$boundPort',
+      ],
+      environment: launchOptionSwitches(options),
+      discoveryHostPort: devicePort == null ? hostPort : null,
+      discoveryDevicePort: devicePort,
+      warning: devicePort != null && hostPort != null && hostPort != devicePort
+          ? '--host-vmservice-port $hostPort is ignored: on the watchOS Simulator the app '
+                'shares this Mac, and --device-vmservice-port $devicePort binds its VM Service.'
+          : null,
+    );
+  }
+
+  const SimulatorLaunchOptions._({
+    required this.arguments,
+    required this.environment,
+    required this.discoveryHostPort,
+    required this.discoveryDevicePort,
+    required this.warning,
+  });
+
+  /// The arguments after `simctl launch <id> <bundle>`, before the engine
+  /// switch arguments.
+  final List<String> arguments;
+
+  /// Switches for the app's environment, before the `SIMCTL_CHILD_` prefix.
+  final Map<String, String> environment;
+
+  /// The host port for `ProtocolDiscovery`, when no device port is given.
+  final int? discoveryHostPort;
+
+  /// The only port `ProtocolDiscovery` accepts a VM Service on, if any.
+  final int? discoveryDevicePort;
+
+  /// A warning to print before the launch, if the ports conflict.
+  final String? warning;
+}
+
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   /// Creates a log reader for a physical watchOS device.
@@ -795,7 +887,13 @@ class WatchosDevice extends Device {
     }
 
     if (isSimulator) {
-      return _startAppOnSimulator(project, package, debuggingOptions);
+      return _startAppOnSimulator(
+        project,
+        package,
+        debuggingOptions,
+        route: route,
+        platformArgs: platformArgs,
+      );
     } else {
       return _startAppOnDevice(project, package, debuggingOptions);
     }
@@ -804,8 +902,10 @@ class WatchosDevice extends Device {
   Future<LaunchResult> _startAppOnSimulator(
     FlutterProject project,
     ApplicationPackage? package,
-    DebuggingOptions debuggingOptions,
-  ) async {
+    DebuggingOptions debuggingOptions, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) async {
     final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
@@ -867,10 +967,25 @@ class WatchosDevice extends Device {
       },
     );
 
+    final launchOptions = SimulatorLaunchOptions(
+      debuggingOptions,
+      route: route,
+      platformArgs: platformArgs,
+    );
+    if (launchOptions.warning case final String warning) {
+      logger.printWarning(warning);
+    }
+
     // Listen for the VM Service line before the launch, as stock does, so a
     // line printed while simctl is still returning is not missed.
     final ProtocolDiscovery? discovery = debuggingOptions.debuggingEnabled
-        ? ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger)
+        ? ProtocolDiscovery.vmService(
+            logReader,
+            ipv6: debuggingOptions.ipv6,
+            hostPort: launchOptions.discoveryHostPort,
+            devicePort: launchOptions.discoveryDevicePort,
+            logger: logger,
+          )
         : null;
 
     final RunResult launchResult = await globals.processUtils.run(
@@ -880,13 +995,17 @@ class WatchosDevice extends Device {
         'launch',
         id,
         bundleId,
+        ...launchOptions.arguments,
         ...engineSwitchArguments(),
       ],
       // simctl gives the launched app any variable it sees prefixed
       // SIMCTL_CHILD_, which is how the same switch reaches the simulator that
       // devicectl's --environment-variables carries to a watch.
       environment: <String, String>{
-        for (final MapEntry<String, String> e in engineSwitchesFromEnvironment().entries)
+        for (final MapEntry<String, String> e in <String, String>{
+          ...engineSwitchesFromEnvironment(),
+          ...launchOptions.environment,
+        }.entries)
           'SIMCTL_CHILD_${e.key}': e.value,
       },
     );

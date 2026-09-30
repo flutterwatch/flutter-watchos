@@ -61,10 +61,13 @@ modes.profile_no_stack_trace pass
 logs.header pass
 logs.markers pass
 
+# The Simulator launch passes stock's debugging options (0005 criteria 8-9).
+# F2, fixed: --enable-dart-profiling and --start-paused reach the app.
+vm.profiler_flag pass
+run.start_paused pass
+
 # Known limitations
 vm.cpu_samples xfail F1 the CPU profiler records no samples on the Simulator
-vm.profiler_flag xfail F2 the Simulator launch passes no debugging options, so the profiler is off
-run.start_paused xfail F2 --start-paused does not reach the app on the Simulator
 machine.app_started xfail F7 run --machine stops at the app start with a logger error
 screenshot.png xfail F9 screenshot of a Simulator is refused or writes an empty file
 drive.integration_test xfail F10 drive warns that the integration_test plugin was not detected
