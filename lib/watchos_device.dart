@@ -679,20 +679,24 @@ class WatchosDevice extends Device {
     // "libflutter_engine.dylib not found — run precache", which cannot help.
     // `build watchos` enforces the same rules; `run` must too, because the
     // daemon (IDE) path skips RunCommand's supportsRuntimeMode check.
+    //
+    // The physical-watch refusal covers prebuilt apps too: a prebuilt debug
+    // app cannot run on a watch either, and nothing on the watch could
+    // attach a debugger to it.
+    final BuildMode mode = debuggingOptions.buildInfo.mode;
+    if (!isSimulator && mode == BuildMode.debug) {
+      throwToolExit(
+        'Debug mode is not supported on a physical Apple Watch: it needs a '
+        'JIT engine, which cannot be built for watchOS (the device SDK '
+        'removes the Mach APIs the Dart JIT VM relies on).\n'
+        'Use one of:\n'
+        '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
+        '  flutter-watchos run -d $id --release   # AOT, fastest\n'
+        'For hot reload and fast iteration, run on the watchOS Simulator, '
+        'where debug (JIT) mode works.',
+      );
+    }
     if (!prebuiltApplication) {
-      final BuildMode mode = debuggingOptions.buildInfo.mode;
-      if (!isSimulator && mode == BuildMode.debug) {
-        throwToolExit(
-          'Debug mode is not supported on a physical Apple Watch: it needs a '
-          'JIT engine, which cannot be built for watchOS (the device SDK '
-          'removes the Mach APIs the Dart JIT VM relies on).\n'
-          'Use one of:\n'
-          '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
-          '  flutter-watchos run -d $id --release   # AOT, fastest\n'
-          'For hot reload and fast iteration, run on the watchOS Simulator, '
-          'where debug (JIT) mode works.',
-        );
-      }
       if (isSimulator && mode != BuildMode.debug) {
         throwToolExit(
           '--${mode.cliName} is not supported on the watchOS Simulator: its '
@@ -919,9 +923,9 @@ class WatchosDevice extends Device {
           // handling 3.47.5 turns on for debug on a device at 27.0 or later,
           // an iOS workaround never tried on a watch. It does not keep
           // 3.47.4's commands: the JIT breakpoint is now set with
-          // `--auto-continue true`, where 3.47.4's hook returned False. Only a
-          // prebuilt debug launch gets here: the mode check at the top of
-          // startApp is skipped for prebuilt apps.
+          // `--auto-continue true`, where 3.47.4's hook returned False. No
+          // launch gets here any more: startApp refuses debug on a watch,
+          // prebuilt apps included.
           deviceVersion: null,
         );
         final Duration timeout = _lldbAttachTimeout;

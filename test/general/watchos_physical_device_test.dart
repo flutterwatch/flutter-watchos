@@ -4,12 +4,16 @@
 
 import 'dart:async';
 
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
+import '../src/fake_process_manager.dart';
 
 void main() {
   group('WatchosPhysicalDeviceLogReader noise filtering', () {
@@ -112,6 +116,9 @@ void main() {
   });
 
   group('WatchosDevice physical properties', () {
+    // Any process call fails the test: a refused launch must run nothing.
+    final processManager = FakeProcessManager.empty();
+
     testWithoutContext('a physical watch is not an emulator and supports AOT modes', () async {
       final device = WatchosDevice(
         'physical-watch-id',
@@ -124,6 +131,36 @@ void main() {
       expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
     });
+
+    // A prebuilt debug app cannot run on a watch either, so the refusal must
+    // not depend on whether startApp builds: nothing is installed or launched.
+    testUsingContext(
+      'startApp refuses a prebuilt debug launch before any process runs',
+      () async {
+        final device = WatchosDevice(
+          'physical-id',
+          name: 'My Watch',
+          logger: BufferLogger.test(),
+          isSimulator: false,
+        );
+
+        await expectLater(
+          device.startApp(
+            null,
+            prebuiltApplication: true,
+            debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
+          ),
+          throwsToolExit(
+            message: RegExp(r'Debug mode is not supported on a physical Apple Watch'),
+          ),
+        );
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => MemoryFileSystem.test(),
+        ProcessManager: () => processManager,
+      },
+    );
 
     testWithoutContext('getLogReader returns the physical reader for a device', () async {
       final device = WatchosDevice(
