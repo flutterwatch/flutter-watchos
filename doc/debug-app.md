@@ -196,8 +196,8 @@ is tunnelled via the iPhone. This path is occasionally flaky:
   join the Mac to the same Wi-Fi as the iPhone.
 - **CoreDeviceError 3002 / IXRemoteErrorDomain 6 on install** — the app bundle
   is incomplete, most often because the build ran out of disk space (look for
-  `No space left on device` in the build output). Free space, rebuild, install
-  again.
+  `No space left on device` in the build output). Make room on the disk,
+  rebuild, install again.
 - **The app starts in the background** when it is launched while the watch's
   display is off; it does not render until you raise your wrist or tap the
   screen. Wake the watch before `run`, and keep it awake for benchmarks.

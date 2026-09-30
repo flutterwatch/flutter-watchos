@@ -34,7 +34,8 @@ Runner   302.4 MB   reason = per-process-limit
 ```
 
 `per-process-limit` means your app alone hit the ceiling — not that the watch
-was short on memory. In the report above the device still had 15.7 MB free.
+was short on memory. In the report above the device still had 15.7 MB
+available.
 
 **watchOS does not write a report for every kill.** It logged one, then stayed
 silent through the next five, then logged again. An absent report is not

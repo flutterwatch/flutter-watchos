@@ -46,7 +46,8 @@ composes with the rest of your widget tree like it does everywhere else.
 
 This is the part to take seriously. Shader work is **expensive on watch
 hardware** relative to a phone — enough that a single full-screen effect can
-consume most of a 60fps frame budget on its own. Shaders are usable, not free.
+consume most of a 60fps frame budget on its own. Shaders are usable, but they
+cost frame time.
 
 Practical consequences:
 
@@ -113,7 +114,7 @@ shader.setFloat(6, breathe);
 Anything derived purely from state — a colour that depends on a game variable,
 `time * rate` phases, a `max()` of two uniforms — moves the same way. In the
 app above this was worth about 9% of the shader's cost on its own. On a GPU it
-would be close to free; here it is not.
+would cost next to nothing; here it has a real cost.
 
 ### Shade at reduced resolution through an offscreen
 
@@ -142,12 +143,12 @@ void paint(Canvas canvas, Size size) {
 }
 ```
 
-This was the larger half of the win, and it is **a quality trade, not a free
-structural change**: fewer pixels get shaded and the result is scaled up, so
-the effect is softer. Soft glows tolerate it well; sharp-edged effects and
-anything with fine high-frequency detail will not. Judge it on a watch, at
-full size — a simulator screenshot comes back at logical resolution and cannot
-show a 2x upscale.
+This was the larger half of the win, and it is **a quality trade, not a
+structural change that costs nothing**: fewer pixels get shaded and the result
+is scaled up, so the effect is softer. Soft glows tolerate it well;
+sharp-edged effects and anything with fine high-frequency detail will not.
+Judge it on a watch, at full size — a simulator screenshot comes back at
+logical resolution and cannot show a 2x upscale.
 
 Two results worth knowing before you tune the size:
 

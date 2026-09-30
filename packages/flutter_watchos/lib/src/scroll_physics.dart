@@ -160,7 +160,7 @@ class WatchScrollPhysics extends BouncingScrollPhysics {
   }
 
   /// A stiff, slightly overdamped spring: the fling bounce is shallow and the
-  /// settle is quick and wobble-free, like a native watch list hitting its
+  /// settle is quick, with no wobble, like a native watch list hitting its
   /// end. (Flutter's default scroll spring is calibrated for phone-sized
   /// travel and lets a hard fling overshoot by hundreds of pixels.)
   @override
