@@ -33,6 +33,13 @@ analyzer:
     # own package does not depend on. Same reasoning as `packages/` above: it
     # is not part of the CLI and must not be resolved against it.
     - "tool/benchmarks/**"
+    # `tool/safe_area/` holds the safe-area harness's apps: the Flutter probe
+    # (`saprobe/`, a package with its own pubspec, analysed from its own dir
+    # with `flutter analyze`) and the log entrypoint it adds to a created app.
+    # Both import `package:flutter/...`, which the CLI's own package does not
+    # depend on, so they are not part of the CLI and must not be resolved
+    # against it.
+    - "tool/safe_area/**"
 
 linter:
   rules:

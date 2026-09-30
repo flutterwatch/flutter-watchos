@@ -10,8 +10,10 @@
 // hold the two plists it reads, written in the shape Xcode ships them
 // (profile.plist: `modelIdentifier`, `maxRuntimeVersion`; capabilities.plist:
 // `capabilities.DeviceCornerRadius` and
-// `capabilities.ScreenDimensionsCapability`). The scripts use `plutil`, so
-// these tests run on macOS only, where the CLI's CI runs.
+// `capabilities.ScreenDimensionsCapability`). check_insets.sh reads launch
+// logs; the fake logs here hold SAFEAREA| lines in the format the probe and
+// the created app's log entrypoint print. The scripts use `plutil`, so these
+// tests run on macOS only, where the CLI's CI runs.
 
 import 'dart:convert';
 import 'dart:io' as io;
@@ -159,6 +161,246 @@ void main() {
       expect(missing.exitCode, 2);
     });
   }, skip: skip);
+
+  group('check_insets.sh', () {
+    final String script = cliRootPath('tool/safe_area/check_insets.sh');
+    final String insetsFixturePath = cliRootPath(
+      'tool/safe_area/fixtures/watch_safe_area_insets.json',
+    );
+
+    io.ProcessResult check(String log, {String? fixture, String? runtime}) {
+      final logFile = io.File('${tmp.path}/launch.log')..writeAsStringSync(log);
+      return io.Process.runSync('bash', <String>[
+        script,
+        logFile.path,
+        fixture ?? insetsFixturePath,
+        fixturePath,
+        ?runtime,
+      ]);
+    }
+
+    test('the insets fixture has the eight screen sizes of the corner fixture', () {
+      final insets =
+          json.decode(io.File(insetsFixturePath).readAsStringSync()) as Map<String, Object?>;
+      final corners = json.decode(io.File(fixturePath).readAsStringSync()) as Map<String, Object?>;
+      expect(insets.keys.toSet(), corners.keys.toSet());
+      expect(insets, hasLength(8));
+      for (final Object? entry in insets.values) {
+        expect((entry! as Map<String, Object?>).keys.toSet(), <String>{
+          'top',
+          'bottom',
+          'left',
+          'right',
+        });
+      }
+    });
+
+    test('exits 0 on a matching line in each mode, for all eight screen sizes', () {
+      final insets =
+          json.decode(io.File(insetsFixturePath).readAsStringSync()) as Map<String, Object?>;
+      final corners = json.decode(io.File(fixturePath).readAsStringSync()) as Map<String, Object?>;
+      for (final String size in insets.keys) {
+        final entry = insets[size]! as Map<String, Object?>;
+        final List<num> wh = size.split('x').map(num.parse).toList();
+        final logical = '${wh[0].toStringAsFixed(2)}x${wh[1].toStringAsFixed(2)}';
+        final platform = _SafeAreaLine(
+          size: logical,
+          padding: _edges(
+            entry['left']! as num,
+            entry['top']! as num,
+            entry['right']! as num,
+            entry['bottom']! as num,
+          ),
+          band: (entry['top']! as num).toStringAsFixed(2),
+        );
+        final io.ProcessResult platformResult = check(platform.toString());
+        expect(platformResult.exitCode, 0, reason: '$size platform: ${platformResult.stderr}');
+
+        final int inset = ((corners[size]! as num) * 0.2928932188134524).ceil();
+        final cornerLine = _SafeAreaLine(
+          mode: 'corners',
+          size: logical,
+          padding: _edges(inset, inset, inset, inset),
+          band: (entry['top']! as num).toStringAsFixed(2),
+        );
+        final io.ProcessResult cornerResult = check(cornerLine.toString());
+        expect(cornerResult.exitCode, 0, reason: '$size corners: ${cornerResult.stderr}');
+      }
+    });
+
+    test('reads the first SAFEAREA| line of an os_log dump', () {
+      final io.ProcessResult result = check(
+        '2026-09-30 21:00:00.100 Df Runner[4242:9f1] [com.apple.flutter] launched\n'
+        '2026-09-30 21:00:00.300 Df Runner[4242:9f1] flutter: ${_SafeAreaLine()}\n'
+        '2026-09-30 21:00:00.900 Df Runner[4242:9f1] flutter: ${_SafeAreaLine(padding: _edges(9, 9, 9, 9))}\n',
+      );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      expect(result.stdout, contains('check_insets: OK: mode=platform size=211x257'));
+      // A later line that would pass does not rescue a first line that does not.
+      final io.ProcessResult firstWrong = check(
+        'flutter: ${_SafeAreaLine(padding: _edges(9, 9, 9, 9))}\n'
+        'flutter: ${_SafeAreaLine()}\n',
+      );
+      expect(firstWrong.exitCode, 1);
+    });
+
+    test('divides the expectation by the content scale taken from dpr', () {
+      // Ultra 3 at FlutterWatchOSContentScale 0.6: a logical 351.67x428.33
+      // at pixel ratio 1.2 (Simulator measurement, 2026-09-29).
+      final platform = _SafeAreaLine(
+        size: '351.67x428.33',
+        dpr: '1.2',
+        padding: 'L3.33,T94.17,R3.33,B66.67',
+        band: '94.17',
+      );
+      expect(check('$platform').exitCode, 0, reason: '${check('$platform').stderr}');
+      final corners = _SafeAreaLine(
+        mode: 'corners',
+        size: '351.67x428.33',
+        dpr: '1.2',
+        padding: 'L28.33,T28.33,R28.33,B28.33',
+        band: '94.17',
+      );
+      expect(check('$corners').exitCode, 0, reason: '${check('$corners').stderr}');
+    });
+
+    test('allows 0.01 pt and no more', () {
+      expect(check('${_SafeAreaLine(padding: 'L2.00,T56.51,R2.00,B40.00')}').exitCode, 0);
+      final io.ProcessResult off = check('${_SafeAreaLine(padding: 'L2.00,T56.52,R2.00,B40.00')}');
+      expect(off.exitCode, 1);
+      expect(off.stderr, contains('padding T is 56.52, expected 56.50'));
+    });
+
+    test('exits non-zero when an edge is off in either mode', () {
+      expect(check('${_SafeAreaLine(padding: 'L2.00,T56.50,R2.00,B39.00')}').exitCode, 1);
+      expect(
+        check('${_SafeAreaLine(mode: 'corners', padding: _edges(17, 17, 17, 16))}').exitCode,
+        1,
+      );
+      // A corners line that carries the platform insets: the mode decides.
+      expect(check('${_SafeAreaLine(mode: 'corners')}').exitCode, 1);
+      // viewPadding is held to the same values as padding.
+      expect(check('${_SafeAreaLine(viewPadding: 'L2.00,T0.00,R2.00,B40.00')}').exitCode, 1);
+    });
+
+    test('exits non-zero when viewInsets or systemGestureInsets is not zero', () {
+      final io.ProcessResult insets = check(
+        '${_SafeAreaLine(viewInsets: 'L0.00,T0.00,R0.00,B80.00')}',
+      );
+      expect(insets.exitCode, 1);
+      expect(insets.stderr, contains('viewInsets B is 80.00, expected 0.00'));
+      expect(
+        check('${_SafeAreaLine(systemGestureInsets: 'L20.00,T0.00,R0.00,B0.00')}').exitCode,
+        1,
+      );
+    });
+
+    test('exits non-zero when displayFeatures is not empty', () {
+      final io.ProcessResult result = check(
+        '${_SafeAreaLine(displayFeatures: '[DisplayFeature(rect: Rect.zero)]')}',
+      );
+      expect(result.exitCode, 1);
+      expect(result.stderr, contains('displayFeatures is not empty'));
+    });
+
+    test('exits non-zero when mode= is missing or unknown', () {
+      final io.ProcessResult missing = check('${_SafeAreaLine(mode: null)}');
+      expect(missing.exitCode, 1);
+      expect(missing.stderr, contains('the line has no mode='));
+      final io.ProcessResult unknown = check('${_SafeAreaLine(mode: 'platform-cs0.6')}');
+      expect(unknown.exitCode, 1);
+      expect(unknown.stderr, contains('unknown mode=platform-cs0.6'));
+    });
+
+    test('exits non-zero when band= is off, in either mode', () {
+      final io.ProcessResult platform = check('${_SafeAreaLine(band: '40.00')}');
+      expect(platform.exitCode, 1);
+      expect(platform.stderr, contains('band is 40.00, expected 56.50'));
+      // In corners mode the band is still the platform top, not the padding.
+      expect(
+        check(
+          '${_SafeAreaLine(mode: 'corners', padding: _edges(17, 17, 17, 17), band: '17.00')}',
+        ).exitCode,
+        1,
+      );
+    });
+
+    test('exits non-zero when the log has no SAFEAREA| line', () {
+      final io.ProcessResult result = check('flutter: nothing to see\n');
+      expect(result.exitCode, 1);
+      expect(result.stderr, contains('no SAFEAREA| line'));
+    });
+
+    test('exits non-zero on a screen size the fixture does not have', () {
+      final io.ProcessResult result = check('${_SafeAreaLine(size: '200.00x240.00')}');
+      expect(result.exitCode, 1);
+      expect(result.stderr, contains('200x240'));
+    });
+
+    test("uses an entry's per-runtime value only for that runtime", () {
+      final fixture = io.File('${tmp.path}/insets.json')
+        ..writeAsStringSync(
+          io.File(insetsFixturePath).readAsStringSync().replaceFirst(
+            '"211x257": { "top": 56.5,',
+            '"211x257": { "26.5": { "top": 57.5, "bottom": 40, "left": 2, "right": 2 }, "top": 56.5,',
+          ),
+        );
+      final line = '${_SafeAreaLine(padding: 'L2.00,T57.50,R2.00,B40.00')}';
+      expect(check(line, fixture: fixture.path, runtime: '26.5').exitCode, 0);
+      expect(check(line, fixture: fixture.path, runtime: '27.0').exitCode, 1);
+      expect(check(line, fixture: fixture.path).exitCode, 1);
+    });
+  }, skip: skip);
+}
+
+/// `L..,T..,R..,B..`, as the probe prints an `EdgeInsets`.
+String _edges(num left, num top, num right, num bottom) =>
+    'L${left.toStringAsFixed(2)},T${top.toStringAsFixed(2)},'
+    'R${right.toStringAsFixed(2)},B${bottom.toStringAsFixed(2)}';
+
+/// A SAFEAREA| line as the probe prints it. The defaults are an Ultra 3 in
+/// `platform` mode at content scale 1.0 (Simulator, watchOS 27.0).
+class _SafeAreaLine {
+  _SafeAreaLine({
+    this.mode = 'platform',
+    this.size = '211.00x257.00',
+    this.dpr = '2.0',
+    this.padding = 'L2.00,T56.50,R2.00,B40.00',
+    String? viewPadding,
+    this.viewInsets = 'L0.00,T0.00,R0.00,B0.00',
+    this.systemGestureInsets = 'L0.00,T0.00,R0.00,B0.00',
+    this.displayFeatures = '[]',
+    this.band,
+  }) : viewPadding = viewPadding ?? padding;
+
+  final String? mode;
+  final String size;
+  final String dpr;
+  final String padding;
+  final String viewPadding;
+  final String viewInsets;
+  final String systemGestureInsets;
+  final String displayFeatures;
+  final String? band;
+
+  @override
+  String toString() => <String>[
+    'SAFEAREA',
+    'dev=U3',
+    if (mode != null) 'mode=$mode',
+    'page=0',
+    'size=$size',
+    'dpr=$dpr',
+    'physical=422.0x514.0',
+    'padding=$padding',
+    'viewPadding=$viewPadding',
+    'viewInsets=$viewInsets',
+    'systemGestureInsets=$systemGestureInsets',
+    'displayFeatures=$displayFeatures',
+    'textScale=1.0',
+    'display=422.0x514.0@2.0',
+    if (band != null) 'band=$band',
+  ].join('|');
 }
 
 /// One fake `<name>.simdevicetype` bundle: the two plists the script reads.

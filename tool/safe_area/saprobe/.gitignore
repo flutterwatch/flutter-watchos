@@ -1,0 +1,9 @@
+# What `flutter pub get`, `flutter-watchos create --platforms=watchos .` and a
+# build write. run_matrix.sh builds a copy of this directory, so none of it
+# appears here; this keeps the tree clean when the probe is built in place.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+build/
+watchos/
