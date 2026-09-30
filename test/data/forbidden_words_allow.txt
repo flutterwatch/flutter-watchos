@@ -15,5 +15,7 @@ test/general/*.dart | release_not_in_beta | The same gate slug, in the tests tha
 test/general/watchos_precache_test.dart | artifacts are not part of the closed beta. | The closed-mode message the artifact service sends, used as a response fixture; the CLI never prints it.
 lib/commands/upgrade.dart | versionsort.suffix=-beta | The git tag sort of `upgrade`, which must still order the pre-release tags published before 0.1.0.
 lib/commands/upgrade.dart | (?:alpha|beta|rc) | The pre-release part of the release tag pattern of `upgrade`, for the same tags.
+.github/workflows/smoke.yml | versionsort.suffix=-beta | The tag sort of `upgrade`, which the smoke workflow runs unchanged to pick the tag `upgrade` picks. Code in a run: line.
+.github/workflows/smoke.yml | (alpha|beta|rc) | The pre-release part of `upgrade`'s release tag pattern, which the smoke workflow uses to pick the same tag. Code in a run: line.
 packages/in_app_purchase_watchos/lib/in_app_purchase_watchos.dart | price: p['price'] | The `price` field of `ProductDetails`, an in_app_purchase API name.
 packages/in_app_purchase_watchos/lib/in_app_purchase_watchos.dart | rawPrice: (p['rawPrice'] | The `rawPrice` field of `ProductDetails`, an in_app_purchase API name.
