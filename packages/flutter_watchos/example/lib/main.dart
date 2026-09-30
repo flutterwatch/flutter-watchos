@@ -37,105 +37,111 @@ class _HomeScreenState extends State<HomeScreen> {
     // A compact, scrollable layout — sized for the watch screen.
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        // WatchCrownScroll gives this list the native watch feel: watch-tuned
-        // physics with a firm, shallow edge bounce (no edge haptic, matching
-        // watchOS 26). The crown scroll motion/acceleration/detent ticks come
-        // from the watchOS engine.
-        child: WatchCrownScroll(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            children: [
-              const Text(
-                'flutter_watchos',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white),
-              ),
-              const SizedBox(height: 8),
-              _Row('isWatch', '${FlutterWatchosPlatform.isWatch}'),
-              _Row('Platform.isIOS', '${FlutterWatchosPlatform.isAppleMobile}'),
-              _Row('isWatchOS', '${WatchOSInfo.isWatchOS}'),
-              _Row('version', WatchOSInfo.watchOSVersion),
-              _Row('model', WatchOSInfo.deviceModel),
-              _Row('machine', WatchOSInfo.machineId),
-              _Row('simulator', '${WatchOSInfo.isSimulator}'),
-              _Row('screen', WatchOSInfo.screenResolution),
-              _Row('scale', '${WatchOSInfo.screenScale}x'),
-              const _AlwaysOnRow(),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const CrownDemoScreen(),
-                    ),
+      // No SafeArea around the list, so it fills the screen the way a native
+      // watchOS list does: rows scroll under the clock and down to the bottom
+      // edge. The safe-area insets go into the list's padding instead, so the
+      // first row starts below the clock and the last one scrolls clear of
+      // the bottom edge. The rows still see the full MediaQuery padding, so a
+      // SafeArea inside a row would inset it a second time. The crown screen
+      // below does not scroll, so it keeps its SafeArea.
+      //
+      // WatchCrownScroll gives this list the native watch feel: watch-tuned
+      // physics with a firm, shallow edge bounce (no edge haptic, matching
+      // watchOS 26). The crown scroll motion/acceleration/detent ticks come
+      // from the watchOS engine.
+      body: WatchCrownScroll(
+        child: ListView(
+          padding: MediaQuery.paddingOf(context) +
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          children: [
+            const Text(
+              'flutter_watchos',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            _Row('isWatch', '${FlutterWatchosPlatform.isWatch}'),
+            _Row('Platform.isIOS', '${FlutterWatchosPlatform.isAppleMobile}'),
+            _Row('isWatchOS', '${WatchOSInfo.isWatchOS}'),
+            _Row('version', WatchOSInfo.watchOSVersion),
+            _Row('model', WatchOSInfo.deviceModel),
+            _Row('machine', WatchOSInfo.machineId),
+            _Row('simulator', '${WatchOSInfo.isSimulator}'),
+            _Row('screen', WatchOSInfo.screenResolution),
+            _Row('scale', '${WatchOSInfo.screenScale}x'),
+            const _AlwaysOnRow(),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const CrownDemoScreen(),
                   ),
-                  child: const Text('crown demo →'),
                 ),
+                child: const Text('crown demo →'),
               ),
-              // System clock (WatchStatusBar) — the watch draws the time over
-              // every app; hide it for an immersive/full-bleed screen. Visible
-              // by default, per the watchOS HIG.
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ElevatedButton(
-                  onPressed: () => setState(
-                      () => WatchStatusBar.hidden = !WatchStatusBar.hidden),
-                  child: Text(
-                      'system clock: ${WatchStatusBar.hidden ? "hidden" : "shown"}',
-                      style: const TextStyle(fontSize: 11)),
-                ),
+            ),
+            // System clock (WatchStatusBar) — the watch draws the time over
+            // every app; hide it for an immersive/full-bleed screen. Visible
+            // by default, per the watchOS HIG.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ElevatedButton(
+                onPressed: () => setState(
+                    () => WatchStatusBar.hidden = !WatchStatusBar.hidden),
+                child: Text(
+                    'system clock: ${WatchStatusBar.hidden ? "hidden" : "shown"}',
+                    style: const TextStyle(fontSize: 11)),
               ),
-              // Crown scroll options (WatchCrownScrolling) — the native-parity
-              // sensitivity + detent-haptic knobs, applied engine-side.
-              const Text('crown sensitivity',
-                  style: TextStyle(color: Colors.white70, fontSize: 11)),
-              Row(
-                children: [
-                  for (final s in WatchCrownSensitivity.values)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.all(2),
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            padding: EdgeInsets.zero,
-                            backgroundColor:
-                                WatchCrownScrolling.sensitivity == s
-                                    ? Colors.blueGrey
-                                    : null,
-                          ),
-                          onPressed: () => setState(
-                              () => WatchCrownScrolling.sensitivity = s),
-                          child: Text(s.name,
-                              style: const TextStyle(fontSize: 11)),
+            ),
+            // Crown scroll options (WatchCrownScrolling) — the native-parity
+            // sensitivity + detent-haptic knobs, applied engine-side.
+            const Text('crown sensitivity',
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+            Row(
+              children: [
+                for (final s in WatchCrownSensitivity.values)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          backgroundColor: WatchCrownScrolling.sensitivity == s
+                              ? Colors.blueGrey
+                              : null,
                         ),
+                        onPressed: () =>
+                            setState(() => WatchCrownScrolling.sensitivity = s),
+                        child:
+                            Text(s.name, style: const TextStyle(fontSize: 11)),
                       ),
                     ),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ElevatedButton(
-                  onPressed: () => setState(() => WatchCrownScrolling
-                      .detentHaptics = !WatchCrownScrolling.detentHaptics),
-                  child: Text(
-                      'detent ticks: ${WatchCrownScrolling.detentHaptics ? "on" : "off"}',
-                      style: const TextStyle(fontSize: 11)),
-                ),
-              ),
-              for (final type in WatchHapticType.values)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: ElevatedButton(
-                    onPressed: () => WatchHaptics.play(type),
-                    child: Text('haptic: ${type.name}'),
                   ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ElevatedButton(
+                onPressed: () => setState(() => WatchCrownScrolling
+                    .detentHaptics = !WatchCrownScrolling.detentHaptics),
+                child: Text(
+                    'detent ticks: ${WatchCrownScrolling.detentHaptics ? "on" : "off"}',
+                    style: const TextStyle(fontSize: 11)),
+              ),
+            ),
+            for (final type in WatchHapticType.values)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: ElevatedButton(
+                  onPressed: () => WatchHaptics.play(type),
+                  child: Text('haptic: ${type.name}'),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

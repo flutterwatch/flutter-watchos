@@ -1,6 +1,10 @@
 ## 0.1.0
 
 * The same code and API as the previous version, released as 0.1.0.
+* **Example:** the home list no longer sits inside a `SafeArea`. It covers
+  the whole screen and adds the safe-area insets to its padding, so its rows
+  scroll under the clock and down to the bottom edge, as in a native watchOS
+  list. The crown screen, which does not scroll, keeps its `SafeArea`.
 
 ## 0.1.0-beta.9
 
