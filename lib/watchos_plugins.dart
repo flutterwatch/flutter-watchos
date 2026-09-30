@@ -281,7 +281,7 @@ List<String> _parseFfiSymbols(String pluginName, Object? raw) {
 
 /// Discovers the watchOS plugins in [project] that ship a Swift Package
 /// (`<plugin>/watchos/Package.swift`) and returns them as [WatchosSpmPlugin]s
-/// for the generated SPM umbrella.
+/// for the watch build, which compiles them into the plugin archive.
 List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
   final spmPlugins = <WatchosSpmPlugin>[];
   for (final WatchosPlugin plugin in _discoverWatchosPlugins(project)) {
