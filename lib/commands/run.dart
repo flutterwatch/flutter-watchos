@@ -10,8 +10,9 @@ import '../watchos_cache.dart';
 import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
 import 'launch_checks.dart';
+import 'port_help.dart';
 
-class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts {
+class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts, UnusedPortHelp {
   WatchosRunCommand({required super.verboseHelp});
 
   @override

@@ -11,8 +11,9 @@ import '../watchos_device.dart';
 import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
 import 'launch_checks.dart';
+import 'port_help.dart';
 
-class WatchosAttachCommand extends AttachCommand {
+class WatchosAttachCommand extends AttachCommand with UnusedPortHelp {
   WatchosAttachCommand({
     required super.verboseHelp,
     required super.stdio,
