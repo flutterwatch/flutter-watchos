@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/platform.dart';
@@ -16,19 +17,38 @@ import '../src/fakes.dart';
 void main() {
   late MemoryFileSystem fileSystem;
   late FakeProcessManager processManager;
+  late FakePlatform platform;
   late Cache cache;
   late WatchosArtifacts artifacts;
+
+  // The engine root is resolved through the context's file system and
+  // platform (`watchosArtifactDirectory`). Every case runs in a context whose
+  // platform has an empty environment, so a WATCHOS_ENGINE_ARTIFACTS exported
+  // in the shell that runs the suite cannot redirect it (STANDARDS: tests are
+  // hermetic).
+  void testInContext(String description, void Function() body) {
+    testUsingContext(
+      description,
+      body,
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => platform,
+      },
+    );
+  }
 
   setUp(() {
     fileSystem = MemoryFileSystem.test();
     processManager = FakeProcessManager.any();
+    platform = FakePlatform(operatingSystem: 'macos', environment: <String, String>{});
     // watchosArtifactDirectory resolves as `<flutterRoot>/../engine_artifacts`.
     Cache.flutterRoot = '/flutter';
     cache = Cache.test(fileSystem: fileSystem, processManager: processManager);
     artifacts = WatchosArtifacts(
       fileSystem: fileSystem,
       cache: cache,
-      platform: FakePlatform(operatingSystem: 'macos'),
+      platform: platform,
       operatingSystemUtils: FakeOperatingSystemUtils(),
     );
 
@@ -42,7 +62,7 @@ void main() {
   });
 
   group('WatchosArtifacts patched-SDK override (AOT platform identity)', () {
-    test('release uses the product SDK (host_release)', () {
+    testInContext('release uses the product SDK (host_release)', () {
       // Release rides the product SDK, matching stock flutter_patched_sdk_product.
       expect(
         artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath, mode: BuildMode.release),
@@ -54,7 +74,7 @@ void main() {
       );
     });
 
-    test('profile uses the NON-product SDK (host_debug_unopt)', () {
+    testInContext('profile uses the NON-product SDK (host_debug_unopt)', () {
       // Profile must compile against the non-product SDK so AOT retains
       // entry-point classes the profile engine looks up natively (e.g.
       // dart:io _NetworkProfiling). Using the product SDK aborts at startup.
@@ -68,7 +88,7 @@ void main() {
       );
     });
 
-    test('debug flutterPatchedSdkPath falls through to stock resolution', () {
+    testInContext('debug flutterPatchedSdkPath falls through to stock resolution', () {
       // Debug resolves platform identity at runtime via the device engine, so
       // the override is intentionally NOT applied — the path must come from
       // the stock CachedArtifacts logic, not our engine_artifacts host SDK.
@@ -79,7 +99,7 @@ void main() {
       expect(path, isNot(contains('engine_artifacts')));
     });
 
-    test('debug platformKernelDill falls through to stock resolution', () {
+    testInContext('debug platformKernelDill falls through to stock resolution', () {
       final String path = artifacts.getArtifactPath(
         Artifact.platformKernelDill,
         mode: BuildMode.debug,
@@ -87,7 +107,7 @@ void main() {
       expect(path, isNot(contains('engine_artifacts')));
     });
 
-    test('handles the nested directory layout from zip extraction', () {
+    testInContext('handles the nested directory layout from zip extraction', () {
       fileSystem
           .directory('/engine_artifacts/host_release/host_release/flutter_patched_sdk')
           .createSync(recursive: true);
@@ -98,6 +118,17 @@ void main() {
       expect(
         path,
         '/engine_artifacts/host_release/host_release/flutter_patched_sdk',
+      );
+    });
+  });
+
+  group('engine root', () {
+    testInContext('WATCHOS_ENGINE_ARTIFACTS is read from the context platform', () {
+      fileSystem.directory('/custom_engine').createSync();
+      platform.environment['WATCHOS_ENGINE_ARTIFACTS'] = '/custom_engine';
+      expect(
+        artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath, mode: BuildMode.release),
+        '/custom_engine/host_release/flutter_patched_sdk',
       );
     });
   });
@@ -113,19 +144,19 @@ void main() {
           .last;
     }
 
-    test('debug + simulator → watchos_debug_sim_arm64', () {
+    testInContext('debug + simulator → watchos_debug_sim_arm64', () {
       expect(variantFor(BuildMode.debug, EnvironmentType.simulator),
           'watchos_debug_sim_arm64');
     });
-    test('debug + device → watchos_debug_arm64', () {
+    testInContext('debug + device → watchos_debug_arm64', () {
       expect(variantFor(BuildMode.debug, EnvironmentType.physical),
           'watchos_debug_arm64');
     });
-    test('profile + device → watchos_profile_arm64', () {
+    testInContext('profile + device → watchos_profile_arm64', () {
       expect(variantFor(BuildMode.profile, EnvironmentType.physical),
           'watchos_profile_arm64');
     });
-    test('release + device → watchos_release_arm64', () {
+    testInContext('release + device → watchos_release_arm64', () {
       expect(variantFor(BuildMode.release, EnvironmentType.physical),
           'watchos_release_arm64');
     });
