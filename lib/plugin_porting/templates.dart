@@ -435,6 +435,9 @@ build/
 **/.build/
 **/xcuserdata/
 
+# flutter-watchos app wiring (generated in an app's watchos/, never a plugin's)
+watchos/Flutter/
+
 # IDE
 .idea/
 .vscode/

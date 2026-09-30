@@ -483,9 +483,24 @@ List<String> auditPluginsWithoutWatchosSupport({
   ];
 }
 
+/// Brings a watchOS app's generated plugin wiring up to date before a
+/// `build`, `run`, `drive`, `attach` or `test`: the host mode, the plugin
+/// warnings, `.flutter-plugins-dependencies`, `.flutter-plugins`, the Swift
+/// registrant under `watchos/Flutter/` and the Dart plugin registrant.
+///
+/// It does nothing for a project without a `watchos/` folder, or for a plugin
+/// package (a pubspec with a `flutter.plugin` block): a plugin's `watchos/`
+/// holds its own native sources, and `flutter-watchos test` run in the plugin
+/// must not write the app wiring into it.
 Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   final Directory watchosDir = project.directory.childDirectory('watchos');
   if (!watchosDir.existsSync()) {
+    return;
+  }
+  if (project.manifest.isPlugin) {
+    globals.logger.printTrace(
+      '${project.directory.path} is a plugin package; no watchOS app wiring is written into it.',
+    );
     return;
   }
 

@@ -564,4 +564,72 @@ flutter:
     });
   });
 
+  // `flutter-watchos test` in a plugin package writes nothing into it; its
+  // watchos/ holds the plugin's own native sources.
+  group('ensureReadyForWatchosTooling in a plugin package', () {
+    List<String> filesUnder(Directory dir) => <String>[
+      for (final FileSystemEntity entity in dir.listSync(recursive: true))
+        if (entity is File) fileSystem.path.relative(entity.path, from: dir.path),
+    ]..sort();
+
+    Directory projectWith(String pubspec) {
+      final Directory projectDir = fileSystem.directory('/gadget_watchos')..createSync();
+      projectDir.childFile('pubspec.yaml').writeAsStringSync(pubspec);
+      projectDir
+          .childDirectory('watchos')
+          .childDirectory('Classes')
+          .childFile('gadget_watchos_ffi.m')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('// the C source of the plugin\n');
+      return projectDir;
+    }
+
+    testUsingContext(
+      'writes nothing when the pubspec has a flutter.plugin block',
+      () async {
+        final Directory projectDir = projectWith('''
+name: gadget_watchos
+flutter:
+  plugin:
+    implements: gadget
+    platforms:
+      watchos:
+        ffiPlugin: true
+        dartPluginClass: GadgetWatchos
+''');
+        final List<String> before = filesUnder(projectDir);
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(filesUnder(projectDir), before);
+        expect(projectDir.childDirectory('watchos').childDirectory('Flutter').existsSync(), isFalse);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'still writes the app wiring for an app with the same layout',
+      () async {
+        final Directory projectDir = projectWith('name: gadget_app\n');
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(
+          projectDir
+              .childDirectory('watchos')
+              .childDirectory('Flutter')
+              .childFile('GeneratedPluginRegistrant.swift')
+              .existsSync(),
+          isTrue,
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
 }
