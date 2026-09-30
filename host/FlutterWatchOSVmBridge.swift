@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // FLUTTER_WATCHOS_VM_BRIDGE is defined by the CLI for debug and profile builds
 // only (see kVmBridgeSwiftDefine in lib/build_targets/watchos_host_module.dart).
 // A release build compiles the stub at the bottom of this file instead, so a
