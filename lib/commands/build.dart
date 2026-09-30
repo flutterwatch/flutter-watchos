@@ -9,12 +9,24 @@ import 'package:flutter_tools/src/commands/build.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:meta/meta.dart';
 
 import '../watchos_build_info.dart';
 import '../watchos_build_registry.dart';
 import '../watchos_builder.dart';
 import '../watchos_cache.dart';
 import '../watchos_plugins.dart';
+
+/// Builds the watchOS app bundle for `build watchos`.
+///
+/// [WatchosBuilder.buildBundle] outside tests; command tests pass a fake, so
+/// the command runs without Xcode or an engine.
+typedef WatchosBundleBuilder =
+    Future<void> Function({
+      required FlutterProject project,
+      required WatchosBuildInfo watchosBuildInfo,
+      required String targetFile,
+    });
 
 class WatchosBuildCommand extends BuildCommand {
   WatchosBuildCommand({
@@ -36,14 +48,29 @@ class WatchosBuildCommand extends BuildCommand {
     required super.plistParser,
     required super.xcode,
     required bool verboseHelp,
+    @visibleForTesting WatchosBundleBuilder? bundleBuilder,
+    @visibleForTesting BuildRegistryPost? registryPost,
   }) : super(logger: logger, verboseHelp: verboseHelp) {
-    addSubcommand(BuildWatchosCommand(logger: logger, verboseHelp: verboseHelp));
+    addSubcommand(
+      BuildWatchosCommand(
+        logger: logger,
+        verboseHelp: verboseHelp,
+        bundleBuilder: bundleBuilder,
+        registryPost: registryPost,
+      ),
+    );
   }
 }
 
 class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts {
-  BuildWatchosCommand({required super.logger, required bool verboseHelp})
-    : super(verboseHelp: verboseHelp) {
+  BuildWatchosCommand({
+    required super.logger,
+    required bool verboseHelp,
+    @visibleForTesting WatchosBundleBuilder? bundleBuilder,
+    @visibleForTesting BuildRegistryPost? registryPost,
+  }) : _bundleBuilder = bundleBuilder ?? WatchosBuilder.buildBundle,
+       _registryPost = registryPost,
+       super(verboseHelp: verboseHelp) {
     addCommonDesktopBuildOptions(verboseHelp: verboseHelp);
     argParser.addFlag(
       'simulator',
@@ -57,6 +84,11 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
           'See `flutter-watchos build-registry`.',
     );
   }
+
+  final WatchosBundleBuilder _bundleBuilder;
+
+  /// How a registration is sent; null sends it over HTTP.
+  final BuildRegistryPost? _registryPost;
 
   @override
   final String name = 'watchos';
@@ -128,7 +160,7 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
       );
     }
 
-    await WatchosBuilder.buildBundle(
+    await _bundleBuilder(
       project: project,
       watchosBuildInfo: watchosBuildInfo,
       targetFile: targetFile,
@@ -154,6 +186,7 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
           platform: globals.platform,
           logger: globals.logger,
           build: build,
+          post: _registryPost,
         );
       }
     }
