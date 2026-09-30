@@ -13,10 +13,14 @@ class WatchosBuildInfo {
   /// The target architecture for the watch executable.
   ///
   /// Device builds are `arm64` (the engine and AOT snapshot are arm64-only).
-  /// A stub `arm64_32` slice is added at packaging time when the app's
-  /// MinimumOSVersion is below 27.0, because the App Store requires an
-  /// arm64_32 slice in the watch executable for older deployment targets —
-  /// see the arm64_32 gate in [build_targets/application.dart].
+  /// Below watchOS 27.0 the App Store also requires an `arm64_32` slice in the
+  /// watch executable. Xcode builds it: a device build passes no `ARCHS` to
+  /// xcodebuild (`watchosXcodebuildArgs` in `build_targets/application.dart`),
+  /// so Xcode's Standard Architectures include arm64_32 below 27.0, and the
+  /// CLI compiles the host module for it too. The template's
+  /// `#if arch(arm64_32)` makes that slice a stub that links no engine and
+  /// shows a fallback screen on Series 6–8, SE (2nd generation) and Ultra
+  /// (1st generation).
   final String targetArch;
 
   /// Whether to build for the watchOS Simulator.
