@@ -507,7 +507,7 @@ class ReleaseWatchosApplication extends Target {
 
   @override
   List<Target> get dependencies => const <Target>[
-    // We do AOT compilation ourselves in NativeWatchosBundle._compileAotSnapshot
+    // We do AOT compilation ourselves in NativeWatchosBundle.buildAotAppDylib
     // (gen_snapshot → assembly → clang → App.framework) because upstream
     // AotElfRelease throws "Null check operator used on a null value" when
     // TargetPlatform == ios but no darwinArch is plumbed through.
@@ -1088,10 +1088,11 @@ class NativeWatchosBundle extends Target {
       // Not Flutter assets, even though they sit in `build/watchos/`:
       //  - `Debug-*` / `Release-*`: xcodebuild SYMROOT products
       //  - `aot`: gen_snapshot intermediates (snapshot_assembly.S/.o, ~22 MB)
-      //    from _compileAotSnapshot — copying them shipped 22 MB of assembly
+      //    from buildAotAppDylib — copying them shipped 22 MB of assembly
       //    text inside every release app bundle.
-      //  - `ipa`: the `flutter-watchos build ipa` output (archive + store
-      //    package) — it must never be swept into the next build's assets.
+      //  - `ipa`: where `flutter-watchos upload` looks for an `.ipa` exported
+      //    from Xcode (Organizer or `xcodebuild -exportArchive`) — it must
+      //    never be swept into the next build's assets.
       //  - `*.xcarchive` / `Exported` / `*xportOptions.plist` / `.DS_Store`:
       //    manual archive/export runs and Finder droppings left in the build
       //    dir. Sweeping an old .xcarchive into flutter_assets shipped a
