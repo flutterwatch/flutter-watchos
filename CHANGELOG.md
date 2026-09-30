@@ -5,10 +5,13 @@
 - **Flutter 3.47.5.** The pinned SDK moves from 3.47.4 to 3.47.5, which rolls
   Dart from 3.13.3 to 3.13.4. No engine source changes, but the engine is
   rebuilt on it and re-pinned as `engine-31ccab0d37ab`: an engine only loads
-  kernel compiled by its own Dart, so the two pins move together. One
-  `flutter_tools` change (LLDB now takes the device's OS version) is absorbed
-  in `watchos_device.dart`. 3.47.5 also fixes a `flutter_tools` crash when the
-  Dart Development Service fails to start.
+  kernel compiled by its own Dart, so the two pins move together. 3.47.5 fixes
+  a `flutter_tools` crash when the Dart Development Service fails to start. It
+  also changes the commands `flutter_tools` sends to lldb: the JIT breakpoint
+  now continues through `--auto-continue true` instead of through its hook.
+  The tool attaches lldb only when a prebuilt app (`--use-application-binary`)
+  is run in debug mode on a physical watch, and a debug app cannot run there:
+  debug needs the JIT engine, which exists only for the Simulator.
 
 ## 0.1.0-beta.13 (closed beta)
 

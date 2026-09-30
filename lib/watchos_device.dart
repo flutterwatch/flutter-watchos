@@ -915,9 +915,13 @@ class WatchosDevice extends Device {
           logger: logger,
           processUtils: globals.processUtils,
           xcodeProjectInterpreter: xcodeProjectInterpreter,
-          // Since Flutter 3.47.5, LLDB handles breakpoint stops by hand for a
-          // device at version 27.0 or later, an iOS rule never tried on a
-          // watch. No version keeps that path off.
+          // Required since Flutter 3.47.5. Null keeps off the manual stop
+          // handling 3.47.5 turns on for debug on a device at 27.0 or later,
+          // an iOS workaround never tried on a watch. It does not keep
+          // 3.47.4's commands: the JIT breakpoint is now set with
+          // `--auto-continue true`, where 3.47.4's hook returned False. Only a
+          // prebuilt debug launch gets here: the mode check at the top of
+          // startApp is skipped for prebuilt apps.
           deviceVersion: null,
         );
         final Duration timeout = _lldbAttachTimeout;
