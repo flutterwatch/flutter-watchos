@@ -67,8 +67,8 @@ class WatchosPrecacheCommand extends PrecacheCommand {
     // Everything below writes into the cache, so hold its lock for all of it.
     // The framework's `verifyThenRunCommand` released the lock it took before
     // handing over here (PrecacheCommand opts out of the automatic artifact
-    // update), which left two concurrent `precache` runs free to delete and
-    // extract into the same engine directory at the same time.
+    // update), which let two concurrent `precache` runs delete and extract
+    // into the same engine directory at the same time.
     if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
       await globals.cache.lock();
     }
