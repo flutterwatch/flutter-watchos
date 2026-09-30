@@ -24,10 +24,13 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 
 ## 1. Install the CLI
 
+Clone the repository and put its `bin/` on your `PATH`. The `export` line
+lasts for this shell; add it to `~/.zshrc` to make it permanent.
+
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
-export PATH="$PATH:$PWD/bin"     # add to ~/.zshrc to make it permanent
+export PATH="$PATH:$PWD/bin"
 ```
 
 The first run bootstraps everything (downloads the pinned Flutter SDK and
@@ -35,11 +38,14 @@ compiles the tool); later runs start instantly.
 
 ## 2. Sign in and check your setup
 
+`login` connects this machine to your flutterwatch.dev account; skip it if the
+Simulator is all you need for now. `precache` downloads the watchOS engine
+artifacts, and `doctor` verifies Xcode, SDKs, simulators, and engine.
+
 ```sh
-flutter-watchos login    # connects this machine to your flutterwatch.dev account
-                         # (skip it if the Simulator is all you need for now)
-flutter-watchos precache # downloads the watchOS engine artifacts
-flutter-watchos doctor   # verifies Xcode, SDKs, simulators, and engine
+flutter-watchos login
+flutter-watchos precache
+flutter-watchos doctor
 ```
 
 `login` prints a URL and a short code — open the URL, sign in with GitHub, and
@@ -99,18 +105,27 @@ like any Flutter app.
 
 ## 5. Run it
 
+`devices` lists watch simulators and paired watches. `run` on a simulator is
+debug (JIT) with hot reload:
+
 ```sh
-flutter-watchos devices                 # list watch simulators + paired watches
-flutter-watchos run -d <simulator-id>   # debug (JIT) with hot reload
+flutter-watchos devices
+flutter-watchos run -d <simulator-id>
 ```
 
 For a physical watch, build in profile or release mode — debug requires a JIT
 engine, which watchOS devices cannot run (see
-[commands.md](commands.md#build-watchos)):
+[commands.md](commands.md#build-watchos)). Profile is AOT with logging and
+DevTools:
 
 ```sh
-flutter-watchos run -d <watch-id> --profile   # AOT, with logging + DevTools
-flutter-watchos run -d <watch-id> --release   # AOT, fastest
+flutter-watchos run -d <watch-id> --profile
+```
+
+Release is AOT and fastest:
+
+```sh
+flutter-watchos run -d <watch-id> --release
 ```
 
 ## 6. Try hot reload

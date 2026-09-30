@@ -6,14 +6,21 @@ code translator: the output builds and links on a watch immediately, and a
 generated `PORTING_REPORT.md` tells you which of the source plugin's APIs
 exist on watchOS so you know what to implement — and what to leave out.
 
+From pub.dev, port the Apple implementation package of a federated plugin:
+
 ```sh
-# From pub.dev (port the Apple implementation package of a federated plugin):
 flutter-watchos plugin port --from-pub url_launcher_ios
+```
 
-# From a git repository:
+From a git repository:
+
+```sh
 flutter-watchos plugin port --from-git https://github.com/foo/bar.git --ref v2.1.0
+```
 
-# From a local checkout:
+From a local checkout:
+
+```sh
 flutter-watchos plugin port path/to/plugin_ios
 ```
 
@@ -32,7 +39,7 @@ shape directly and analyses the source code for the report instead.
 
 ## What gets generated
 
-```
+```text
 <plugin>_watchos/
 ├── pubspec.yaml                     # ffiPlugin: true, dartPluginClass, ffiSymbols
 ├── lib/<plugin>_watchos.dart        # Dart class + FFI bindings (compiles as-is)

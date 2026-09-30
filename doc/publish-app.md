@@ -1,13 +1,15 @@
 # Publish an app
 
 A standalone (watch-only) app ships to the App Store with the same commands
-you already use, plus Xcode's Archive/Organizer for the final signing step:
+you already use, plus Xcode's Archive/Organizer for the final signing step.
+First make a release build of the watch app:
 
 ```sh
-flutter-watchos build watchos --release   # release build of the watch app
-# then in Xcode: open watchos/Runner.xcodeproj →
-#   Product → Archive → Distribute App → App Store Connect
+flutter-watchos build watchos --release
 ```
+
+Then, in Xcode, open `watchos/Runner.xcodeproj` and choose Product → Archive
+→ Distribute App → App Store Connect.
 
 The version comes from `pubspec.yaml` (`version: 1.2.0+3` → `1.2.0` /
 build `3`), so a release is: bump the pubspec, `build watchos --release`,
@@ -74,9 +76,16 @@ rather script it, export an `.ipa` from the Organizer (or `xcodebuild
 
 ## Test before you ship
 
+Run a release build on a real watch:
+
 ```sh
-flutter-watchos run -d <watch-id> --release   # release build on a real watch
-flutter-watchos upload --validate-only        # App Store checks, no upload
+flutter-watchos run -d <watch-id> --release
+```
+
+Then run the App Store checks without uploading:
+
+```sh
+flutter-watchos upload --validate-only
 ```
 
 ## Companion apps (iOS app + watch app)

@@ -25,8 +25,10 @@ GitHub, confirm the code — the CLI detects the approval and stores an API
 token in `~/.flutter-watchos/credentials.json` (file mode `600`). One login
 per machine; tokens don't expire on a timer.
 
+To sign this machine out:
+
 ```sh
-flutter-watchos logout   # revokes this machine's sign-in, then removes it
+flutter-watchos logout
 ```
 
 `logout` asks the service to revoke the token before it deletes the file. If

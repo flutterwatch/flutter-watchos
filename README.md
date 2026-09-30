@@ -16,12 +16,14 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 ## Installation
 
+Clone the repository and put its `bin/` on your `PATH`. `login` connects your flutterwatch.dev account, which the Simulator does not need. `precache` downloads the watchOS engine, and `doctor` checks the setup.
+
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
 export PATH="$PATH:$PWD/bin"
-flutter-watchos login      # your flutterwatch.dev account — optional for the Simulator
-flutter-watchos precache   # download the watchOS engine
+flutter-watchos login
+flutter-watchos precache
 flutter-watchos doctor
 ```
 
@@ -31,19 +33,29 @@ See [Getting started](doc/get-started.md) for the full setup guide.
 
 `flutter-watchos` substitutes the original [`flutter`](https://docs.flutter.dev/reference/flutter-cli) CLI command.
 
+Check the installed tooling and list all connected devices:
+
 ```sh
-# Check the installed tooling and list all connected devices.
 flutter-watchos doctor -v
 flutter-watchos devices
+```
 
-# Create a new app project.
+Create a new app project:
+
+```sh
 flutter-watchos create my_watch_app --platforms=watchos
 cd my_watch_app
+```
 
-# Build and run on a watchOS Simulator (debug — hot reload + DevTools).
+Build and run on a watchOS Simulator (debug, with hot reload and DevTools):
+
+```sh
 flutter-watchos run -d <simulator_id>
+```
 
-# Build and run on a paired Apple Watch (AOT — profile has logging + DevTools).
+Build and run on a paired Apple Watch (AOT; profile has logging and DevTools):
+
+```sh
 flutter-watchos run -d <watch_id> --profile
 flutter-watchos run -d <watch_id> --release
 ```
@@ -167,8 +179,9 @@ Each frame reaches the screen as an image the engine hands to SwiftUI. An **expe
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
+To run the tests:
+
 ```sh
-# Run tests
 flutter/bin/dart test test/general
 ```
 

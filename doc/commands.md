@@ -35,13 +35,17 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Build the watch app bundle (`Runner.app`).
 
-  ```sh
-  # Simulator — always a debug (JIT) build; the default mode is lowered
-  # automatically (an explicit --release/--profile with --simulator errors,
-  # because there is no AOT Simulator engine)
-  flutter-watchos build watchos --simulator
+  For the Simulator it is always a debug (JIT) build. The default mode is
+  lowered automatically, and an explicit `--release` or `--profile` with
+  `--simulator` is an error, because there is no AOT Simulator engine:
 
-  # Physical watch, AOT
+  ```sh
+  flutter-watchos build watchos --simulator
+  ```
+
+  For a physical watch, build AOT:
+
+  ```sh
   flutter-watchos build watchos --profile
   flutter-watchos build watchos --release
   ```
@@ -68,11 +72,16 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Create a new Flutter project with a watchOS runner.
 
-  ```sh
-  # New app
-  flutter-watchos create my_app --platforms=watchos
+  A new app:
 
-  # Add watchOS to an existing Flutter project (run in the project dir)
+  ```sh
+  flutter-watchos create my_app --platforms=watchos
+  ```
+
+  To add watchOS to an existing Flutter project, run this in the project
+  directory:
+
+  ```sh
   flutter-watchos create . --platforms=watchos
   ```
 
@@ -140,8 +149,10 @@ where possible; watchOS-specific behaviour is called out per command.
     it: the iOS Runner gets an "Embed Prebuilt watchOS App" build phase and
     the watch Info.plist declares `WKCompanionAppBundleIdentifier`.
 
+  `host` reports the mode and reconciles the wiring:
+
   ```sh
-  flutter-watchos host    # report the mode + reconcile the wiring
+  flutter-watchos host
   ```
 
   There is nothing to configure: add an iOS app (`flutter create
@@ -159,9 +170,21 @@ where possible; watchOS-specific behaviour is called out per command.
   Show or change whether release builds are registered with your
   flutterwatch.dev account (what fills "My apps" in the console).
 
+  On its own, the command shows the current state and what is sent:
+
   ```sh
-  flutter-watchos build-registry            # show the current state, and what is sent
-  flutter-watchos build-registry --disable  # never register builds from this machine
+  flutter-watchos build-registry
+  ```
+
+  `--disable` stops registering builds from this machine:
+
+  ```sh
+  flutter-watchos build-registry --disable
+  ```
+
+  `--enable` turns it back on:
+
+  ```sh
   flutter-watchos build-registry --enable
   ```
 
@@ -215,9 +238,16 @@ where possible; watchOS-specific behaviour is called out per command.
   Build, install, and launch. On a simulator this is the full debug
   experience: hot reload (`r`), hot restart (`R`), DevTools.
 
+  On a simulator, debug with hot reload:
+
   ```sh
-  flutter-watchos run -d <simulator-id>            # debug + hot reload
-  flutter-watchos run -d <watch-id> --profile      # AOT on a physical watch
+  flutter-watchos run -d <simulator-id>
+  ```
+
+  On a physical watch, AOT:
+
+  ```sh
+  flutter-watchos run -d <watch-id> --profile
   ```
 
   Mode and target must agree: a physical watch needs `--profile` or
@@ -256,7 +286,12 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos upload --api-key-id ABC123XYZ --api-issuer 12345678-...
-  flutter-watchos upload --validate-only    # App Store checks, no upload
+  ```
+
+  `--validate-only` runs the App Store checks without uploading:
+
+  ```sh
+  flutter-watchos upload --validate-only
   ```
 
   The key id/issuer can also come from `APP_STORE_CONNECT_API_KEY_ID` /

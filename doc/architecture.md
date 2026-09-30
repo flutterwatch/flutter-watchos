@@ -104,7 +104,7 @@ any `lib/` shared with those targets.
 
 ## Repository layout
 
-```
+```text
 flutter-watchos/
 ├── bin/                 # entrypoints + pinned Flutter/engine versions
 ├── lib/                 # the CLI: DI overrides over flutter_tools
