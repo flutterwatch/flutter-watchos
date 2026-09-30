@@ -8,7 +8,6 @@ import 'dart:io' show InternetAddress, InternetAddressType, Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
-import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/dds.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
@@ -505,8 +504,39 @@ class WatchosDevice extends Device {
   @override
   Future<String> get sdkNameAndVersion async => osVersion ?? 'watchOS';
 
+  /// The modes this target can run: debug only on the Simulator, whose
+  /// engine is JIT-only (as stock iOS Simulators), and profile or release on
+  /// a physical watch, which has no JIT engine.
   @override
-  bool supportsRuntimeMode(BuildMode buildMode) => buildMode != BuildMode.jitRelease;
+  bool supportsRuntimeMode(BuildMode buildMode) => isSimulator
+      ? buildMode == BuildMode.debug
+      : buildMode == BuildMode.profile || buildMode == BuildMode.release;
+
+  /// The guidance for a [mode] this target cannot run, or null when it can.
+  ///
+  /// `run`, `drive` and `attach` refuse such a mode before they build;
+  /// [startApp] refuses it too, for the daemon path, which skips their checks.
+  String? unsupportedModeGuidance(BuildMode mode) {
+    if (supportsRuntimeMode(mode)) {
+      return null;
+    }
+    if (!isSimulator) {
+      return 'Debug mode is not supported on a physical Apple Watch: it needs a '
+          'JIT engine, which cannot be built for watchOS (the device SDK '
+          'removes the Mach APIs the Dart JIT VM relies on).\n'
+          'Use one of:\n'
+          '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
+          '  flutter-watchos run -d $id --release   # AOT, fastest\n'
+          'For hot reload and fast iteration, run on the watchOS Simulator, '
+          'where debug (JIT) mode works.';
+    }
+    return '--${mode.cliName} is not supported on the watchOS Simulator: its '
+        'engine is JIT-only, so Simulator runs are always debug. AOT '
+        '(profile/release) runs target a physical watch.\n'
+        'Use one of:\n'
+        '  flutter-watchos run -d $id             # debug, on the Simulator\n'
+        '  flutter-watchos run -d <watch> --${mode.cliName}';
+  }
 
   @override
   Future<bool> isAppInstalled(covariant ApplicationPackage app, {String? userIdentifier}) async =>
@@ -630,41 +660,20 @@ class WatchosDevice extends Device {
     String? userIdentifier,
   }) async {
     // Mode/target contradictions fail here, with guidance, before anything is
-    // built: debug needs the JIT engine, which exists only for the Simulator
-    // (the watchOS device SDK removes the Mach APIs the Dart JIT VM relies
-    // on), and the Simulator engine is JIT-only, so AOT modes need a physical
-    // watch. Without this check the engine lookup fails mid-build with a bare
-    // "libflutter_engine.dylib not found — run precache", which cannot help.
-    // `build watchos` enforces the same rules; `run` must too, because the
-    // daemon (IDE) path skips RunCommand's supportsRuntimeMode check.
+    // built or installed: debug needs the JIT engine, which exists only for
+    // the Simulator (the watchOS device SDK removes the Mach APIs the Dart JIT
+    // VM relies on), and the Simulator engine is JIT-only, so AOT modes need a
+    // physical watch. Without this check the engine lookup fails mid-build
+    // with a bare "libflutter_engine.dylib not found — run precache", which
+    // cannot help. `run`, `drive` and `attach` refuse earlier; this covers the
+    // daemon (IDE) path, which skips their checks, and prebuilt apps too.
     //
-    // The physical-watch refusal covers prebuilt apps too: a prebuilt debug
-    // app cannot run on a watch either, and nothing on the watch could
-    // attach a debugger to it.
-    final BuildMode mode = debuggingOptions.buildInfo.mode;
-    if (!isSimulator && mode == BuildMode.debug) {
-      throwToolExit(
-        'Debug mode is not supported on a physical Apple Watch: it needs a '
-        'JIT engine, which cannot be built for watchOS (the device SDK '
-        'removes the Mach APIs the Dart JIT VM relies on).\n'
-        'Use one of:\n'
-        '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
-        '  flutter-watchos run -d $id --release   # AOT, fastest\n'
-        'For hot reload and fast iteration, run on the watchOS Simulator, '
-        'where debug (JIT) mode works.',
-      );
-    }
-    if (!prebuiltApplication) {
-      if (isSimulator && mode != BuildMode.debug) {
-        throwToolExit(
-          '--${mode.cliName} is not supported on the watchOS Simulator: its '
-          'engine is JIT-only, so Simulator runs are always debug. AOT '
-          '(profile/release) runs target a physical watch.\n'
-          'Use one of:\n'
-          '  flutter-watchos run -d $id             # debug, on the Simulator\n'
-          '  flutter-watchos run -d <watch> --${mode.cliName}',
-        );
-      }
+    // The guidance is printed and the launch fails, rather than a tool exit:
+    // the runners print an exception from startApp with its stack trace.
+    final String? refusal = unsupportedModeGuidance(debuggingOptions.buildInfo.mode);
+    if (refusal != null) {
+      logger.printError(refusal);
+      return LaunchResult.failed();
     }
 
     final FlutterProject project = FlutterProject.current();

@@ -242,7 +242,9 @@ void main() {
       expect(await device.sdkNameAndVersion, equals('watchOS 11.0'));
     });
 
-    testWithoutContext('supports debug/profile/release but not jitRelease', () {
+    // Mirrors stock simulators_test.dart 'simulators only support debug mode':
+    // the Simulator engine is JIT-only.
+    testWithoutContext('a Simulator only supports debug mode', () {
       final device = WatchosDevice(
         'test-id',
         name: 'Apple Watch Series 11 (46mm)',
@@ -251,46 +253,91 @@ void main() {
       );
 
       expect(device.supportsRuntimeMode(BuildMode.debug), isTrue);
-      expect(device.supportsRuntimeMode(BuildMode.profile), isTrue);
-      expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
+      expect(device.supportsRuntimeMode(BuildMode.profile), isFalse);
+      expect(device.supportsRuntimeMode(BuildMode.release), isFalse);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
     });
 
     // There is no device debug engine (the watchOS device SDK removes the
     // Mach APIs the Dart JIT VM needs) and no Simulator AOT engine, so
     // startApp must reject the two impossible mode/target combinations with
-    // guidance — BEFORE building, where the failure would otherwise surface
-    // as a bare "libflutter_engine.dylib not found → run precache".
+    // guidance, before building, where the failure would otherwise surface
+    // as a bare "libflutter_engine.dylib not found → run precache". The
+    // guidance is an error line and a failed launch, not a tool exit: the
+    // runners print an exception from startApp with its stack trace.
     testWithoutContext('startApp rejects debug mode on a physical watch with guidance', () async {
+      final logger = BufferLogger.test();
       final device = WatchosDevice(
         'physical-id',
         name: 'My Watch',
-        logger: BufferLogger.test(),
+        logger: logger,
         isSimulator: false,
       );
 
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug)),
-        throwsToolExit(message: RegExp(r'Debug mode is not supported on a physical Apple Watch[\s\S]*--profile[\s\S]*--release[\s\S]*Simulator')),
+      final LaunchResult result = await device.startApp(
+        null,
+        debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
       );
+
+      expect(result.started, isFalse);
+      expect(
+        logger.errorText,
+        matches(RegExp(r'Debug mode is not supported on a physical Apple Watch[\s\S]*--profile[\s\S]*--release[\s\S]*Simulator')),
+      );
+      expect(logger.errorText, isNot(contains('#0')));
     });
 
     testWithoutContext('startApp rejects AOT modes on the Simulator with guidance', () async {
+      for (final mode in <BuildInfo>[BuildInfo.release, BuildInfo.profile]) {
+        final logger = BufferLogger.test();
+        final device = WatchosDevice(
+          'sim-id',
+          name: 'Apple Watch Series 11 (46mm)',
+          logger: logger,
+          isSimulator: true,
+        );
+
+        final LaunchResult result = await device.startApp(
+          null,
+          debuggingOptions: DebuggingOptions.disabled(mode),
+        );
+
+        expect(result.started, isFalse);
+        expect(
+          logger.errorText,
+          matches(RegExp('--${mode.mode.cliName} is not supported on the watchOS Simulator[\\s\\S]*JIT-only[\\s\\S]*physical watch')),
+        );
+        expect(logger.errorText, isNot(contains('#0')));
+      }
+    });
+
+    testWithoutContext('a prebuilt AOT app is refused on the Simulator too', () async {
+      final logger = BufferLogger.test();
       final device = WatchosDevice(
         'sim-id',
         name: 'Apple Watch Series 11 (46mm)',
-        logger: BufferLogger.test(),
+        logger: logger,
         isSimulator: true,
       );
 
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.release)),
-        throwsToolExit(message: RegExp(r'--release is not supported on the watchOS Simulator[\s\S]*JIT-only[\s\S]*physical watch')),
+      final LaunchResult result = await device.startApp(
+        null,
+        prebuiltApplication: true,
+        debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
       );
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.profile)),
-        throwsToolExit(message: RegExp(r'--profile is not supported on the watchOS Simulator')),
-      );
+
+      expect(result.started, isFalse);
+      expect(logger.errorText, contains('--release is not supported on the watchOS Simulator'));
+    });
+
+    testWithoutContext('unsupportedModeGuidance is null for the modes a target runs', () {
+      final simulator = WatchosDevice('s', name: 'S', logger: BufferLogger.test(), isSimulator: true);
+      final watch = WatchosDevice('w', name: 'W', logger: BufferLogger.test(), isSimulator: false);
+
+      expect(simulator.unsupportedModeGuidance(BuildMode.debug), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.profile), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.release), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.debug), startsWith('Debug mode is not supported'));
     });
   });
 }

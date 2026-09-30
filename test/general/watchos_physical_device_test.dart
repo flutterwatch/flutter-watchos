@@ -132,7 +132,9 @@ void main() {
       );
       expect(await device.isLocalEmulator, isFalse);
       expect(await device.emulatorId, isNull);
+      expect(device.supportsRuntimeMode(BuildMode.profile), isTrue);
       expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
+      expect(device.supportsRuntimeMode(BuildMode.debug), isFalse);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
     });
 
@@ -141,23 +143,22 @@ void main() {
     testUsingContext(
       'startApp refuses a prebuilt debug launch before any process runs',
       () async {
+        final logger = BufferLogger.test();
         final device = WatchosDevice(
           'physical-id',
           name: 'My Watch',
-          logger: BufferLogger.test(),
+          logger: logger,
           isSimulator: false,
         );
 
-        await expectLater(
-          device.startApp(
-            null,
-            prebuiltApplication: true,
-            debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
-          ),
-          throwsToolExit(
-            message: RegExp(r'Debug mode is not supported on a physical Apple Watch'),
-          ),
+        final LaunchResult result = await device.startApp(
+          null,
+          prebuiltApplication: true,
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
         );
+
+        expect(result.started, isFalse);
+        expect(logger.errorText, contains('Debug mode is not supported on a physical Apple Watch'));
         expect(processManager, hasNoRemainingExpectations);
       },
       overrides: <Type, Generator>{
