@@ -8,12 +8,20 @@ import 'dart:io' as io show ProcessSignal;
 
 import 'package:fake_async/fake_async.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/application_package.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_tools/src/drive/drive_service.dart';
+import 'package:flutter_tools/src/resident_runner.dart';
 import 'package:flutter_watchos/watchos_application_package.dart';
 import 'package:flutter_watchos/watchos_device.dart';
+
+import 'package:test/fake.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -66,6 +74,21 @@ class _LogStreamProcess extends FakeProcess {
     return true;
   }
 }
+
+class _Packages extends Fake implements ApplicationPackageFactory {
+  _Packages(this.app);
+
+  final ApplicationPackage app;
+
+  @override
+  Future<ApplicationPackage?> getPackageForPlatform(
+    TargetPlatform platform, {
+    BuildInfo? buildInfo,
+    File? applicationBinary,
+  }) async => app;
+}
+
+class _NoDevtools extends Fake implements DevtoolsLauncher {}
 
 FakeCommand _run(
   List<String> command, {
@@ -127,14 +150,14 @@ void main() {
 
   /// Starts a prebuilt debug launch in fake time; the result lands in the
   /// returned list once the launch returns.
-  List<LaunchResult> start([WatchosDevice? device]) {
+  List<LaunchResult> start([WatchosDevice? device, DebuggingOptions? options]) {
     final results = <LaunchResult>[];
     time.run((_) {
       (device ?? simulator())
           .startApp(
             app(),
             prebuiltApplication: true,
-            debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
+            debuggingOptions: options ?? DebuggingOptions.enabled(BuildInfo.debug),
           )
           .then(results.add);
     });
@@ -238,8 +261,68 @@ void main() {
     },
   );
 
+  // Stock waits for the VM Service line with no limit; a watch Simulator
+  // launch fails after 60 s and says what it saw (spec 0005 criterion 11).
   testUsingContext(
-    'with no VM Service line after 30 s the launch succeeds without a URI',
+    'with no VM Service line after 60 s the launch fails and names what it saw',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        const FakeCommand(
+          command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          stdout: '$_bundleId: 4242\n',
+        ),
+        _run(<String>['ps', '-p', '4242', '-o', 'pid=']),
+      ]);
+
+      final List<LaunchResult> results = start();
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 59));
+      expect(results, isEmpty);
+
+      await _advance(time, const Duration(seconds: 2));
+      expect(results.single.started, isFalse);
+      expect(logger.errorText, contains('no Dart VM Service address within 60 seconds'));
+      expect(logger.errorText, contains('The Simulator log stream was live before the launch'));
+      expect(logger.errorText, contains('the app is still running (pid 4242)'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  testUsingContext(
+    'the failure says when the stream never went live and the app is gone',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        const FakeCommand(
+          command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          stdout: '$_bundleId: 4242\n',
+        ),
+        _run(<String>['ps', '-p', '4242', '-o', 'pid='], exitCode: 1),
+      ]);
+
+      final List<LaunchResult> results = start();
+      await _advance(time, const Duration(seconds: 71));
+
+      expect(results.single.started, isFalse);
+      expect(logger.errorText, contains('never went live, so the address may have been missed'));
+      expect(logger.errorText, contains('the app is no longer running (pid 4242)'));
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  testUsingContext(
+    'with debugging off the launch does not wait for a VM Service',
     () async {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
       processManager.addCommands(<FakeCommand>[
@@ -247,17 +330,83 @@ void main() {
         _run(<String>['xcrun', 'simctl', 'launch', _simId, _bundleId]),
       ]);
 
-      final List<LaunchResult> results = start();
+      final List<LaunchResult> results = start(null, DebuggingOptions.disabled(BuildInfo.debug));
       await _advance(time, Duration.zero);
       time.run((_) => logProcess.emit(_preamble));
-      await _advance(time, const Duration(seconds: 29));
-      expect(results, isEmpty);
+      await _advance(time, Duration.zero);
 
-      await _advance(time, const Duration(seconds: 2));
-      // Today's behaviour: success, with nothing to connect to.
-      expect(results, hasLength(1));
       expect(results.single.started, isTrue);
       expect(results.single.vmServiceUri, isNull);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  // drive tries three launches (stock drive_service.dart). Each one fails
+  // cleanly, so drive ends with its own message, not a null-check error on a
+  // started launch that has no VM Service.
+  testUsingContext(
+    'drive against launches that never print the VM Service fails to start',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      FakeCommand launch() => const FakeCommand(
+        command: <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+        stdout: '$_bundleId: 4242\n',
+      );
+      FakeCommand ps() => _run(<String>['ps', '-p', '4242', '-o', 'pid=']);
+      List<FakeCommand> again() => <FakeCommand>[
+        _run(<String>['xcrun', 'simctl', 'boot', _simId]),
+        _run(<String>['open', '-a', 'Simulator']),
+        _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
+        _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
+        launch(),
+        ps(),
+      ];
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        launch(),
+        ps(),
+        ...again(),
+        ...again(),
+      ]);
+      final driver = FlutterDriverService(
+        applicationPackageFactory: _Packages(app()),
+        logger: logger,
+        platform: FakePlatform(),
+        processUtils: ProcessUtils(processManager: processManager, logger: logger),
+        dartSdkPath: 'dart',
+        devtoolsLauncher: _NoDevtools(),
+      );
+
+      Object? error;
+      time.run((_) {
+        driver
+            .start(
+              BuildInfo.debug,
+              simulator(),
+              DebuggingOptions.enabled(BuildInfo.debug),
+              applicationBinary: fileSystem.file(_appPath),
+            )
+            .then<void>((_) {}, onError: (Object e) => error = e);
+      });
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      for (var i = 0; i < 3; i++) {
+        await _advance(time, const Duration(seconds: 61));
+      }
+
+      expect(
+        error,
+        isA<ToolExit>().having(
+          (ToolExit e) => e.message,
+          'message',
+          contains('Application failed to start'),
+        ),
+      );
+      expect(processManager, hasNoRemainingExpectations);
     },
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,

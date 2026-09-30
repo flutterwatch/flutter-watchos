@@ -845,12 +845,20 @@ class WatchosDevice extends Device {
     // Wait until the log stream is actually live before launching, otherwise the
     // embedder prints the VM-service URI (~40ms after launch) before the stream
     // is listening and protocol discovery times out.
+    var streamWentLive = true;
     await logReader.ready.timeout(
       const Duration(seconds: 10),
       onTimeout: () {
+        streamWentLive = false;
         logger.printTrace('Timed out waiting for simctl log stream to go live; launching anyway.');
       },
     );
+
+    // Listen for the VM Service line before the launch, as stock does, so a
+    // line printed while simctl is still returning is not missed.
+    final ProtocolDiscovery? discovery = debuggingOptions.debuggingEnabled
+        ? ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger)
+        : null;
 
     final RunResult launchResult = await globals.processUtils.run(
       <String>[
@@ -870,14 +878,17 @@ class WatchosDevice extends Device {
       },
     );
     if (launchResult.exitCode != 0) {
+      await discovery?.cancel();
       logger.printError('simctl launch failed: ${launchResult.stderr}');
       return LaunchResult.failed();
     }
-
-    final discovery = ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger);
+    if (discovery == null) {
+      // Nothing to connect to, so nothing to wait for.
+      return LaunchResult.succeeded();
+    }
 
     final Uri? vmServiceUri = await discovery.uri.timeout(
-      const Duration(seconds: 30),
+      simulatorVmServiceTimeout,
       onTimeout: () => null,
     );
     await discovery.cancel();
@@ -887,8 +898,31 @@ class WatchosDevice extends Device {
       return LaunchResult.succeeded(vmServiceUri: vmServiceUri);
     }
 
-    return LaunchResult.succeeded();
+    // A debug launch without a VM Service has nothing for run, drive or
+    // attach to connect to. Fail, and say what was seen, rather than report
+    // a start that callers then trip over.
+    final String? pid = RegExp(r':\s*(\d+)\s*$').firstMatch(launchResult.stdout.trim())?.group(1);
+    bool? running;
+    if (pid != null) {
+      final RunResult ps = await globals.processUtils.run(<String>['ps', '-p', pid, '-o', 'pid=']);
+      running = ps.exitCode == 0;
+    }
+    logger.printError(
+      'The app printed no Dart VM Service address within '
+      '${simulatorVmServiceTimeout.inSeconds} seconds, so there is nothing to connect to. '
+      '${streamWentLive ? 'The Simulator log stream was live before the launch' : 'The Simulator log stream never went live, so the address may have been missed'}; '
+      '${switch (running) {
+        null => 'whether the app is still running is not known',
+        true => 'the app is still running (pid $pid)',
+        false => 'the app is no longer running (pid $pid): it may have crashed at startup',
+      }}. Run with -v to see the log stream.',
+    );
+    return LaunchResult.failed();
   }
+
+  /// How long a debug Simulator launch waits for the app's VM Service line
+  /// before it fails. Stock waits with no limit.
+  static const simulatorVmServiceTimeout = Duration(seconds: 60);
 
   Future<LaunchResult> _startAppOnDevice(
     FlutterProject project,
