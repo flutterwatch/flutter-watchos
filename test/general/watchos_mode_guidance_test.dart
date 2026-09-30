@@ -208,12 +208,30 @@ void main() {
           deviceId: _udid,
         ),
         endsWith(
-          'To start the app on this watch with DevTools:\n'
+          'To start the app on this watch and get a DevTools link to open:\n'
           '  flutter-watchos run -d $_udid --profile\n'
           'For hot reload, attach on the watchOS Simulator, where debug works:\n'
           '  flutter-watchos attach -d <simulator>',
         ),
       );
+    });
+
+    test('attach on a physical watch with no URL: bare lines, same choices', () {
+      final String refusal = watchosAttachWatchRefusal(deviceId: _udid);
+
+      expect(
+        refusal,
+        'attach cannot find an app on a physical Apple Watch by itself.\n'
+        'To start the app on this watch and get a DevTools link to open:\n'
+        '  flutter-watchos run -d $_udid --profile\n'
+        'For hot reload, attach on the watchOS Simulator, where debug works:\n'
+        '  flutter-watchos attach -d <simulator>',
+      );
+      for (final String line in refusal.split('\n').where((String l) => l.startsWith('  '))) {
+        expect(_notBare(line), isNull, reason: line);
+      }
+      expect(forbiddenWordsIn(refusal), isEmpty);
+      expect(watchosAttachWatchRefusal(), contains('  flutter-watchos run -d <watch> --profile\n'));
     });
 
     test('the bare-command check catches what it must', () {

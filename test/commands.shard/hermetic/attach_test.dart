@@ -91,20 +91,34 @@ void main() {
       overrides: overrides(),
     );
 
-    testUsingContext('debug on a physical watch stops in validateCommand', () async {
-      await expectLater(
-        createTestCommandRunner(command).run(<String>['attach', '-d', kWatchId]),
-        throwsToolExit(
-          message: watchosModeRefusal(
-            command: WatchosModeCommand.attach,
-            mode: BuildMode.debug,
-            simulator: false,
-            deviceId: kWatchId,
-          ),
-        ),
+    for (final (List<String> mode, String name) in <(List<String>, String)>[
+      (<String>[], 'debug'),
+      (<String>['--profile'], 'profile'),
+    ]) {
+      testUsingContext(
+        '$name on a physical watch with no URL stops in validateCommand with the guidance',
+        () async {
+          await expectLater(
+            createTestCommandRunner(command).run(<String>['attach', '-d', kWatchId, ...mode]),
+            throwsToolExit(message: watchosAttachWatchRefusal(deviceId: kWatchId)),
+          );
+          expect(command.reachedRunCommand, isFalse);
+        },
+        overrides: overrides(),
       );
-      expect(command.reachedRunCommand, isFalse);
-    }, overrides: overrides());
+    }
+
+    for (final args in <List<String>>[
+      <String>['--debug-url', 'http://127.0.0.1:50001/aBcD1234=/'],
+      <String>['--debug-url', 'http://127.0.0.1:50001/aBcD1234=/', '--profile'],
+      <String>['--debug-port', '50001'],
+    ]) {
+      testUsingContext('a physical watch with ${args.join(' ')} passes the checks', () async {
+        await createTestCommandRunner(command).run(<String>['attach', '-d', kWatchId, ...args]);
+
+        expect(command.reachedRunCommand, isTrue);
+      }, overrides: overrides());
+    }
 
     testUsingContext('debug on the Simulator passes the checks', () async {
       await createTestCommandRunner(command).run(<String>['attach', '-d', kSimulatorId]);

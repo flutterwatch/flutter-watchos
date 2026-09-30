@@ -94,11 +94,7 @@ String _watchRefusal(WatchosModeCommand command, BuildMode mode, String deviceId
     case WatchosModeCommand.build:
       return '$reason\n$_buildChoices';
     case WatchosModeCommand.attach:
-      return '$reason\n'
-          'To start the app on this watch with DevTools:\n'
-          '  flutter-watchos run -d $deviceId --profile\n'
-          'For hot reload, attach on the watchOS Simulator, where debug works:\n'
-          '  flutter-watchos attach -d <simulator>';
+      return '$reason\n${_attachWatchChoices(deviceId)}';
     case WatchosModeCommand.run:
     case WatchosModeCommand.drive:
       final String verb = command.name;
@@ -112,6 +108,22 @@ String _watchRefusal(WatchosModeCommand command, BuildMode mode, String deviceId
           '  flutter-watchos $verb -d <simulator>';
   }
 }
+
+/// What `attach` says for a physical watch when it is given neither
+/// `--debug-url` nor `--debug-port`, in any mode: it cannot find an app on a
+/// watch by itself, so it points to `run --profile`, which prints a DevTools
+/// link, and to `attach` on the Simulator. [deviceId] is the watch's id; the
+/// guidance names it in `-d`.
+String watchosAttachWatchRefusal({String deviceId = '<watch>'}) =>
+    'attach cannot find an app on a physical Apple Watch by itself.\n'
+    '${_attachWatchChoices(deviceId)}';
+
+/// What `attach` offers instead on a physical watch.
+String _attachWatchChoices(String deviceId) =>
+    'To start the app on this watch and get a DevTools link to open:\n'
+    '  flutter-watchos run -d $deviceId --profile\n'
+    'For hot reload, attach on the watchOS Simulator, where debug works:\n'
+    '  flutter-watchos attach -d <simulator>';
 
 /// The command-line flag for [mode]: `--jit-release`, where [BuildMode.cliName]
 /// gives `jit_release`.
