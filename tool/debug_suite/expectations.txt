@@ -66,8 +66,10 @@ logs.markers pass
 vm.profiler_flag pass
 run.start_paused pass
 
+# screenshot -d <sim> (0008 criterion 3). F9, fixed: simctl io takes it.
+screenshot.png pass
+
 # Known limitations
 vm.cpu_samples xfail F1 the CPU profiler records no samples on the Simulator
 machine.app_started xfail F7 run --machine stops at the app start with a logger error
-screenshot.png xfail F9 screenshot of a Simulator is refused or writes an empty file
 drive.integration_test xfail F10 drive warns that the integration_test plugin was not detected

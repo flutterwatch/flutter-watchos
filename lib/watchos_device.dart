@@ -1566,8 +1566,25 @@ class WatchosDevice extends Device {
   @override
   final DevicePortForwarder portForwarder = const NoOpDevicePortForwarder();
 
+  /// A watch Simulator takes screenshots through `simctl io`, as stock iOS
+  /// Simulators do.
   @override
-  bool get supportsScreenshot => false;
+  bool get supportsScreenshot => isSimulator;
+
+  @override
+  Future<void> takeScreenshot(File outputFile) async {
+    final RunResult result = await globals.processUtils.run(<String>[
+      'xcrun',
+      'simctl',
+      'io',
+      id,
+      'screenshot',
+      outputFile.path,
+    ]);
+    if (result.exitCode != 0) {
+      logger.printError('Unable to take screenshot of $id:\n${result.stderr}');
+    }
+  }
 
   @override
   bool isSupportedForProject(FlutterProject flutterProject) {
