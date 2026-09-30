@@ -116,6 +116,58 @@ List<String> resolveAuthenticationArgs(
   ];
 }
 
+/// The `xcodebuild` command line that builds the watch app, `-scheme Runner`,
+/// for [buildInfo]'s configuration, SDK and destination.
+///
+/// [hasWorkspace] picks `-workspace Runner.xcworkspace` over
+/// `-project Runner.xcodeproj`, and [symroot] is where the products go.
+///
+/// The Simulator is arm64-only, so a Simulator build passes `ARCHS=arm64`.
+/// A device build passes no `ARCHS` at all: Xcode's Standard Architectures
+/// then build an `arm64_32` slice next to arm64 while
+/// `WATCHOS_DEPLOYMENT_TARGET` is below 27.0, which the App Store requires at
+/// such a target. The engine is arm64-only, so the template's
+/// `#if arch(arm64_32)` makes that slice a stub that links no engine and shows
+/// a fallback screen on the watches that run it: Series 6–8, SE (2nd
+/// generation) and Ultra (1st generation). Forcing `ARCHS=arm64` here would
+/// strip the slice. From 27.0 Xcode builds arm64 alone.
+///
+/// A device build also passes [signingArgs], `-allowProvisioningUpdates` and
+/// [authenticationArgs] (see [resolveAuthenticationArgs]); a Simulator build
+/// passes none of them.
+List<String> watchosXcodebuildArgs({
+  required WatchosBuildInfo buildInfo,
+  required bool hasWorkspace,
+  required String symroot,
+  List<String> signingArgs = const <String>[],
+  List<String> authenticationArgs = const <String>[],
+}) {
+  final bool simulator = buildInfo.simulator;
+  return <String>[
+    'xcodebuild',
+    if (hasWorkspace) ...<String>['-workspace', 'Runner.xcworkspace'] else ...<String>[
+      '-project',
+      'Runner.xcodeproj',
+    ],
+    '-scheme',
+    'Runner',
+    '-configuration',
+    buildInfo.configuration,
+    '-sdk',
+    buildInfo.sdkName,
+    '-destination',
+    buildInfo.destination,
+    'SYMROOT=$symroot',
+    'COMPILER_INDEX_STORE_ENABLE=NO',
+    if (simulator) 'ARCHS=arm64',
+    if (!simulator) ...signingArgs,
+    if (!simulator) '-allowProvisioningUpdates',
+    // ...and give it something to authenticate *with*.
+    if (!simulator) ...authenticationArgs,
+    'build',
+  ];
+}
+
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
 /// aware plugin registrations, as a proper build target.
 ///
@@ -591,7 +643,6 @@ class NativeWatchosBundle extends Target {
     // 9. Run xcodebuild.
     globals.logger.printTrace('Executing xcodebuild for watchOS (${buildInfo.sdkName})...');
 
-    final String configuration = buildInfo.configuration;
     final String symroot = project.directory.childDirectory('build').childDirectory('watchos').path;
 
     final bool hasWorkspace = watchosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
@@ -604,41 +655,22 @@ class NativeWatchosBundle extends Target {
     final Status xcodeStatus = globals.logger.startProgress('Running Xcode build...');
     ProcessResult result;
     try {
-      result = await globals.processManager.run(<String>[
-        'xcodebuild',
-        if (hasWorkspace) ...<String>['-workspace', 'Runner.xcworkspace'] else ...<String>[
-          '-project',
-          'Runner.xcodeproj',
-        ],
-        '-scheme',
-        'Runner',
-        '-configuration',
-        configuration,
-        '-sdk',
-        buildInfo.sdkName,
-        '-destination',
-        buildInfo.destination,
-        'SYMROOT=$symroot',
-        'COMPILER_INDEX_STORE_ENABLE=NO',
-        // Simulator is arm64-only. For a physical watch we deliberately do NOT
-        // force `ARCHS=arm64`: when WATCHOS_DEPLOYMENT_TARGET < 27.0 the App
-        // Store requires an `arm64_32` slice in the watch executable, and the
-        // project template supplies that slice (a stub, since the engine is
-        // arm64-only, plus a "Requires Apple Watch Series 9 or later" fallback).
-        // Letting the project's Standard Architectures apply preserves the fat
-        // executable; forcing arm64 here would strip the required slice.
-        if (buildInfo.simulator) 'ARCHS=arm64',
-        ...signingArgs,
-        if (!buildInfo.simulator) '-allowProvisioningUpdates',
-        // ...and give it something to authenticate *with*.
-        if (!buildInfo.simulator)
-          ...resolveAuthenticationArgs(
-            globals.platform.environment,
-            globals.fs,
-            globals.logger,
-          ),
-        'build',
-      ], workingDirectory: watchosProjectDir.path);
+      result = await globals.processManager.run(
+        watchosXcodebuildArgs(
+          buildInfo: buildInfo,
+          hasWorkspace: hasWorkspace,
+          symroot: symroot,
+          signingArgs: signingArgs,
+          authenticationArgs: buildInfo.simulator
+              ? const <String>[]
+              : resolveAuthenticationArgs(
+                  globals.platform.environment,
+                  globals.fs,
+                  globals.logger,
+                ),
+        ),
+        workingDirectory: watchosProjectDir.path,
+      );
     } finally {
       xcodeStatus.stop();
     }
