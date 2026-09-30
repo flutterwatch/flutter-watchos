@@ -22,8 +22,21 @@ import 'watchos_device.dart' show WatchosDevice;
 /// `targetPlatformDisplayName` returns `'watchos'`). That makes it impossible
 /// to accidentally rewrite an iPhone or anything else that happens to contain
 /// the substring `(mobile)`.
+///
+/// It also rewrites stock's hint after a usage error, which names `flutter`,
+/// to name `flutter-watchos` ([usageHint]).
 class WatchosCategoryRewritingLogger extends DelegatingLogger {
   WatchosCategoryRewritingLogger(super.delegate);
+
+  /// Stock's hint after a usage error (stock `runner.dart`), which names
+  /// `flutter`.
+  static const String _stockUsageHint =
+      "Run 'flutter -h' (or 'flutter <command> -h') for available flutter commands and options.";
+
+  /// The hint this logger prints after a usage error instead of stock's.
+  static const String usageHint =
+      "Run 'flutter-watchos -h' (or 'flutter-watchos <command> -h') for available "
+      'flutter-watchos commands and options.';
 
   // The third column is left-padded with spaces to align the table. Match
   // any whitespace around the bullet.
@@ -39,6 +52,27 @@ class WatchosCategoryRewritingLogger extends DelegatingLogger {
     // rows that still say `(mobile)`. `(mobile)` is 8 chars; `(watch)` is 7,
     // so 1 space of padding keeps the table square.
     return message.replaceFirst('(mobile)', '(watch) ');
+  }
+
+  @override
+  void printError(
+    String message, {
+    StackTrace? stackTrace,
+    bool? emphasis,
+    TerminalColor? color,
+    int? indent,
+    int? hangingIndent,
+    bool? wrap,
+  }) {
+    super.printError(
+      message == _stockUsageHint ? usageHint : message,
+      stackTrace: stackTrace,
+      emphasis: emphasis,
+      color: color,
+      indent: indent,
+      hangingIndent: hangingIndent,
+      wrap: wrap,
+    );
   }
 
   @override
