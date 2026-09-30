@@ -972,9 +972,9 @@ final class FlutterRunner: ObservableObject {
     /// The engine renders a frame only if it asked for one, so a tick with
     /// nothing pending costs a call and returns. Without this the engine has
     /// no display clock at all on watchOS (`CADisplayLink` is
-    /// `API_UNAVAILABLE`) and falls back to a free-running 60 Hz timer whose
-    /// phase drifts against the panel's — judder even with the frame budget
-    /// half empty.
+    /// `API_UNAVAILABLE`) and falls back to its own 60 Hz timer, whose phase
+    /// drifts against the panel's — judder even with the frame budget half
+    /// empty.
     func notifyVsync() {
         // The crown's position goes out first, so the frame this tick starts
         // already shows it (see CrownProxyModel).
