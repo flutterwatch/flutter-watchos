@@ -294,24 +294,36 @@ enum WatchDisplayCorner {
 /// Which safe area the app wants reported to Dart, from `Info.plist`:
 ///
 ///     <key>FlutterWatchOSSafeArea</key>
-///     <string>corners</string>
+///     <string>platform</string>
 ///
-/// `platform` (the default) reports watchOS's own `safeAreaInsets`. Those keep
+/// `corners` (the default) reports the uniform corner inset: 17pt all round on
+/// Ultra 3, which leaves 73% of the display. It keeps content clear of the
+/// display's rounded corners only. Content may sit under the system clock,
+/// which the system draws over the app, and what goes there is the app's
+/// responsibility; `WatchStatusBar.heightOf` in package:flutter_watchos gives
+/// the height of the clock's band, for content that has to start below it.
+///
+/// `platform`, the opt-in, reports watchOS's own `safeAreaInsets`. Those keep
 /// content clear of the system clock as well as the corners, and they do it by
 /// pushing a full-width rectangle entirely below the corner arc — on Ultra 3,
-/// 56.5pt off the top and 40pt off the bottom, leaving 62% of the display.
+/// 56.5pt off the top and 40pt off the bottom, leaving 61% of the display.
 ///
-/// `corners` reports the uniform corner inset instead: 17pt all round on Ultra
-/// 3, which is 73% of the display. It is a TRADE, not a free win — the usable
-/// area grows by about a fifth while the usable WIDTH shrinks from 207pt to
-/// 177pt, and content may sit under the system clock, which the system draws
-/// over the app. Worth it for a layout that is not a full-width scrolling
-/// list; wrong for one that is.
+/// It is a trade-off. Against `platform`, `corners` grows the usable area by
+/// about a fifth while the usable WIDTH shrinks from 207pt to 177pt. It suits a
+/// layout that is not a full-width scrolling list; a list that must start below
+/// the clock takes its top from `WatchStatusBar.heightOf`, or the app sets
+/// `platform`.
+///
+/// The value is matched in any letter case. Only `platform` selects watchOS's
+/// insets: a missing key, `corners`, a value that is not a string and any other
+/// string all give `corners`, the way `WatchPresentMode` maps a value it does
+/// not know to its default. A watch newer than `WatchDisplayCorner`'s table
+/// keeps watchOS's insets in either mode.
 enum WatchSafeAreaMode {
     static let usesCornerInset: Bool = {
         let value = Bundle.main.object(
             forInfoDictionaryKey: "FlutterWatchOSSafeArea") as? String
-        return value?.lowercased() == "corners"
+        return value?.lowercased() != "platform"
     }()
 }
 
@@ -979,11 +991,12 @@ final class FlutterRunner: ObservableObject {
     func reportSafeArea(_ insets: EdgeInsets) {
         let scale = WatchContentScale.value
 
-        // `corners` mode: report only what the display's curvature costs, and
-        // let content sit under the clock. See WatchSafeAreaMode for the trade
-        // this makes, and WatchDisplayCorner for the geometry. A model this
-        // build has no radius for keeps watchOS's own insets — guessing one
-        // would clip content, which is the failure this whole path prevents.
+        // `corners` mode, the default: report only what the display's
+        // curvature costs, and let content sit under the clock. See
+        // WatchSafeAreaMode for the trade-off this makes, and
+        // WatchDisplayCorner for the geometry. A model this build has no radius
+        // for keeps watchOS's own insets — guessing one would clip content,
+        // which is the failure this whole path prevents.
         if WatchSafeAreaMode.usesCornerInset, let inset = WatchDisplayCorner.uniformInset {
             let d = inset / scale
             FlutterWatchOSHostSetSafeAreaInsets(d, d, d, d)

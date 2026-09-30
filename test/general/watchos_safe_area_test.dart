@@ -147,9 +147,32 @@ void main() {
       expect(mode, contains('.lowercased()'));
     });
 
-    test('selects the corner inset only for corners, in any letter case', () {
-      // No key, `platform` and every other value report watchOS's own insets.
-      expect(mode, contains('return value?.lowercased() == "corners"'));
+    test('selects the corner inset unless the key is platform, in any letter case', () {
+      // `corners` is the default: a missing key (nil), a value that is not a
+      // string (nil after `as? String`), `corners` and any other string all
+      // report the corner inset. Only `platform`, in any letter case, reports
+      // watchOS's own insets.
+      expect(mode, contains('return value?.lowercased() != "platform"'));
+      expect(mode, isNot(contains('"corners"')));
+    });
+
+    test('is documented with corners as the default and platform as the opt-in', () {
+      final String doc = _docCommentAbove(
+        readHostSource('FlutterRunner.swift'),
+        'enum WatchSafeAreaMode',
+      );
+      expect(doc, contains('`corners` (the default)'));
+      expect(doc, contains('`platform`, the opt-in,'));
+      expect(doc, contains('<string>platform</string>'));
+      // The seven words that public text must not contain, each with one
+      // letter in a character class, so that this file, which the same word
+      // scan reads, does not contain them either. The first may not appear
+      // in any form; the others not as a word, or as a word plus "s".
+      final forbidden = RegExp(
+        r'f[r]ee|(^|[^A-Za-z])(b[e]ta|p[a]id|pr[i]cing|pr[i]ce|tr[i]al|pr[e]view)s?([^A-Za-z]|$)',
+        caseSensitive: false,
+      );
+      expect(forbidden.firstMatch(doc)?.group(0), isNull);
     });
 
     test('is left unset by the app template, so a new app gets the default', () {
@@ -201,6 +224,21 @@ Map<String, double> _readCornerFixture() {
     for (final MapEntry<String, Object?> entry in (decoded! as Map<String, Object?>).entries)
       entry.key: (entry.value! as num).toDouble(),
   };
+}
+
+/// The `///` comment lines directly above the first line that starts with
+/// [declaration], without their `///` prefix.
+String _docCommentAbove(String source, String declaration) {
+  final List<String> lines = source.split('\n');
+  final int at = lines.indexWhere((String line) => line.startsWith(declaration));
+  if (at < 0) {
+    throw StateError('$declaration not found');
+  }
+  var first = at;
+  while (first > 0 && lines[first - 1].trimLeft().startsWith('///')) {
+    first--;
+  }
+  return lines.sublist(first, at).map((String line) => line.trimLeft().substring(3)).join('\n');
 }
 
 /// Replaces every `//` comment with spaces, so offsets stay those of the
