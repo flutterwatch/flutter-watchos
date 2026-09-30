@@ -37,14 +37,30 @@ String? watchosCreateTemplateError(String templateType) {
       'For plugins that target other platforms, use stock `flutter create`.';
 }
 
+// The two guides a companion app's watch layout needs, by absolute URL, as the
+// build-registry notice gives its doc: a repository path does not open from a
+// terminal.
+const String _companionAppsDocUrl =
+    'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/companion-apps.md';
+const String _layoutDocUrl =
+    'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md';
+
 /// How to run the watch app `create` just made, printed last.
 ///
 /// Stock `flutter create` ends with "\$ flutter run", which runs the other
 /// platforms' apps (or is not installed at all, when flutter-watchos is the
 /// only Flutter on the machine). [afterStockCreate] says that instruction has
 /// just been printed above, and is not the one for the watch.
+///
+/// After stock `create` the watch runs the phone's `lib/main.dart`, a layout
+/// made for a larger screen, so the steps end with one line that points to
+/// the two docs on laying it out for the watch.
 String watchosCreateNextSteps(String relativeProjectPath, {required bool afterStockCreate}) {
   final cd = relativeProjectPath == '.' ? '' : '  \$ cd $relativeProjectPath\n';
+  final layoutAdvice = afterStockCreate
+      ? '\n\nThe watch app runs the same lib/main.dart as the phone app. To lay it '
+            'out for the watch, read $_companionAppsDocUrl and $_layoutDocUrl'
+      : '';
   return '\n'
       '${afterStockCreate ? 'The `flutter run` above runs the app on the other platforms. ' : ''}'
       'To run the watch app on the watchOS Simulator, type:\n'
@@ -53,7 +69,8 @@ String watchosCreateNextSteps(String relativeProjectPath, {required bool afterSt
       '  \$ flutter-watchos run\n'
       '\n'
       'To pick a simulator or a watch, list them with `flutter-watchos devices` '
-      'and pass -d <id>.';
+      'and pass -d <id>.'
+      '$layoutAdvice';
 }
 
 class WatchosCreateCommand extends CreateCommand {

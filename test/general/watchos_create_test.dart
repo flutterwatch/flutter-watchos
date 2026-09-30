@@ -55,5 +55,34 @@ void main() {
     testWithoutContext('no cd when the project is the current directory', () {
       expect(watchosCreateNextSteps('.', afterStockCreate: false), isNot(contains(r'$ cd')));
     });
+
+    // After stock create the watch runs the phone's lib/main.dart, so one line
+    // points to the two layout docs.
+    const companionAppsDoc =
+        'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/companion-apps.md';
+    const layoutDoc = 'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md';
+
+    testWithoutContext('after stock create, one line links the two layout docs', () {
+      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: true);
+      final List<String> adviceLines = steps
+          .split('\n')
+          .where((String line) => line.contains('doc/'))
+          .toList();
+      expect(adviceLines, hasLength(1));
+      expect(adviceLines.single, contains('lib/main.dart'));
+      expect(adviceLines.single, contains(companionAppsDoc));
+      expect(adviceLines.single, contains(layoutDoc));
+      // Every doc/ path is part of an absolute URL.
+      expect(
+        steps.replaceAll(companionAppsDoc, '').replaceAll(layoutDoc, ''),
+        isNot(contains('doc/')),
+      );
+    });
+
+    testWithoutContext('a watch-only create gets no layout advice', () {
+      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: false);
+      expect(steps, isNot(contains('doc/')));
+      expect(steps, isNot(contains('lib/main.dart')));
+    });
   });
 }
