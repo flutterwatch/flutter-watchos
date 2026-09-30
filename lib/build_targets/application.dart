@@ -9,6 +9,7 @@ import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Logger, Status;
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/depfile.dart';
@@ -23,6 +24,7 @@ import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -166,6 +168,22 @@ List<String> watchosXcodebuildArgs({
     if (!simulator) ...authenticationArgs,
     'build',
   ];
+}
+
+/// Stops the build when [xcode]'s cached version is known and older than
+/// [kWatchosXcodeRequiredVersion], before anything native is compiled, as
+/// stock `_checkXcodeVersion` does, with the message `doctor` gives.
+///
+/// Unlike stock, an unknown version (no Xcode, or `xcodebuild -version`
+/// output that does not parse) goes on: the stop must fire only on a positive
+/// finding, so a parse gap on a future Xcode cannot block a build that works.
+/// A Mac without Xcode fails at its first SDK lookup anyway, and `doctor`
+/// reports it.
+void checkWatchosXcodeVersion(Xcode? xcode) {
+  final Version? version = xcode?.currentVersion;
+  if (version != null && version < kWatchosXcodeRequiredVersion) {
+    throwToolExit(watchosXcodeTooOldMessage(version));
+  }
 }
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with watchOS-
@@ -565,6 +583,9 @@ class NativeWatchosBundle extends Target {
 
   @override
   Future<void> build(Environment environment) async {
+    // Before anything below runs clang, swiftc or xcodebuild.
+    checkWatchosXcodeVersion(globals.xcode);
+
     final FlutterProject project = FlutterProject.current();
     final Directory watchosProjectDir = project.directory.childDirectory('watchos');
 

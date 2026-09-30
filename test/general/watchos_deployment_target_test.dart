@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// The watchOS deployment target (spec 0002, criteria 6b, 11, 16 and 17): the
-// named supported minimum and template default, the template and example
-// project literals they must match, the MinimumOSVersion stamped into the
-// staged frameworks, the project's own target as Xcode resolves it per
-// configuration, and the `-target` of every compile the CLI runs itself.
+// The watchOS deployment target (spec 0002, criteria 6b, 11, 14, 16 and 17):
+// the named supported minimum, template default and required Xcode, the
+// template and example project literals they must match, the MinimumOSVersion
+// stamped into the staged frameworks, the project's own target as Xcode
+// resolves it per configuration, the `-target` of every compile the CLI runs
+// itself, and the build's stop on an Xcode older than the required one.
 
 import 'dart:convert';
 import 'dart:io' as io;
@@ -20,6 +21,8 @@ import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/ios/xcodeproj.dart';
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_watchos/build_targets/application.dart';
 import 'package:flutter_watchos/build_targets/watchos_host_module.dart';
@@ -1049,5 +1052,88 @@ flutter:
         ),
       },
     );
+  });
+
+  // Spec 0002, criterion 14: a known Xcode older than 26.0 stops the build
+  // before anything native is compiled; 26.0 or later, or an unknown version,
+  // goes on.
+  group('the build on an old Xcode', () {
+    Xcode xcode(Version? version) => Xcode.test(
+      processManager: FakeProcessManager.any(),
+      xcodeProjectInterpreter: XcodeProjectInterpreter.test(
+        processManager: FakeProcessManager.any(),
+        version: version,
+      ),
+    );
+
+    testWithoutContext('Xcode 16.4 stops, naming both versions', () {
+      expect(
+        () => checkWatchosXcodeVersion(xcode(const Version.withText(16, 4, 0, '16.4'))),
+        throwsToolExit(message: 'requires Xcode 26.0 or later; found Xcode 16.4.'),
+      );
+    });
+
+    testWithoutContext('26.0 and later, an unknown version and no Xcode go on', () {
+      for (final version in <Version?>[
+        const Version.withText(26, 0, 0, '26.0'),
+        const Version.withText(26, 0, 1, '26.0.1'),
+        const Version.withText(27, 0, 0, '27.0'),
+        null,
+      ]) {
+        checkWatchosXcodeVersion(xcode(version));
+      }
+      checkWatchosXcodeVersion(null);
+    });
+
+    late MemoryFileSystem fileSystem;
+    late FakeProcessManager processManager;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      processManager = FakeProcessManager.empty();
+    });
+
+    Future<void> build() => NativeWatchosBundle(_deviceRelease, 'lib/main.dart').build(
+      Environment.test(
+        fileSystem.currentDirectory,
+        fileSystem: fileSystem,
+        logger: BufferLogger.test(),
+        artifacts: Artifacts.test(),
+        processManager: processManager,
+      ),
+    );
+
+    // The stop comes first: no watchos/ directory here, so a build that went
+    // on would stop on that instead, and FakeProcessManager.empty() fails any
+    // process it is asked to run.
+    testUsingContext(
+      'build watchos stops on Xcode 16.4 before running any process',
+      () async {
+        await expectLater(
+          build(),
+          throwsToolExit(message: 'requires Xcode 26.0 or later; found Xcode 16.4.'),
+        );
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Xcode: () => xcode(const Version.withText(16, 4, 0, '16.4')),
+      },
+    );
+
+    for (final version in <Version?>[const Version.withText(26, 0, 0, '26.0'), null]) {
+      testUsingContext(
+        'build watchos goes on with ${version == null ? 'an unknown Xcode' : 'Xcode $version'}',
+        () async {
+          await expectLater(build(), throwsToolExit(message: 'Missing watchOS project directory'));
+        },
+        overrides: <Type, Generator>{
+          FileSystem: () => fileSystem,
+          ProcessManager: () => processManager,
+          Xcode: () => xcode(version),
+        },
+      );
+    }
   });
 }

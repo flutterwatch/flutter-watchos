@@ -31,10 +31,23 @@ const Version kWatchosTemplateDeploymentTarget = Version.withText(26, 0, 0, '26.
 ///
 /// App Store Connect takes watchOS apps built with the watchOS 26 SDK or
 /// later, which comes with Xcode 26. `doctor` reports an older Xcode as an
-/// error, like stock `xcodeRequiredVersion`. Xcode 26.0 itself is not on
-/// offer anywhere for a test; the lowest 26.x tested is recorded with spec
-/// 0002's criterion 13.
+/// error, and a build stops on one before it compiles anything native, like
+/// stock `xcodeRequiredVersion`. Xcode 26.0 itself is not on offer anywhere
+/// for a test; the lowest 26.x tested is recorded with spec 0002's
+/// criterion 13.
 const Version kWatchosXcodeRequiredVersion = Version.withText(26, 0, 0, '26.0');
+
+/// How `doctor` and the build name an Xcode [version]: `Xcode 26.0`, or
+/// `Xcode 26.0.1` when it has a patch number.
+String watchosXcodeName(Version version) =>
+    'Xcode ${version.major}.${version.minor}${version.patch == 0 ? '' : '.${version.patch}'}';
+
+/// What `doctor` and the build say about an Xcode [found] older than
+/// [kWatchosXcodeRequiredVersion].
+String watchosXcodeTooOldMessage(Version found) =>
+    'flutter-watchos requires Xcode $kWatchosXcodeRequiredVersion or later; found '
+    '${watchosXcodeName(found)}.\n'
+    'Download the latest version or update via the Mac App Store.';
 
 /// The clang and swiftc `-target` triple for [arch] on watchOS [osVersion],
 /// with the `-simulator` suffix when [simulator] is true: for example

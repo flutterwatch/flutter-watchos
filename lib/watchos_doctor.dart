@@ -194,8 +194,8 @@ class WatchosValidator extends DoctorValidator {
   /// when it is older than [kWatchosXcodeRequiredVersion].
   ///
   /// The version is stock's cached `xcodebuild -version`
-  /// ([Xcode.currentVersion]). An Xcode whose version does not parse is
-  /// reported without a verdict.
+  /// ([Xcode.currentVersion]), the one the build stop reads too. An Xcode
+  /// whose version does not parse is reported without a verdict.
   bool _checkXcode(List<ValidationMessage> messages) {
     final Xcode? xcode = _xcode ?? globals.xcode;
     final String? versionText = xcode?.versionText;
@@ -203,18 +203,13 @@ class WatchosValidator extends DoctorValidator {
       final Version? version = xcode.currentVersion;
       final String name = version == null
           ? versionText.split(',').first.trim()
-          : 'Xcode ${version.major}.${version.minor}${version.patch == 0 ? '' : '.${version.patch}'}';
+          : watchosXcodeName(version);
       final String? build = xcode.buildVersion;
       messages.add(
         ValidationMessage('Xcode installed ($name${build == null ? '' : ', build $build'})'),
       );
       if (version != null && version < kWatchosXcodeRequiredVersion) {
-        messages.add(
-          ValidationMessage.error(
-            'flutter-watchos requires Xcode $kWatchosXcodeRequiredVersion or later; found $name.\n'
-            'Download the latest version or update via the Mac App Store.',
-          ),
-        );
+        messages.add(ValidationMessage.error(watchosXcodeTooOldMessage(version)));
       }
       return true;
     }
