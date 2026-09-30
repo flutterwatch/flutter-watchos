@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// The watchOS deployment target in one place (spec 0002, criteria 11 and 17):
-// the named supported minimum and template default, the template and example
+// The watchOS deployment target (spec 0002, criteria 6b, 11, 16 and 17): the
+// named supported minimum and template default, the template and example
 // project literals they must match, the MinimumOSVersion stamped into the
-// staged frameworks, and the `-target` of every compile the CLI runs itself.
+// staged frameworks, the project's own target as Xcode resolves it per
+// configuration, and the `-target` of every compile the CLI runs itself.
 
 import 'dart:convert';
 import 'dart:io' as io;
@@ -33,6 +34,7 @@ import '../src/host_sources.dart';
 
 const _simulatorDebug = WatchosBuildInfo(BuildInfo.debug, targetArch: 'arm64', simulator: true);
 const _deviceDebug = WatchosBuildInfo(BuildInfo.debug, targetArch: 'arm64');
+const _deviceProfile = WatchosBuildInfo(BuildInfo.profile, targetArch: 'arm64');
 const _deviceRelease = WatchosBuildInfo(BuildInfo.release, targetArch: 'arm64');
 
 /// The `buildSettings` block of each build configuration of the native target
@@ -70,6 +72,82 @@ class _FakeWatchosArtifacts extends WatchosArtifacts {
   String getGenSnapshotPath(BuildMode mode) => '/engine/gen_snapshot';
 }
 
+// Object ids of the build configurations in the template's project.pbxproj.
+const _projectDebug = 'BB0000000000000000000001';
+const _runnerDebug = 'BB0000000000000000000002';
+const _projectRelease = 'BB0000000000000000000003';
+const _runnerRelease = 'BB0000000000000000000004';
+const _hostAppDebug = 'CC0000000000000000000001';
+const _hostAppRelease = 'CC0000000000000000000002';
+
+/// The template's project.pbxproj as `create` renders it.
+String _renderedTemplatePbxproj() =>
+    io.File(cliRootPath('templates/app/swift/watchos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl'))
+        .readAsStringSync()
+        .replaceAll('{{projectName}}', 'app')
+        .replaceAll('{{watchosDevelopmentTeam}}', '')
+        .replaceAll('{{watchosIdentifier}}', 'com.example.app');
+
+/// The range of configuration [id]'s `buildSettings` entries in [pbxproj].
+(int, int) _settingsRange(String pbxproj, String id) {
+  final int block = pbxproj.indexOf('\t\t$id /* ');
+  expect(block, isNonNegative, reason: 'no configuration $id');
+  final int start = pbxproj.indexOf('buildSettings = {\n', block) + 'buildSettings = {\n'.length;
+  return (start, pbxproj.indexOf('\n\t\t\t};', start) + 1);
+}
+
+/// [pbxproj] with the `WATCHOS_DEPLOYMENT_TARGET` of configuration [id] set
+/// to [value] exactly as written, or removed when [value] is null.
+String _withTarget(String pbxproj, String id, String? value) {
+  final (int start, int end) = _settingsRange(pbxproj, id);
+  final String settings = pbxproj
+      .substring(start, end)
+      .split('\n')
+      .where((String line) => !line.contains('WATCHOS_DEPLOYMENT_TARGET'))
+      .join('\n');
+  return pbxproj.replaceRange(
+    start,
+    end,
+    '${value == null ? '' : '\t\t\t\tWATCHOS_DEPLOYMENT_TARGET = $value;\n'}$settings',
+  );
+}
+
+/// [pbxproj] with configuration [id] based on the xcconfig [path], a new file
+/// reference [fileRef] in the `Runner` group (or at the project root with
+/// [sourceRoot]).
+String _withBaseConfiguration(
+  String pbxproj,
+  String id,
+  String fileRef,
+  String path, {
+  bool sourceRoot = false,
+}) {
+  final int block = pbxproj.indexOf('\t\t$id /* ');
+  final int isa =
+      pbxproj.indexOf('isa = XCBuildConfiguration;\n', block) +
+      'isa = XCBuildConfiguration;\n'.length;
+  final int settings = pbxproj.indexOf('buildSettings = {', isa);
+  String result = pbxproj.replaceRange(
+    isa,
+    settings,
+    '\t\t\tbaseConfigurationReference = $fileRef /* $path */;\n\t\t\t',
+  );
+  result = result.replaceFirst(
+    '/* End PBXFileReference section */',
+    '\t\t$fileRef /* $path */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; '
+        'path = $path; sourceTree = ${sourceRoot ? 'SOURCE_ROOT' : '"<group>"'}; };\n'
+        '/* End PBXFileReference section */',
+  );
+  if (!sourceRoot) {
+    result = result.replaceFirst(
+      'AE0000000000000000000002 /* Runner */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n',
+      'AE0000000000000000000002 /* Runner */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n'
+          '\t\t\t\t$fileRef /* $path */,\n',
+    );
+  }
+  return result;
+}
+
 void main() {
   group('named values', () {
     testWithoutContext('the supported minimum is watchOS 26.0', () {
@@ -98,10 +176,13 @@ void main() {
       );
     });
 
-    testWithoutContext('the project parse falls back to the supported minimum', () {
+    testWithoutContext('the project lookup falls back to the supported minimum', () {
       final fileSystem = MemoryFileSystem.test();
       expect(
-        parseWatchosDeploymentTarget(fileSystem.file('/missing/project.pbxproj')),
+        resolveWatchosDeploymentTarget(
+          watchosProjectDir: fileSystem.directory('/missing/watchos'),
+          configuration: 'Release',
+        ),
         kWatchosSupportedMinimum.toString(),
       );
     });
@@ -324,9 +405,10 @@ void main() {
       processManager = FakeProcessManager.empty();
     });
 
-    /// An app at [deploymentTarget] with one watchOS plugin that ships a C
-    /// source and a SwiftUI view source.
-    FlutterProject appWithPlugin(String deploymentTarget) {
+    /// An app whose watch target builds Debug at [debug] and Release at
+    /// [release], with one watchOS plugin that ships a C source and a SwiftUI
+    /// view source.
+    FlutterProject appWithPlugin(String debug, String release) {
       final Directory app = fileSystem.directory('/app')..createSync();
       app.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
       app.childFile('.dart_tool/package_config.json')
@@ -350,7 +432,13 @@ void main() {
           );
       app.childFile('watchos/Runner.xcodeproj/project.pbxproj')
         ..createSync(recursive: true)
-        ..writeAsStringSync('WATCHOS_DEPLOYMENT_TARGET = $deploymentTarget;\n');
+        ..writeAsStringSync(
+          _withTarget(
+            _withTarget(_renderedTemplatePbxproj(), _runnerDebug, debug),
+            _runnerRelease,
+            release,
+          ),
+        );
 
       final Directory plugin = fileSystem.directory('/pub/gadget')..createSync(recursive: true);
       plugin.childFile('pubspec.yaml').writeAsStringSync('''
@@ -373,17 +461,20 @@ flutter:
       return FlutterProject.fromDirectory(app);
     }
 
-    for (final (String deploymentTarget, WatchosBuildInfo buildInfo, String triple)
-        in <(String, WatchosBuildInfo, String)>[
-          ('26.0', _simulatorDebug, 'arm64-apple-watchos26.0-simulator'),
-          ('26.0', _deviceRelease, 'arm64-apple-watchos26.0'),
-          ('27.0', _simulatorDebug, 'arm64-apple-watchos27.0-simulator'),
-          ('27.0', _deviceRelease, 'arm64-apple-watchos27.0'),
+    for (final (String debug, String release, WatchosBuildInfo buildInfo, String triple)
+        in <(String, String, WatchosBuildInfo, String)>[
+          ('26.0', '26.0', _simulatorDebug, 'arm64-apple-watchos26.0-simulator'),
+          ('26.0', '26.0', _deviceRelease, 'arm64-apple-watchos26.0'),
+          ('27.0', '27.0', _simulatorDebug, 'arm64-apple-watchos27.0-simulator'),
+          ('27.0', '27.0', _deviceRelease, 'arm64-apple-watchos27.0'),
+          ('26.0', '27.0', _simulatorDebug, 'arm64-apple-watchos26.0-simulator'),
+          ('26.0', '27.0', _deviceProfile, 'arm64-apple-watchos27.0'),
         ]) {
       testUsingContext(
-        'at $deploymentTarget, ${buildInfo.sdkName}: $triple',
+        'Debug $debug, Release $release, ${buildInfo.buildInfo.mode.cliName} '
+        '${buildInfo.sdkName}: $triple',
         () async {
-          final FlutterProject project = appWithPlugin(deploymentTarget);
+          final FlutterProject project = appWithPlugin(debug, release);
           processManager.addCommands(<FakeCommand>[
             FakeCommand(
               command: <Pattern>[
@@ -445,8 +536,513 @@ flutter:
         overrides: <Type, Generator>{
           FileSystem: () => fileSystem,
           ProcessManager: () => processManager,
+          Platform: () => FakePlatform(environment: <String, String>{}),
         },
       );
     }
+  });
+
+  // Spec 0002, criterion 16: the target Xcode builds App.swift with, per
+  // configuration, in Xcode's order. The fixtures start from the template as
+  // `create` renders it, plus the xcconfigs a build leaves behind.
+  group('resolveWatchosDeploymentTarget', () {
+    late MemoryFileSystem fileSystem;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+    });
+
+    void writeFile(String path, String contents) {
+      fileSystem.file(path)
+        ..createSync(recursive: true)
+        ..writeAsStringSync(contents);
+    }
+
+    /// Writes [pbxproj] and, unless [cliXcconfigs] is false, the three
+    /// xcconfigs the CLI writes on every build.
+    void writeProject(String pbxproj, {bool cliXcconfigs = true}) {
+      writeFile('/app/watchos/Runner.xcodeproj/project.pbxproj', pbxproj);
+      if (cliXcconfigs) {
+        for (final (String name, String pods) in <(String, String)>[
+          ('Debug', 'debug'),
+          ('Release', 'release'),
+        ]) {
+          writeFile(
+            '/app/watchos/Flutter/$name.xcconfig',
+            '#include "Generated.xcconfig"\n'
+                '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.$pods.xcconfig"\n',
+          );
+        }
+        writeFile('/app/watchos/Flutter/Generated.xcconfig', 'FLUTTER_BUILD_NAME=1.0.0\n');
+      }
+    }
+
+    /// The Debug and Release results.
+    (String, String) resolve([Map<String, String> environment = const <String, String>{}]) {
+      String one(String configuration) => resolveWatchosDeploymentTarget(
+        watchosProjectDir: fileSystem.directory('/app/watchos'),
+        configuration: configuration,
+        environment: environment,
+      );
+      return (one('Debug'), one('Release'));
+    }
+
+    /// The template with the watch Runner's values replaced.
+    String runner(String? debug, String? release) => _withTarget(
+      _withTarget(_renderedTemplatePbxproj(), _runnerDebug, debug),
+      _runnerRelease,
+      release,
+    );
+
+    testWithoutContext('the template gives 26.0 for Debug and Release', () {
+      writeProject(_renderedTemplatePbxproj());
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('27.0 in the watch target gives 27.0', () {
+      writeProject(runner('27.0', '27.0'));
+      expect(resolve(), ('27.0', '27.0'));
+    });
+
+    testWithoutContext('Debug 26.0 and Release 27.0 stay apart', () {
+      writeProject(runner('26.0', '27.0'));
+      expect(resolve(), ('26.0', '27.0'));
+    });
+
+    testWithoutContext('a HostApp value is ignored', () {
+      String pbxproj = runner(null, null);
+      pbxproj = _withTarget(pbxproj, _hostAppDebug, '27.0');
+      pbxproj = _withTarget(pbxproj, _hostAppRelease, '27.0');
+      pbxproj = _withTarget(pbxproj, _projectDebug, '26.2');
+      pbxproj = _withTarget(pbxproj, _projectRelease, '26.2');
+      writeProject(pbxproj);
+      expect(resolve(), ('26.2', '26.2'));
+    });
+
+    testWithoutContext('a value set only at project level is found', () {
+      writeProject(
+        _withTarget(
+          _withTarget(runner(null, null), _projectDebug, '27.0'),
+          _projectRelease,
+          '27.0',
+        ),
+      );
+      expect(resolve(), ('27.0', '27.0'));
+    });
+
+    // The first-match parse this replaces gave 26.0 for both; "the lowest
+    // value in the watch target" would give 27.0 for Debug, newer than the
+    // App.swift that imports the host module.
+    testWithoutContext('Debug unset, Release 27.0 and project-level Debug 26.0', () {
+      writeProject(_withTarget(runner(null, '27.0'), _projectDebug, '26.0'));
+      expect(resolve(), ('26.0', '27.0'));
+    });
+
+    testWithoutContext('a value in the target xcconfig, through the CLI xcconfig #include?', () {
+      writeProject(runner(null, null));
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET = 27.0\n',
+      );
+      expect(resolve(), ('27.0', '26.0'));
+    });
+
+    testWithoutContext('a value in a user xcconfig, through its #include', () {
+      writeProject(
+        _withBaseConfiguration(
+          runner(null, '26.0'),
+          _runnerDebug,
+          'EE0000000000000000000001',
+          'Config.xcconfig',
+        ),
+      );
+      writeFile('/app/watchos/Runner/Config.xcconfig', '#include "Shared.xcconfig"\n');
+      writeFile(
+        '/app/watchos/Runner/Shared.xcconfig',
+        '// The watch minimum.\nWATCHOS_DEPLOYMENT_TARGET = 27.0 // not 26\n',
+      );
+      expect(resolve(), ('27.0', '26.0'));
+    });
+
+    testWithoutContext('a target value beats its xcconfig and the project level', () {
+      writeProject(_withTarget(runner('26.0', '26.0'), _projectDebug, '27.0'));
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET = 27.0\n',
+      );
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('the target xcconfig beats the project level', () {
+      writeProject(_withTarget(runner(null, null), _projectDebug, '27.0'));
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET = 26.2\n',
+      );
+      expect(resolve().$1, '26.2');
+    });
+
+    testWithoutContext('a project-level xcconfig is the last level', () {
+      writeProject(
+        _withBaseConfiguration(
+          runner(null, null),
+          _projectRelease,
+          'EE0000000000000000000002',
+          'Project.xcconfig',
+          sourceRoot: true,
+        ),
+      );
+      writeFile('/app/watchos/Project.xcconfig', 'WATCHOS_DEPLOYMENT_TARGET = 27.0\n');
+      expect(resolve(), ('26.0', '27.0'));
+    });
+
+    testWithoutContext('XCODE_XCCONFIG_FILE with a value beats the target', () {
+      writeProject(runner('26.0', '26.0'));
+      writeFile(
+        '/tmp/unsigned.xcconfig',
+        'CODE_SIGNING_ALLOWED = NO\nWATCHOS_DEPLOYMENT_TARGET = 27.0\n',
+      );
+      expect(resolve(<String, String>{'XCODE_XCCONFIG_FILE': '/tmp/unsigned.xcconfig'}), (
+        '27.0',
+        '27.0',
+      ));
+    });
+
+    testWithoutContext('a relative XCODE_XCCONFIG_FILE is read from the watchos directory', () {
+      writeProject(runner('26.0', '26.0'));
+      writeFile('/app/watchos/override.xcconfig', 'WATCHOS_DEPLOYMENT_TARGET = 27.0\n');
+      expect(resolve(<String, String>{'XCODE_XCCONFIG_FILE': 'override.xcconfig'}), (
+        '27.0',
+        '27.0',
+      ));
+    });
+
+    testWithoutContext('an XCODE_XCCONFIG_FILE without the setting passes on to the target', () {
+      writeProject(runner('26.0', '27.0'));
+      writeFile('/tmp/unsigned.xcconfig', 'CODE_SIGNING_ALLOWED = NO\n');
+      expect(resolve(<String, String>{'XCODE_XCCONFIG_FILE': '/tmp/unsigned.xcconfig'}), (
+        '26.0',
+        '27.0',
+      ));
+    });
+
+    testWithoutContext(r'$(inherited) passes on to the next level', () {
+      writeProject(_withTarget(runner(r'"$(inherited)"', '26.0'), _projectDebug, '27.0'));
+      writeFile(
+        '/tmp/override.xcconfig',
+        r'WATCHOS_DEPLOYMENT_TARGET = $(inherited)'
+            '\n',
+      );
+      expect(resolve(), ('27.0', '26.0'));
+      expect(resolve(<String, String>{'XCODE_XCCONFIG_FILE': '/tmp/override.xcconfig'}), (
+        '27.0',
+        '26.0',
+      ));
+    });
+
+    testWithoutContext(r'in an xcconfig, $(inherited) reaches the earlier assignment', () {
+      writeProject(runner('26.0', '26.0'));
+      writeFile(
+        '/tmp/override.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET = 27.0\n'
+            r'WATCHOS_DEPLOYMENT_TARGET = $(inherited)'
+            '\n',
+      );
+      expect(resolve(<String, String>{'XCODE_XCCONFIG_FILE': '/tmp/override.xcconfig'}).$1, '27.0');
+    });
+
+    testWithoutContext('a quoted version is a value', () {
+      writeProject(runner('"27.0"', null));
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET = "27.0";\n',
+      );
+      expect(resolve(), ('27.0', '27.0'));
+    });
+
+    testWithoutContext('a variable reference ends the lookup with the supported minimum', () {
+      writeProject(_withTarget(runner(r'"$(MY_TARGET)"', null), _projectDebug, '27.0'));
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig',
+        r'WATCHOS_DEPLOYMENT_TARGET = ${MY_TARGET}'
+            '\n',
+      );
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('a conditional assignment ends the lookup with the supported minimum', () {
+      writeProject(
+        _withTarget(runner(null, null), _projectDebug, '27.0').replaceFirst(
+          'WATCHOS_DEPLOYMENT_TARGET = 27.0;',
+          '"WATCHOS_DEPLOYMENT_TARGET[sdk=watchos*]" = 27.0;',
+        ),
+      );
+      writeFile(
+        '/app/watchos/Flutter/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig',
+        'WATCHOS_DEPLOYMENT_TARGET[sdk=watchos*] = 27.0\n',
+      );
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('the CLI xcconfigs missing: the lookup goes on to the project level', () {
+      writeProject(
+        _withTarget(
+          _withTarget(runner(null, null), _projectDebug, '27.0'),
+          _projectRelease,
+          '27.0',
+        ),
+        cliXcconfigs: false,
+      );
+      expect(resolve(), ('27.0', '27.0'));
+    });
+
+    testWithoutContext('the CLI xcconfigs set nothing themselves', () {
+      writeProject(runner(null, null));
+      writeFile(
+        '/app/watchos/Flutter/Generated.xcconfig',
+        'FLUTTER_BUILD_NAME=1.0.0\nWATCHOS_DEPLOYMENT_TARGET=27.0\n',
+      );
+      writeFile(
+        '/app/watchos/Flutter/Release.xcconfig',
+        '#include "Generated.xcconfig"\nWATCHOS_DEPLOYMENT_TARGET = 27.0\n',
+      );
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('a user xcconfig the target names but that is missing', () {
+      writeProject(
+        _withTarget(
+          _withBaseConfiguration(
+            runner(null, null),
+            _runnerDebug,
+            'EE0000000000000000000001',
+            'Config.xcconfig',
+          ),
+          _projectDebug,
+          '27.0',
+        ),
+      );
+      expect(resolve().$1, '26.0');
+    });
+
+    testWithoutContext('a missing #include ends the lookup, a missing #include? is empty', () {
+      writeProject(
+        _withTarget(
+          _withBaseConfiguration(
+            runner(null, null),
+            _runnerDebug,
+            'EE0000000000000000000001',
+            'Config.xcconfig',
+          ),
+          _projectDebug,
+          '27.0',
+        ),
+      );
+      writeFile('/app/watchos/Runner/Config.xcconfig', '#include "Missing.xcconfig"\n');
+      expect(resolve().$1, '26.0');
+      writeFile('/app/watchos/Runner/Config.xcconfig', '#include? "Missing.xcconfig"\n');
+      expect(resolve().$1, '27.0');
+    });
+
+    testWithoutContext('no value anywhere gives the supported minimum', () {
+      writeProject(runner(null, null));
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('a missing project.pbxproj gives the supported minimum', () {
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('an unparseable project.pbxproj gives the supported minimum', () {
+      writeProject('WATCHOS_DEPLOYMENT_TARGET = 27.0;\n{ objects = (');
+      expect(resolve(), ('26.0', '26.0'));
+      writeProject(runner('27.0', '27.0').replaceAll('name = Runner;', 'name = Watch;'));
+      expect(resolve(), ('26.0', '26.0'));
+    });
+
+    testWithoutContext('a configuration the target does not have gives the supported minimum', () {
+      writeProject(runner('27.0', '27.0'));
+      expect(
+        resolveWatchosDeploymentTarget(
+          watchosProjectDir: fileSystem.directory('/app/watchos'),
+          configuration: 'Profile',
+        ),
+        '26.0',
+      );
+    });
+  });
+
+  // Spec 0002, criteria 6b and 16: the host module follows the configuration
+  // being built, and leaves out arm64_32 from 27.0.
+  group('host module per configuration', () {
+    late MemoryFileSystem fileSystem;
+    late FakeProcessManager processManager;
+
+    setUp(() {
+      fileSystem = MemoryFileSystem.test();
+      processManager = FakeProcessManager.empty();
+    });
+
+    /// An app whose watch target builds Debug at [debug] and Release at
+    /// [release], and a CLI checkout with two host sources.
+    FlutterProject app(String debug, String release) {
+      Cache.flutterRoot = '/cli/flutter';
+      for (final name in <String>[
+        'FlutterHostView.swift',
+        'FlutterRunner.swift',
+        'flutter_watchos_host.h',
+        'module.modulemap',
+      ]) {
+        fileSystem.file('/cli/host/$name')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('// $name\n');
+      }
+      final Directory app = fileSystem.directory('/app')..createSync();
+      app.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+      app.childFile('.dart_tool/package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('{"configVersion": 2, "packages": []}');
+      app.childFile('watchos/Runner.xcodeproj/project.pbxproj')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          _withTarget(
+            _withTarget(_renderedTemplatePbxproj(), _runnerDebug, debug),
+            _runnerRelease,
+            release,
+          ),
+        );
+      return FlutterProject.fromDirectory(app);
+    }
+
+    FakeCommand swiftc(WatchosBuildInfo buildInfo, String arch, String deploymentTarget) {
+      return FakeCommand(
+        command: hostModuleSwiftcArgs(
+          sdkName: buildInfo.sdkName,
+          simulator: buildInfo.simulator,
+          arch: arch,
+          deploymentTarget: deploymentTarget,
+          moduleOutputPath:
+              '/app/watchos/Flutter/FlutterWatchOS.swiftmodule/'
+              '${swiftmoduleFileName(arch: arch, simulator: buildInfo.simulator)}',
+          objectOutputPath: '/app/watchos/Flutter/.host_build/FlutterWatchOS_$arch.o',
+          cModuleSearchPath: '/app/watchos/Flutter',
+          sources: <String>['/cli/host/FlutterHostView.swift', '/cli/host/FlutterRunner.swift'],
+          enableVmBridge: buildInfo.buildInfo.mode != BuildMode.release,
+          optimize: buildInfo.buildInfo.mode != BuildMode.debug,
+          enableStatusBarSpi: false,
+        ),
+      );
+    }
+
+    FakeCommand libtool(WatchosBuildInfo buildInfo, String input) => FakeCommand(
+      command: <String>[
+        'xcrun',
+        '-sdk',
+        buildInfo.sdkName,
+        'libtool',
+        '-static',
+        '-o',
+        '/app/watchos/Flutter/libFlutterWatchOSHost.a',
+        '/app/watchos/Flutter/.host_build/$input',
+      ],
+    );
+
+    Future<void> build(FlutterProject project, WatchosBuildInfo buildInfo) async {
+      await NativeWatchosBundle(
+        buildInfo,
+        'lib/main.dart',
+      ).buildHostModule(project, project.directory.childDirectory('watchos'));
+    }
+
+    testUsingContext(
+      'a Simulator debug build of a Debug 26.0 / Release 27.0 app uses 26.0',
+      () async {
+        final FlutterProject project = app('26.0', '27.0');
+        processManager.addCommands(<FakeCommand>[
+          swiftc(_simulatorDebug, 'arm64', '26.0'),
+          libtool(_simulatorDebug, 'FlutterWatchOS_arm64.o'),
+        ]);
+        await build(project, _simulatorDebug);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(environment: <String, String>{}),
+      },
+    );
+
+    // FakeProcessManager.empty() fails on any command it was not given, so
+    // an arm64_32 compile here fails the test.
+    testUsingContext(
+      'a device profile build of the same app uses 27.0, arm64 only',
+      () async {
+        final FlutterProject project = app('26.0', '27.0');
+        processManager.addCommands(<FakeCommand>[
+          swiftc(_deviceProfile, 'arm64', '27.0'),
+          libtool(_deviceProfile, 'FlutterWatchOS_arm64.o'),
+        ]);
+        await build(project, _deviceProfile);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(environment: <String, String>{}),
+      },
+    );
+
+    testUsingContext(
+      'a device release build at 26.0 compiles arm64 and arm64_32',
+      () async {
+        final FlutterProject project = app('26.0', '26.0');
+        processManager.addCommands(<FakeCommand>[
+          swiftc(_deviceRelease, 'arm64', '26.0'),
+          swiftc(_deviceRelease, 'arm64_32', '26.0'),
+          const FakeCommand(
+            command: <String>[
+              'xcrun',
+              'lipo',
+              '-create',
+              '/app/watchos/Flutter/.host_build/FlutterWatchOS_arm64.o',
+              '/app/watchos/Flutter/.host_build/FlutterWatchOS_arm64_32.o',
+              '-output',
+              '/app/watchos/Flutter/.host_build/FlutterWatchOS.o',
+            ],
+          ),
+          libtool(_deviceRelease, 'FlutterWatchOS.o'),
+        ]);
+        await build(project, _deviceRelease);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(environment: <String, String>{}),
+      },
+    );
+
+    testUsingContext(
+      'XCODE_XCCONFIG_FILE in the environment sets the target',
+      () async {
+        final FlutterProject project = app('26.0', '26.0');
+        fileSystem.file('/tmp/unsigned.xcconfig')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('WATCHOS_DEPLOYMENT_TARGET = 27.0\n');
+        processManager.addCommands(<FakeCommand>[
+          swiftc(_deviceRelease, 'arm64', '27.0'),
+          libtool(_deviceRelease, 'FlutterWatchOS_arm64.o'),
+        ]);
+        await build(project, _deviceRelease);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'XCODE_XCCONFIG_FILE': '/tmp/unsigned.xcconfig'},
+        ),
+      },
+    );
   });
 }

@@ -1403,13 +1403,20 @@ class NativeWatchosBundle extends Target {
     }
   }
 
-  /// The app's `WATCHOS_DEPLOYMENT_TARGET`, read from its Xcode project (see
-  /// [parseWatchosDeploymentTarget]). The host module and the plugin sources
-  /// the CLI compiles itself are built for it.
+  /// The app's `WATCHOS_DEPLOYMENT_TARGET` for the configuration being built,
+  /// resolved in Xcode's order (see [resolveWatchosDeploymentTarget]). The
+  /// host module and the plugin sources the CLI compiles itself are built for
+  /// it.
   String _projectDeploymentTarget(Directory watchosProjectDir) {
-    return parseWatchosDeploymentTarget(
-      watchosProjectDir.childDirectory('Runner.xcodeproj').childFile('project.pbxproj'),
+    final String deploymentTarget = resolveWatchosDeploymentTarget(
+      watchosProjectDir: watchosProjectDir,
+      configuration: buildInfo.configuration,
+      environment: globals.platform.environment,
     );
+    globals.logger.printTrace(
+      'watchOS deployment target (${buildInfo.configuration}): $deploymentTarget',
+    );
+    return deploymentTarget;
   }
 
   /// Compiles the FlutterWatchOS host module — the generic Swift glue around
@@ -1421,12 +1428,14 @@ class NativeWatchosBundle extends Target {
   /// template still compiles `Runner/FlutterRunner.swift` as app source — the
   /// module would collide with it).
   ///
-  /// Device builds compile arm64 AND arm64_32: the Xcode project builds the
-  /// Standard Architectures (the App Store requires an arm64_32 slice below
-  /// deployment target 27.0), so `App.swift`'s `import FlutterWatchOS` must
-  /// resolve for both. The glue is `#if !arch(arm64_32)`-guarded throughout,
-  /// so the arm64_32 slice compiles to an empty module — mirroring the app
-  /// template, whose arm64_32 slice shows only the fallback screen.
+  /// Below deployment target 27.0, device builds compile arm64 AND arm64_32:
+  /// the Xcode project builds the Standard Architectures (the App Store
+  /// requires an arm64_32 slice there), so `App.swift`'s
+  /// `import FlutterWatchOS` must resolve for both. The glue is
+  /// `#if !arch(arm64_32)`-guarded throughout, so the arm64_32 slice compiles
+  /// to an empty module — mirroring the app template, whose arm64_32 slice
+  /// shows only the fallback screen. From 27.0 Xcode builds arm64 alone, and
+  /// so does this (see [hostModuleArchs]).
   @visibleForTesting
   Future<String?> buildHostModule(
     FlutterProject project,
@@ -1465,10 +1474,12 @@ class NativeWatchosBundle extends Target {
 
     final String deploymentTarget = _projectDeploymentTarget(watchosProjectDir);
     // Simulator builds are pinned to arm64 (matching the ARCHS=arm64 the
-    // build passes to xcodebuild); device builds cover the fat executable.
-    final archs = buildInfo.simulator
-        ? const <String>['arm64']
-        : const <String>['arm64', 'arm64_32'];
+    // build passes to xcodebuild); device builds cover the slices Xcode's
+    // Standard Architectures build at this target.
+    final List<String> archs = hostModuleArchs(
+      simulator: buildInfo.simulator,
+      deploymentTarget: deploymentTarget,
+    );
 
     final Directory objDir = flutterDir.childDirectory('.host_build')
       ..createSync(recursive: true);

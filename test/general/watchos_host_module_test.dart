@@ -11,7 +11,6 @@
 
 import 'dart:io' as io;
 
-import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_watchos/build_targets/watchos_host_module.dart';
 
@@ -47,32 +46,30 @@ void main() {
     });
   });
 
-  group('parseWatchosDeploymentTarget', () {
-    late MemoryFileSystem fileSystem;
-
-    setUp(() {
-      fileSystem = MemoryFileSystem.test();
+  // The per-configuration target itself is tested with the other deployment
+  // target rules, in watchos_deployment_target_test.dart.
+  group('hostModuleArchs', () {
+    testWithoutContext('the Simulator is arm64 only', () {
+      for (final target in <String>['26.0', '26.5', '27.0']) {
+        expect(hostModuleArchs(simulator: true, deploymentTarget: target), <String>['arm64']);
+      }
     });
 
-    testWithoutContext('reads the project declaration', () {
-      final File file = fileSystem.file('/p/project.pbxproj')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('WATCHOS_DEPLOYMENT_TARGET = 26.0;');
-      expect(parseWatchosDeploymentTarget(file), '26.0');
+    // Xcode's Standard Architectures build an arm64_32 slice of App.swift
+    // below 27.0, and its `import FlutterWatchOS` must resolve there too.
+    testWithoutContext('a device below 27.0 adds arm64_32', () {
+      for (final target in <String>['26.0', '26.5', '26.99']) {
+        expect(hostModuleArchs(simulator: false, deploymentTarget: target), <String>[
+          'arm64',
+          'arm64_32',
+        ]);
+      }
     });
 
-    testWithoutContext('falls back when the project file is missing', () {
-      expect(
-        parseWatchosDeploymentTarget(fileSystem.file('/nope/project.pbxproj')),
-        '26.0',
-      );
-    });
-
-    testWithoutContext('falls back when the declaration is absent', () {
-      final File file = fileSystem.file('/p/project.pbxproj')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('SWIFT_VERSION = 5.0;');
-      expect(parseWatchosDeploymentTarget(file), '26.0');
+    testWithoutContext('a device from 27.0 is arm64 only', () {
+      for (final target in <String>['27.0', '27.1', '27', '28.0']) {
+        expect(hostModuleArchs(simulator: false, deploymentTarget: target), <String>['arm64']);
+      }
     });
   });
 
