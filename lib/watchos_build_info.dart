@@ -2,7 +2,41 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
+
+/// The oldest watchOS the CLI supports: 26.0.
+///
+/// The engine is arm64-only, and clang raises an arm64 watchOS device minimum
+/// below 26.0 to 26.0, so nothing older can run it. The staged
+/// `Flutter.framework` and `App.framework` declare it as their
+/// `MinimumOSVersion`, every App.framework compile and link targets it, and
+/// the CLI falls back to it when it cannot read the project's own
+/// `WATCHOS_DEPLOYMENT_TARGET`: a host module or plugin object built for an
+/// older OS than `App.swift` still imports and links, a newer one does not.
+///
+/// When the minimum is updated, update [kWatchosTemplateDeploymentTarget], the
+/// template and example `project.pbxproj`, and the project migration together.
+const Version kWatchosSupportedMinimum = Version.withText(26, 0, 0, '26.0');
+
+/// The `WATCHOS_DEPLOYMENT_TARGET` that `create` writes into the watch
+/// Runner's Debug and Release configurations.
+///
+/// It is never below [kWatchosSupportedMinimum]. When it is updated, update
+/// the template and example `project.pbxproj` literals together; a test ties
+/// the three.
+const Version kWatchosTemplateDeploymentTarget = Version.withText(26, 0, 0, '26.0');
+
+/// The clang and swiftc `-target` triple for [arch] on watchOS [osVersion],
+/// with the `-simulator` suffix when [simulator] is true: for example
+/// `arm64-apple-watchos26.0-simulator`.
+String watchosTargetTriple({
+  String arch = 'arm64',
+  required String osVersion,
+  required bool simulator,
+}) {
+  return '$arch-apple-watchos$osVersion${simulator ? '-simulator' : ''}';
+}
 
 /// Build configuration for watchOS targets.
 class WatchosBuildInfo {

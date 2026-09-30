@@ -33,6 +33,8 @@ library;
 
 import 'package:flutter_tools/src/base/file_system.dart';
 
+import '../watchos_build_info.dart';
+
 /// Whether the app's watchOS project predates the CLI-compiled host module:
 /// its runner glue is template source (`Runner/FlutterRunner.swift`) compiled
 /// into the app target, so the host module must NOT be built or linked —
@@ -47,10 +49,10 @@ bool isLegacyRunnerProject(Directory watchosProjectDir) {
 /// The watch deployment target declared by the app's Xcode project, used as
 /// the host module's `-target` OS version so its `.swiftmodule` never claims
 /// a NEWER deployment target than the `App.swift` that imports it (Swift
-/// rejects such imports). Falls back to the template's floor when the project
-/// file is missing or unparseable.
+/// rejects such imports). Falls back to [kWatchosSupportedMinimum] when the
+/// project file is missing or unparseable.
 String parseWatchosDeploymentTarget(File pbxproj) {
-  const fallback = '26.0';
+  final fallback = '$kWatchosSupportedMinimum';
   if (!pbxproj.existsSync()) {
     return fallback;
   }
@@ -114,14 +116,13 @@ List<String> hostModuleSwiftcArgs({
   required bool optimize,
   required bool enableStatusBarSpi,
 }) {
-  final suffix = simulator ? '-simulator' : '';
   return <String>[
     'xcrun',
     '-sdk',
     sdkName,
     'swiftc',
     '-target',
-    '$arch-apple-watchos$deploymentTarget$suffix',
+    watchosTargetTriple(arch: arch, osVersion: deploymentTarget, simulator: simulator),
     '-parse-as-library',
     if (optimize) '-O' else '-Onone',
     '-g',

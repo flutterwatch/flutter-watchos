@@ -589,9 +589,9 @@ class NativeWatchosBundle extends Target {
     //    - Debug/simulator (JIT): a tiny stub App.framework so the Xcode embed
     //      phase always has its input; real snapshots come from the .bin files.
     if (!buildInfo.buildInfo.isDebug) {
-      await _buildAotAppDylib(project, watchosProjectDir, environment);
+      await buildAotAppDylib(project, watchosProjectDir, environment);
     } else {
-      await _buildJitStubAppDylib(watchosProjectDir);
+      await buildJitStubAppDylib(watchosProjectDir);
     }
 
     // 4. Generate xcconfig files
@@ -606,14 +606,14 @@ class NativeWatchosBundle extends Target {
     //    frame display, input forwarding, native overlays) into a static
     //    archive + .swiftmodule under watchos/Flutter/, unless this is a
     //    legacy project that still compiles the glue as app source.
-    final String? hostArchive = await _buildHostModule(project, watchosProjectDir);
+    final String? hostArchive = await buildHostModule(project, watchosProjectDir);
 
     // 7. Compile federated watchOS plugin native code (FFI plugins) into a
     //    static archive, then wire the watch-scoped force-load flags for both
     //    archives into Generated.xcconfig (so they survive the HostApp-scheme
     //    archive too).
     final (String, Set<String>, Set<String>)? pluginArchive =
-        await _buildPluginStaticArchive(
+        await buildPluginStaticArchive(
       project,
       watchosProjectDir,
     );
@@ -1108,12 +1108,6 @@ class NativeWatchosBundle extends Target {
   static const String _flutterFrameworkBundleId = 'dev.flutterwatch.Flutter';
   static const String _appFrameworkBundleId = 'dev.flutterwatch.App';
 
-  /// `MinimumOSVersion` stamped into the staged framework Info.plists. Tracks
-  /// the template's `WATCHOS_DEPLOYMENT_TARGET` (the arm64 engine is Series 9+ /
-  /// watchOS 26). Kept ≤ the watch app's own minimum so validation never sees a
-  /// framework that demands a newer OS than its host.
-  static const String _frameworkMinimumOSVersion = '26.0';
-
   /// Wraps [sourceDylib] as `<frameworkName>.framework/<frameworkName>` under
   /// [flutterDir], with an `@rpath/<name>.framework/<name>` install name and an
   /// FMWK Info.plist — the exact structure the Xcode "Embed Frameworks" phase
@@ -1145,7 +1139,7 @@ class NativeWatchosBundle extends Target {
       );
     }
     fw.childFile('Info.plist').writeAsStringSync(
-      _frameworkInfoPlist(executable: frameworkName, bundleId: bundleId),
+      frameworkInfoPlist(executable: frameworkName, bundleId: bundleId),
     );
     if (privacyManifest != null) {
       fw.childFile('PrivacyInfo.xcprivacy').writeAsStringSync(privacyManifest);
@@ -1202,10 +1196,22 @@ class NativeWatchosBundle extends Target {
 </plist>
 ''';
 
+  /// The `-target` of every App.framework compile and link, the AOT dylib and
+  /// the JIT stub alike: [kWatchosSupportedMinimum], the version its
+  /// Info.plist declares as `MinimumOSVersion` (see [frameworkInfoPlist]).
+  @visibleForTesting
+  String get appFrameworkTarget =>
+      watchosTargetTriple(osVersion: '$kWatchosSupportedMinimum', simulator: buildInfo.simulator);
+
   /// FMWK Info.plist for a staged engine/Dart framework. The supported platform
   /// follows the build SDK (WatchSimulator for the debug/JIT simulator loop,
   /// WatchOS for AOT device/App Store builds).
-  String _frameworkInfoPlist({
+  ///
+  /// `MinimumOSVersion` is [kWatchosSupportedMinimum], which is never newer
+  /// than the watch app's own target, so validation never sees a framework
+  /// that demands a newer OS than its host.
+  @visibleForTesting
+  String frameworkInfoPlist({
     required String executable,
     required String bundleId,
   }) {
@@ -1223,7 +1229,7 @@ class NativeWatchosBundle extends Target {
 \t<key>CFBundleShortVersionString</key><string>1.0</string>
 \t<key>CFBundleSupportedPlatforms</key><array><string>$platform</string></array>
 \t<key>CFBundleVersion</key><string>1</string>
-\t<key>MinimumOSVersion</key><string>$_frameworkMinimumOSVersion</string>
+\t<key>MinimumOSVersion</key><string>$kWatchosSupportedMinimum</string>
 </dict>
 </plist>
 ''';
@@ -1233,7 +1239,8 @@ class NativeWatchosBundle extends Target {
   /// assembly → clang dylib exporting the `kDartVmSnapshot*` /
   /// `kDartIsolateSnapshot*` symbols the engine's App loader binds at runtime.
   /// Reuses the `app.dill` produced by [WatchosKernelSnapshot].
-  Future<void> _buildAotAppDylib(
+  @visibleForTesting
+  Future<void> buildAotAppDylib(
     FlutterProject project,
     Directory watchosProjectDir,
     Environment environment,
@@ -1284,7 +1291,7 @@ class NativeWatchosBundle extends Target {
       throwToolExit('gen_snapshot failed');
     }
 
-    const clangTarget = 'arm64-apple-watchos9.0';
+    final String clangTarget = appFrameworkTarget;
     final String objectPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.o');
     final ProcessResult ccResult = await globals.processManager.run(<String>[
       'xcrun',
@@ -1348,7 +1355,7 @@ class NativeWatchosBundle extends Target {
   /// Writes the FMWK Info.plist alongside the linked `App` binary.
   void _finalizeAppFramework(Directory appFramework) {
     appFramework.childFile('Info.plist').writeAsStringSync(
-      _frameworkInfoPlist(executable: 'App', bundleId: _appFrameworkBundleId),
+      frameworkInfoPlist(executable: 'App', bundleId: _appFrameworkBundleId),
     );
   }
 
@@ -1356,7 +1363,8 @@ class NativeWatchosBundle extends Target {
   /// embed phase always has its input. The real Dart code runs from the JIT
   /// core snapshots (`*_snapshot.bin`) + `kernel_blob.bin` in flutter_assets;
   /// nothing binds this stub.
-  Future<void> _buildJitStubAppDylib(Directory watchosProjectDir) async {
+  @visibleForTesting
+  Future<void> buildJitStubAppDylib(Directory watchosProjectDir) async {
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('fw_stub.');
     try {
       final File stubC = tmp.childFile('stub.c')
@@ -1365,9 +1373,7 @@ class NativeWatchosBundle extends Target {
         );
       final File appBinary =
           _prepareAppFramework(watchosProjectDir).childFile('App');
-      final clangTarget = buildInfo.simulator
-          ? 'arm64-apple-watchos9.0-simulator'
-          : 'arm64-apple-watchos9.0';
+      final String clangTarget = appFrameworkTarget;
       final ProcessResult r = await globals.processManager.run(<String>[
         'xcrun',
         '-sdk',
@@ -1397,6 +1403,15 @@ class NativeWatchosBundle extends Target {
     }
   }
 
+  /// The app's `WATCHOS_DEPLOYMENT_TARGET`, read from its Xcode project (see
+  /// [parseWatchosDeploymentTarget]). The host module and the plugin sources
+  /// the CLI compiles itself are built for it.
+  String _projectDeploymentTarget(Directory watchosProjectDir) {
+    return parseWatchosDeploymentTarget(
+      watchosProjectDir.childDirectory('Runner.xcodeproj').childFile('project.pbxproj'),
+    );
+  }
+
   /// Compiles the FlutterWatchOS host module — the generic Swift glue around
   /// the engine, shipped as CLI sources in `host/` (see
   /// watchos_host_module.dart) — into `watchos/Flutter/`:
@@ -1412,7 +1427,8 @@ class NativeWatchosBundle extends Target {
   /// resolve for both. The glue is `#if !arch(arm64_32)`-guarded throughout,
   /// so the arm64_32 slice compiles to an empty module — mirroring the app
   /// template, whose arm64_32 slice shows only the fallback screen.
-  Future<String?> _buildHostModule(
+  @visibleForTesting
+  Future<String?> buildHostModule(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
@@ -1447,11 +1463,7 @@ class NativeWatchosBundle extends Target {
       hostDir.childFile(name).copySync(globals.fs.path.join(flutterDir.path, name));
     }
 
-    final String deploymentTarget = parseWatchosDeploymentTarget(
-      watchosProjectDir
-          .childDirectory('Runner.xcodeproj')
-          .childFile('project.pbxproj'),
-    );
+    final String deploymentTarget = _projectDeploymentTarget(watchosProjectDir);
     // Simulator builds are pinned to arm64 (matching the ARCHS=arm64 the
     // build passes to xcodebuild); device builds cover the fat executable.
     final archs = buildInfo.simulator
@@ -1570,7 +1582,8 @@ class NativeWatchosBundle extends Target {
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
   /// `DynamicLibrary.process()` / dlsym.
-  Future<(String, Set<String>, Set<String>)?> _buildPluginStaticArchive(
+  @visibleForTesting
+  Future<(String, Set<String>, Set<String>)?> buildPluginStaticArchive(
     FlutterProject project,
     Directory watchosProjectDir,
   ) async {
@@ -1676,9 +1689,13 @@ class NativeWatchosBundle extends Target {
     // watchOS plugins virtually always need these; harmless if already linked.
     frameworks.addAll(<String>['WatchKit', 'Foundation']);
 
-    final clangTarget = buildInfo.simulator
-        ? 'arm64-apple-watchos9.0-simulator'
-        : 'arm64-apple-watchos9.0';
+    // Plugin objects are built for the app's own target, so availability and
+    // deprecation are judged against the OS the app really needs, and no
+    // object claims a newer minimum than the Runner that links it.
+    final String clangTarget = watchosTargetTriple(
+      osVersion: _projectDeploymentTarget(watchosProjectDir),
+      simulator: buildInfo.simulator,
+    );
 
     final objects = <String>[...prebuiltObjects];
     for (final src in sources) {
