@@ -2,10 +2,45 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/executable.dart' show LoggerFactory;
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/terminal.dart';
 
 import 'watchos_device.dart' show WatchosDevice;
+
+/// The logger flutter-watchos runs with: stock's, from [loggerFactory] with the
+/// inputs stock's `main` gives it, wrapped for people only.
+///
+/// For `daemon` and for any `--machine` run (`attach --machine` too) it is
+/// exactly the logger stock builds, with no wrapper: IDEs parse that output,
+/// and stock code finds the logger by its type (`daemon` with
+/// `asLogger<NotifyingLogger>`, `attach --machine` with a cast to
+/// `MachineOutputLogger`). In every other mode it is stock's logger inside
+/// [WatchosCategoryRewritingLogger]. [verbose], [prefixedErrors] and
+/// [windows] reach [LoggerFactory.createLogger] as they do in stock.
+Logger createWatchosLogger(
+  LoggerFactory loggerFactory, {
+  required bool verbose,
+  required bool prefixedErrors,
+  required bool machine,
+  required bool daemon,
+  required bool windows,
+}) {
+  final Logger logger = loggerFactory.createLogger(
+    verbose: verbose,
+    prefixedErrors: prefixedErrors,
+    machine: machine,
+    daemon: daemon,
+    windows: windows,
+    // Stock sets it for the command that shows widgets in a browser, which
+    // flutter-watchos does not register.
+    widgetPreviews: false,
+  );
+  if (daemon || machine) {
+    return logger;
+  }
+  return WatchosCategoryRewritingLogger(logger);
+}
 
 /// A [Logger] decorator that rewrites the device-list category column from
 /// `(mobile)` to `(watch)` on lines describing watchOS devices.

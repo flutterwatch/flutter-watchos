@@ -5,6 +5,7 @@
 
 import 'dart:io';
 
+import 'package:flutter_tools/executable.dart' show LoggerFactory;
 import 'package:flutter_tools/runner.dart' as runner;
 import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
@@ -86,6 +87,10 @@ Future<void> main(List<String> args) async {
       (args.length == 1 && verbose);
   final bool muteCommandLogging = (help || doctor) && !veryVerbose;
   final bool verboseHelp = help && verbose;
+  // As stock's main reads them, for the logger.
+  final bool prefixedErrors = args.contains('--prefixed-errors');
+  final bool daemon = args.contains('daemon');
+  final bool runMachine = args.contains('--machine');
 
   args = <String>[
     '--suppress-analytics', // Suppress flutter analytics by default.
@@ -169,24 +174,20 @@ Future<void> main(List<String> args) async {
         watchosWorkflow: watchosWorkflow!,
       ),
       WatchosValidator: () => WatchosValidator(processManager: globals.processManager),
-      // Always wrap the logger with WatchosCategoryRewritingLogger so the
-      // device list shows `(watch)` instead of `(mobile)` for watchOS devices.
-      // The wrapper is a no-op on every other line. In verbose mode,
-      // VerboseLogger sits inside ours so timestamps still apply.
-      Logger: () => WatchosCategoryRewritingLogger(
-        verbose && !muteCommandLogging
-            ? VerboseLogger(
-                StdoutLogger(
-                  stdio: globals.stdio,
-                  terminal: globals.terminal,
-                  outputPreferences: globals.outputPreferences,
-                ),
-              )
-            : StdoutLogger(
-                stdio: globals.stdio,
-                terminal: globals.terminal,
-                outputPreferences: globals.outputPreferences,
-              ),
+      // Stock's logger, as stock's main builds it. For people it is wrapped so
+      // the device list shows `(watch)` and the usage hint names
+      // flutter-watchos; for daemon and --machine it is stock's alone.
+      Logger: () => createWatchosLogger(
+        LoggerFactory(
+          outputPreferences: globals.outputPreferences,
+          terminal: globals.terminal,
+          stdio: globals.stdio,
+        ),
+        daemon: daemon,
+        machine: runMachine,
+        verbose: verbose && !muteCommandLogging,
+        prefixedErrors: prefixedErrors,
+        windows: globals.platform.isWindows,
       ),
     },
     shutdownHooks: globals.shutdownHooks,
