@@ -23,6 +23,14 @@ void main() {
     root.deleteSync(recursive: true);
   });
 
+  /// Writes an executable script at [path] under the root.
+  void script(String path, String body) {
+    final file = io.File('${root.path}/$path')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('#!/bin/bash\n$body\n');
+    io.Process.runSync('chmod', <String>['+x', file.path]);
+  }
+
   /// Sources the wrapper's shared.sh for a clone at the root, and runs
   /// [function] from it.
   io.ProcessResult run(String function) => io.Process.runSync('bash', <String>[
@@ -61,6 +69,55 @@ void main() {
       expect(link('bin/cache/dart-sdk'), '${root.path}/flutter/bin/cache/dart-sdk');
       // With a plain `ln -sf`, the second link lands inside the SDK.
       expect(io.Link('${root.path}/flutter/bin/cache/dart-sdk/dart-sdk').existsSync(), isFalse);
+    });
+  });
+
+  group('update_flutter_watchos', () {
+    setUp(() {
+      io.File('${root.path}/pubspec.yaml').writeAsStringSync('name: flutter_watchos\n');
+      io.File('${root.path}/pubspec.lock').writeAsStringSync('packages: {}\n');
+      io.File('${root.path}/bin/flutter_watchos.dart').writeAsStringSync('void main() {}\n');
+      // A stale stamp: the snapshot is rebuilt.
+      io.Directory('${root.path}/bin/cache').createSync();
+      io.File('${root.path}/bin/cache/flutter-watchos.stamp').writeAsStringSync('stale\n');
+      // The pinned SDK's tools print on stdout, as pub and dart do.
+      script(
+        'flutter/bin/flutter',
+        'echo "Resolving dependencies..."\n'
+            'mkdir -p .dart_tool && echo "{}" > .dart_tool/package_config.json',
+      );
+      script(
+        'flutter/bin/cache/dart-sdk/bin/dart',
+        'echo "Compiling..."\n'
+            'for arg in "\$@"; do\n'
+            '  case "\$arg" in --snapshot=*) touch "\${arg#--snapshot=}";; esac\n'
+            'done',
+      );
+    });
+
+    test('prints its progress on stderr, none on stdout', () {
+      final io.ProcessResult result = run('update_flutter_watchos');
+
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      expect(result.stdout, isEmpty);
+      expect(result.stderr, contains('Running pub get...'));
+      expect(result.stderr, contains('Resolving dependencies...'));
+      expect(result.stderr, contains('Compiling flutter-watchos...'));
+      expect(io.File('${root.path}/bin/cache/flutter-watchos.snapshot').existsSync(), isTrue);
+      expect(
+        io.File('${root.path}/bin/cache/flutter-watchos.stamp').readAsStringSync(),
+        isNot('stale\n'),
+      );
+    });
+
+    test('a failing pub get still exits non-zero with its error on stderr', () {
+      script('flutter/bin/flutter', 'echo "network down"; exit 1');
+
+      final io.ProcessResult result = run('update_flutter_watchos');
+
+      expect(result.exitCode, isNot(0));
+      expect(result.stdout, isEmpty);
+      expect(result.stderr, contains('Unable to resolve flutter-watchos dependencies'));
     });
   });
 }
