@@ -235,6 +235,91 @@ void main() {
       overrides: overrides,
     );
   }
+
+  // Stock create writes the samples list before it asks for a directory, so
+  // the refusal comes first with a directory or without one.
+  for (final (String label, List<String> directory) in <(String, List<String>)>[
+    ('with a directory', <String>['/projects/watch']),
+    ('without a directory', <String>[]),
+  ]) {
+    testUsingContext(
+      'refuses --list-samples $label before writing anything',
+      () async {
+        await expectLater(
+          create(WatchosCreateCommand(verboseHelp: false), <String>[
+            '--watchos-only',
+            '--list-samples=/projects/samples.json',
+            ...directory,
+          ]),
+          throwsToolExit(message: 'does not take --list-samples'),
+        );
+        expect(fileSystem.directory('/projects').existsSync(), isFalse);
+      },
+      overrides: overrides,
+    );
+  }
+
+  // With other platforms, stock create makes the project. A package or a
+  // module has no app to run on a watch: it gets no watchos/, and one line
+  // says so.
+  for (final (String template, String what) in <(String, String)>[
+    ('package', 'a package'),
+    ('module', 'a module'),
+  ]) {
+    testUsingContext(
+      'adds no watchos/ to $what made by stock create, and says so',
+      () async {
+        await create(WatchosCreateCommand(verboseHelp: false), <String>[
+          '--template=$template',
+          '/projects/$template',
+        ]);
+
+        expect(project(template).childFile('pubspec.yaml').existsSync(), isTrue);
+        expect(project(template).childDirectory('watchos').existsSync(), isFalse);
+        final List<String> watchosLines = testLogger.statusText
+            .split('\n')
+            .where((String line) => line.contains('watchos'))
+            .toList();
+        expect(watchosLines, <String>[
+          'No watchos/ was added: $what has no app to run on a watch.',
+        ]);
+      },
+      overrides: overrides,
+    );
+  }
+
+  testUsingContext(
+    'adds no watchos/ to an existing package that create . recreates',
+    () async {
+      await create(CreateCommand(), <String>['--template=package', '/projects/package']);
+      testLogger.clear();
+
+      // No --template: stock create finds the package's type in .metadata.
+      await create(WatchosCreateCommand(verboseHelp: false), <String>['/projects/package']);
+
+      expect(project('package').childDirectory('watchos').existsSync(), isFalse);
+      expect(
+        testLogger.statusText,
+        contains('No watchos/ was added: a package has no app to run on a watch.'),
+      );
+    },
+    overrides: overrides,
+  );
+
+  testUsingContext(
+    'adds watchos/ beside an app made by stock create',
+    () async {
+      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+        '--platforms=linux',
+        '/projects/app',
+      ]);
+
+      expect(project('app').childDirectory('linux').existsSync(), isTrue);
+      expect(project('app').childFile('watchos/Runner/Info.plist').existsSync(), isTrue);
+      expect(testLogger.statusText, isNot(contains('No watchos/ was added')));
+    },
+    overrides: overrides,
+  );
 }
 
 /// Copies the file or directory at [path] on disk to the same path in

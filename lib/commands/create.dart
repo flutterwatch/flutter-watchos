@@ -9,7 +9,8 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/dart/pub.dart';
-import 'package:flutter_tools/src/flutter_project_metadata.dart' show FlutterTemplateType;
+import 'package:flutter_tools/src/flutter_project_metadata.dart'
+    show FlutterProjectMetadata, FlutterTemplateType;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -43,6 +44,15 @@ String? watchosCreateTemplateError(String templateType) {
       '    https://github.com/flutterwatch/plugins\n'
       'For plugins that target other platforms, use stock `flutter create`.';
 }
+
+/// The project types that make no app, each with what it makes: a package or
+/// a module has nothing to run on a watch, so `create` adds no `watchos/` to
+/// them.
+const Map<FlutterTemplateType, String> _typesWithoutApp = <FlutterTemplateType, String>{
+  FlutterTemplateType.package: 'a package',
+  FlutterTemplateType.packageFfi: 'an FFI package',
+  FlutterTemplateType.module: 'a module',
+};
 
 // The two guides a companion app's watch layout needs, by absolute URL, as the
 // build-registry notice gives its doc: a repository path does not open from a
@@ -97,6 +107,15 @@ class WatchosCreateCommand extends CreateCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // A watch-only create makes stock's app only. Stock `flutter create` writes
+    // the samples list before it asks for a project directory, so this is
+    // refused before then, and nothing is written.
+    if (boolArg('watchos-only') && stringArg('list-samples') != null) {
+      throwToolExit(
+        'flutter-watchos create --platforms=watchos does not take --list-samples. '
+        'List the samples with stock `flutter create --list-samples=<path>`.',
+      );
+    }
     // Mirror stock `flutter create`: print the friendly usage message and exit
     // (code 2) when no output directory is given — or more than one — instead
     // of crashing on `rest.first`.
@@ -154,6 +173,20 @@ class WatchosCreateCommand extends CreateCommand {
     final FlutterCommandResult exitCode = await super.runCommand();
     if (exitCode != FlutterCommandResult.success()) {
       return exitCode;
+    }
+    // A package or a module has no app to run on a watch. The type is the one
+    // stock create just wrote to .metadata, so `create .` in an existing
+    // package, which names no --template, gets no watchos/ either.
+    final FlutterTemplateType? made = FlutterProjectMetadata(
+      globals.fs.directory(projectDirPath).childFile('.metadata'),
+      globals.logger,
+    ).projectType;
+    final String? withoutApp = _typesWithoutApp[made];
+    if (withoutApp != null) {
+      globals.logger.printStatus(
+        'No watchos/ was added: $withoutApp has no app to run on a watch.',
+      );
+      return FlutterCommandResult.success();
     }
     await _renderWatchosRunner(projectDirPath, name);
     final WatchosHostMode? mode = await _adoptHostMode(projectDirPath);
