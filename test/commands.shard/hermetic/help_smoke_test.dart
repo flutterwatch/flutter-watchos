@@ -5,6 +5,7 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/executable.dart' as stock;
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/runner/flutter_command_runner.dart';
@@ -12,6 +13,8 @@ import 'package:flutter_watchos/executable.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
+import '../../src/test_flutter_command_runner.dart';
+import 'src/words.dart';
 
 /// Every name flutter-watchos registers, `-h` or not. A command added or
 /// dropped changes this list on purpose.
@@ -50,6 +53,16 @@ const List<String> _registered = <String>[
   'upgrade',
   'upload',
 ];
+
+/// The commands whose `-v --help` shows more options, which is checked too.
+const List<String> _verboseHelpCommands = <String>['run', 'drive', 'attach', 'test'];
+
+/// Why a command's help may still have a forbidden word, until its join.
+const Map<String, String> _wordJoins = <String, String>{
+  'test':
+      "J-port-help: stock test's --dds-port help is reworded once "
+      'WatchosTestCommand takes UnusedPortHelp (lib/commands/port_help.dart).',
+};
 
 Set<String> _names(Iterable<FlutterCommand> commands) =>
     commands.map((FlutterCommand command) => command.name).toSet();
@@ -130,5 +143,53 @@ void main() {
         );
       }
     }, overrides: overrides());
+  });
+
+  group('help', () {
+    late BufferLogger logger;
+
+    setUp(() {
+      logger = BufferLogger.test();
+    });
+
+    Map<Type, Generator> helpOverrides() => <Type, Generator>{
+      FileSystem: () => MemoryFileSystem.test(),
+      ProcessManager: () => FakeProcessManager.empty(),
+      Logger: () => logger,
+    };
+
+    /// Runs `<name> --help`, with `-v` when [verboseHelp], through the
+    /// command runner, and returns what it printed.
+    Future<String> help(String name, {required bool verboseHelp}) async {
+      final FlutterCommand command = generateWatchosCommands(
+        verboseHelp: verboseHelp,
+        verbose: verboseHelp,
+      ).singleWhere((FlutterCommand command) => command.name == name);
+      await createTestCommandRunner(command).run(<String>[if (verboseHelp) '-v', name, '--help']);
+      return logger.statusText;
+    }
+
+    for (final String name in _registered) {
+      for (final verboseHelp in <bool>[false, if (_verboseHelpCommands.contains(name)) true]) {
+        final flags = verboseHelp ? '-v --help' : '--help';
+
+        testUsingContext('$name $flags exits 0 and prints its usage', () async {
+          final String output = await help(name, verboseHelp: verboseHelp);
+
+          expect(output, contains('Usage: '));
+          expect(logger.errorText, isEmpty);
+        }, overrides: helpOverrides());
+
+        final String? join = _wordJoins[name];
+        testUsingContext(
+          '$name $flags has no forbidden word${join == null ? '' : ' (skipped until $join)'}',
+          () async {
+            expect(forbiddenWordsIn(await help(name, verboseHelp: verboseHelp)), isEmpty);
+          },
+          overrides: helpOverrides(),
+          skip: join != null,
+        );
+      }
+    }
   });
 }
