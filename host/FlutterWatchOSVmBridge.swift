@@ -228,7 +228,7 @@ import Foundation
     }
 
     /// Largest batch of frames to put in one POST. Big enough that a bulk reply
-    /// (a CPU profile is megabytes) is not paid for one round trip per 32KB
+    /// (a CPU profile is megabytes) does not cost one round trip per 32KB
     /// read, small enough that a single request stays bounded.
     private static let maxPushBytes = 512 * 1024
 

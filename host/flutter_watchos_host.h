@@ -194,8 +194,8 @@ void FlutterWatchOSHostSetFirstFrameCallback(
 // is a no-op, so calling it every refresh is both correct and cheap.
 //
 // MUST be on the main thread (the one that called FlutterWatchOSHostRun).
-// Without it the engine falls back to a free-running 60 Hz timer whose phase
-// is unrelated to the display, which is judder even with the frame budget half
+// Without it the engine falls back to its own 60 Hz timer, whose phase is
+// unrelated to the display, which is judder even with the frame budget half
 // empty.
 void FlutterWatchOSHostNotifyVsync(void);
 
