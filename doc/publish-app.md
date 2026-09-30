@@ -117,13 +117,29 @@ The App Store requires an `arm64_32` slice in the watch executable when
 `WATCHOS_DEPLOYMENT_TARGET < 27.0`. The Flutter engine is arm64-only
 (Apple Watch Series 9 / Ultra 2 and later), so the template handles this
 with a stub `arm64_32` slice that shows a "Requires Apple Watch Series 9 or
-later" screen on older hardware. You have two options:
+later" screen on older hardware.
+
+Leave `ARCHS` unset. With Xcode 27, the Standard Architectures build
+`arm64_32` only when the deployment target is below 27.0, which is exactly
+when the slice is needed.
+
+Below 27.0, a device build in Xcode (an archive, for example) shows this
+linker warning. It is expected: it is how the stub slice links without the
+engine.
+
+```text
+ld: warning: ignoring file '…/Flutter.framework/Flutter': found architecture 'arm64', required architecture 'arm64_32'
+```
+
+You have two options:
 
 1. **Keep the default** (deployment target < 27.0 + stub): the app installs
    on older watches but shows the fallback screen there. Say so in your App
    Store description.
 2. **Set `WATCHOS_DEPLOYMENT_TARGET` to 27.0+**: no stub needed; the App
-   Store simply won't offer the app to unsupported watches.
+   Store simply won't offer the app to unsupported watches. It also leaves
+   out owners of a supported watch who have not updated to watchOS 27. A
+   27.0 target was built and checked with Xcode 27, so use Xcode 27 for it.
 
 Only the watch *executable* needs the fat slice — embedded frameworks stay
 arm64-only either way.

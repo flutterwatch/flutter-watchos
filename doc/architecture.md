@@ -101,7 +101,10 @@ any `lib/` shared with those targets.
   requires an `arm64_32` slice in the watch executable. The engine is
   arm64-only, so the template ships a stub arm64_32 slice with a "Requires
   Apple Watch Series 9 or later" fallback screen; only the executable needs
-  the fat slice, not the frameworks.
+  the fat slice, not the frameworks. `ARCHS` stays unset: with Xcode 27,
+  the Standard Architectures build `arm64_32` only below 27.0, which is when
+  the slice is needed. Linking the stub prints `ld: warning: ignoring file …
+  Flutter.framework … arm64_32`, which is expected.
 
 ## Repository layout
 
