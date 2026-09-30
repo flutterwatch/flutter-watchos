@@ -15,6 +15,7 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_watchos/commands/build.dart';
 import 'package:flutter_watchos/commands/stock_build_stub.dart';
 import 'package:flutter_watchos/watchos_build_info.dart';
+import 'package:flutter_watchos/watchos_mode_guidance.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
@@ -165,18 +166,33 @@ void main() {
       expect(registrations, isEmpty);
     }, overrides: overrides());
 
-    testUsingContext('--simulator --release is a tool exit with the guidance', () async {
-      await expectLater(
-        createTestCommandRunner(
-          buildCommand(),
-        ).run(<String>['build', 'watchos', '--simulator', '--release', '--no-pub']),
-        throwsToolExit(message: 'flutter-watchos build watchos --simulator'),
-      );
-      expect(builds, isEmpty);
-      expect(registrations, isEmpty);
-    }, overrides: overrides());
+    for (final (List<String> args, BuildMode mode, bool simulator)
+        in <(List<String>, BuildMode, bool)>[
+          (<String>['--simulator', '--release'], BuildMode.release, true),
+          (<String>['--simulator', '--profile'], BuildMode.profile, true),
+          (<String>['--simulator', '--jit-release'], BuildMode.jitRelease, true),
+          (<String>['--debug'], BuildMode.debug, false),
+          (<String>['--jit-release'], BuildMode.jitRelease, false),
+        ]) {
+      testUsingContext('"${args.join(' ')}" is a tool exit with the guidance', () async {
+        await expectLater(
+          createTestCommandRunner(
+            buildCommand(),
+          ).run(<String>['build', 'watchos', ...args, '--no-pub']),
+          throwsToolExit(
+            message: watchosModeRefusal(
+              command: WatchosModeCommand.build,
+              mode: mode,
+              simulator: simulator,
+            ),
+          ),
+        );
+        expect(builds, isEmpty);
+        expect(registrations, isEmpty);
+      }, overrides: overrides());
+    }
 
-    testUsingContext('a device debug build is a tool exit', () async {
+    testUsingContext('a device debug build names the Simulator build', () async {
       await expectLater(
         createTestCommandRunner(
           buildCommand(),

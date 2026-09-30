@@ -15,6 +15,7 @@ import '../watchos_build_info.dart';
 import '../watchos_build_registry.dart';
 import '../watchos_builder.dart';
 import '../watchos_cache.dart';
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
 import 'stock_build_stub.dart';
 
@@ -142,29 +143,33 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
     // artifact), so a simulator build is ALWAYS a debug (JIT) build: the app
     // must ship kernel_blob.bin, which only the debug bundle contains. The
     // `build` subcommand defaults to release, so quietly lower the default;
-    // an EXPLICIT AOT mode with --simulator is a contradiction — fail with
-    // guidance. Without this, a release+simulator build produced an app whose
-    // AOT App.dylib the JIT engine ignores, silently running whatever stale
-    // kernel was last staged into watchos/Flutter/flutter_assets.
+    // an EXPLICIT AOT mode with --simulator is a contradiction, which the
+    // guidance below refuses. Without this, a release+simulator build produced
+    // an app whose AOT App.dylib the JIT engine ignores, silently running
+    // whatever stale kernel was last staged into watchos/Flutter/flutter_assets.
     BuildInfo buildInfo = await getBuildInfo();
     if (simulator && buildInfo.mode != BuildMode.debug) {
       final bool explicitMode = argResults!.wasParsed('release') ||
           argResults!.wasParsed('profile') ||
           (argParser.options.containsKey('jit-release') &&
               argResults!.wasParsed('jit-release'));
-      if (explicitMode) {
-        throwToolExit(
-          '--${buildInfo.mode.cliName} is not supported with --simulator: the '
-          'watchOS Simulator engine is JIT-only, so simulator builds are '
-          'always debug. AOT (profile/release) builds target a physical '
-          'watch.\n'
-          'Use one of:\n'
-          '  flutter-watchos build watchos --simulator   # debug, on the Simulator\n'
-          '  flutter-watchos build watchos --profile     # AOT, on a physical watch\n'
-          '  flutter-watchos build watchos --release     # AOT, on a physical watch',
-        );
+      if (!explicitMode) {
+        buildInfo = await getBuildInfo(forcedBuildMode: BuildMode.debug);
       }
-      buildInfo = await getBuildInfo(forcedBuildMode: BuildMode.debug);
+    }
+
+    // Debug on a physical watch would need a JIT engine, but the Dart JIT VM
+    // cannot be built against the watchOS device SDK (Mach exception-port APIs
+    // like thread_set_exception_ports are unavailable there). There is no
+    // watchos_debug device artifact, so fail early with guidance instead of a
+    // generic "engine not found". The Simulator debug build is the debug path.
+    final String? refusal = watchosModeRefusal(
+      command: WatchosModeCommand.build,
+      mode: buildInfo.mode,
+      simulator: simulator,
+    );
+    if (refusal != null) {
+      throwToolExit(refusal);
     }
 
     final watchosBuildInfo = WatchosBuildInfo(
@@ -172,23 +177,6 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
       targetArch: 'arm64',
       simulator: simulator,
     );
-
-    // Debug on a physical watch would need a JIT engine, but the Dart JIT VM
-    // cannot be built against the watchOS device SDK (Mach exception-port APIs
-    // like thread_set_exception_ports are unavailable there). There is no
-    // watchos_debug device artifact, so fail early with guidance instead of a
-    // generic "engine not found". The Simulator debug build is the debug path.
-    if (!simulator && watchosBuildInfo.buildInfo.mode == BuildMode.debug) {
-      throwToolExit(
-        'Debug mode is not supported on a physical Apple Watch: it requires a '
-        'JIT engine, which cannot be built for watchOS (the device SDK removes '
-        'the Mach APIs the Dart JIT VM relies on).\n'
-        'Use one of:\n'
-        '  flutter-watchos build watchos --simulator   # debug, on the Simulator\n'
-        '  flutter-watchos build watchos --profile      # AOT, on a physical watch\n'
-        '  flutter-watchos build watchos --release      # AOT, on a physical watch',
-      );
-    }
 
     await _bundleBuilder(
       project: project,
