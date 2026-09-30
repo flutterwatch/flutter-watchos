@@ -141,6 +141,9 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   @override
   Stream<String> get logLines => _linesController.stream;
 
+  @override
+  String toString() => name;
+
   /// Starts streaming logs from the physical device using devicectl.
   Future<void> startLogStream(String deviceId) async {
     _logProcess = await globals.processManager.start(<String>[
@@ -322,20 +325,52 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
 
 /// A log reader that captures logs from a watchOS simulator app via unified
 /// logging (`xcrun simctl spawn <device> log stream --style json`).
+///
+/// As stock's Simulator reader does, it starts its `log stream` when the first
+/// listener subscribes and stops it when the last one cancels. `run` listens
+/// before `startApp` has built the app and booted the Simulator, so that first
+/// start can fail; [ensureStarted] starts the stream again after the boot.
 class WatchosSimulatorLogReader implements DeviceLogReader {
-  WatchosSimulatorLogReader(this.name);
+  /// Creates a reader for the Simulator [deviceId], named [name].
+  ///
+  /// Without a [deviceId] the reader never starts a stream; lines can still be
+  /// fed to it with [processLogLine].
+  WatchosSimulatorLogReader(this.name, {String? deviceId, Logger? logger})
+    : _deviceId = deviceId,
+      _logger = logger;
 
-  final StreamController<String> _linesController = StreamController<String>.broadcast();
+  final String? _deviceId;
+  final Logger? _logger;
+  Logger get _log => _logger ?? globals.logger;
 
+  late final _linesController = StreamController<String>.broadcast(
+    onListen: _onListen,
+    onCancel: _stop,
+  );
+
+  /// The running `log stream` process, if any.
   Process? _logProcess;
 
-  final Completer<void> _readyCompleter = Completer<void>();
+  /// A start in progress, so a second caller joins it instead of starting
+  /// another process.
+  Future<void>? _starting;
 
-  /// Completes once `simctl log stream` has emitted its `Filtering the log
-  /// data using …` preamble, i.e. it is actually live and will capture
-  /// subsequent events. Callers must await this (with a timeout) before
-  /// launching the app, otherwise the VM-service banner — printed by the
-  /// embedder within ~40ms of launch — races ahead of the stream and is lost.
+  /// Whether the current process has printed its preamble.
+  bool _live = false;
+
+  /// Whether the current stream was already restarted once after it died.
+  bool _restarted = false;
+
+  bool _disposed = false;
+
+  Completer<void> _readyCompleter = Completer<void>();
+
+  /// Completes once the current `log stream` process has emitted its
+  /// `Filtering the log data using …` preamble, i.e. it is actually live and
+  /// will capture subsequent events. Each process gets its own completer.
+  /// Callers must await this (with a timeout) before launching the app,
+  /// otherwise the VM Service line, printed by the embedder within about 40 ms
+  /// of launch, races ahead of the stream and is lost.
   Future<void> get ready => _readyCompleter.future;
 
   @override
@@ -344,62 +379,136 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
   @override
   Stream<String> get logLines => _linesController.stream;
 
-  /// Starts streaming unified logs from the simulator, filtered for the app.
-  Future<void> startLogStream(String deviceId) async {
-    // Mirror the class of logs `flutter run` surfaces on iOS (see
-    // launchDeviceUnifiedLogging in flutter_tools' ios/simulators.dart), adapted
-    // to the watchOS embedder. iOS keys off `senderImagePath ENDSWITH "/Flutter"`
-    // because the framework logs via os_log from the Flutter.framework image. The
-    // watchOS embedder instead routes engine + Dart logs through
-    // `log_message_callback` → `NSLog("[flutter:<tag>] ...")` inside the watch
-    // app's `Runner` process (sender = Foundation), so we match the flutter tag
-    // in the message text, plus Swift fatal/assertion errors and anything the
-    // Runner binary itself emits — while excluding the watchOS/UIKit system
-    // spam that shares the `Runner` process. Same structure and noise filters as
-    // iOS.
-    const predicate =
-        'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND ( '
-        'eventMessage CONTAINS "[flutter:" '
-        'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
-        'OR processImageUUID == senderImageUUID '
-        ') AND NOT(eventMessage CONTAINS " libxpc.dylib ") '
-        'AND NOT(eventMessage BEGINSWITH "assertion failed: ")';
+  @override
+  String toString() => name;
 
-    _logProcess = await globals.processManager.start(<String>[
-      'xcrun',
-      'simctl',
-      'spawn',
-      deviceId,
-      'log',
-      'stream',
-      '--style',
-      'json',
-      '--predicate',
-      predicate,
-    ]);
+  /// The unified-log predicate: stock's (`launchDeviceUnifiedLogging` in
+  /// flutter_tools' `ios/simulators.dart`), with the watch app's process name
+  /// and without stock's three UIScene clauses, which a watch app never logs,
+  /// plus the `[flutter:` clause.
+  ///
+  /// Measured on 2026-09-29 (spec 0005, F4): Dart output reaches the unified
+  /// log through the embedder's `NSLog("[flutter:<tag>] …")` in the `Runner`
+  /// process, and engine lines such as `Unhandled Exception` come untagged
+  /// from `Flutter.framework/Flutter`, which the sender clause keeps. The
+  /// sender of the host module's own `NSLog` lines (app code, in
+  /// `Runner.debug.dylib` in a debug build) has not been measured, and no
+  /// clause names it yet.
+  @visibleForTesting
+  static const predicate =
+      'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND '
+      '(senderImagePath ENDSWITH "/Flutter" '
+      'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
+      'OR processImageUUID == senderImageUUID '
+      'OR eventMessage CONTAINS "[flutter:") AND '
+      'NOT(eventMessage CONTAINS ": could not find icon for representation -> com.apple.") AND '
+      'NOT(eventMessage BEGINSWITH "assertion failed: ") AND '
+      'NOT(eventMessage CONTAINS " libxpc.dylib ")';
 
-    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _markReadyIfPreamble(line);
-      _onUnifiedLoggingLine(line);
-    });
-
-    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _markReadyIfPreamble(line);
-      _onUnifiedLoggingLine(line);
-    });
-  }
-
-  void _markReadyIfPreamble(String line) {
-    if (!_readyCompleter.isCompleted && line.contains('Filtering the log data')) {
-      _readyCompleter.complete();
+  void _onListen() {
+    if (_deviceId != null) {
+      unawaited(_startIfIdle());
     }
   }
 
-  static final RegExp _eventMessageRegex = RegExp(r'"eventMessage"\s*:\s*(".*?")');
+  /// Starts the `log stream` unless one is running or starting, and re-arms
+  /// [ready] for the new process. `startApp` calls this after the boot.
+  Future<void> ensureStarted() => _startIfIdle();
+
+  Future<void> _startIfIdle() {
+    if (_disposed || _deviceId == null) {
+      return Future<void>.value();
+    }
+    if (_starting case final Future<void> starting) {
+      return starting;
+    }
+    if (_logProcess != null) {
+      return Future<void>.value();
+    }
+    _restarted = false;
+    return _starting = _launch().whenComplete(() => _starting = null);
+  }
+
+  Future<void> _launch() async {
+    if (_readyCompleter.isCompleted) {
+      _readyCompleter = Completer<void>();
+    }
+    _live = false;
+    final Process process;
+    try {
+      process = await globals.processManager.start(<String>[
+        'xcrun',
+        'simctl',
+        'spawn',
+        _deviceId!,
+        'log',
+        'stream',
+        '--style',
+        'json',
+        '--predicate',
+        predicate,
+      ]);
+    } on Exception catch (error) {
+      _log.printTrace('Could not start the Simulator log stream: $error');
+      return;
+    }
+    if (_disposed || !_linesController.hasListener) {
+      // Everyone left while the process was starting.
+      process.kill();
+      return;
+    }
+    _logProcess = process;
+    process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLine);
+    process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLine);
+    unawaited(process.exitCode.then((int code) => _onExit(process, code)));
+  }
+
+  void _onLine(String line) {
+    if (!_live && line.contains('Filtering the log data')) {
+      _live = true;
+      if (!_readyCompleter.isCompleted) {
+        _readyCompleter.complete();
+      }
+    }
+    _onUnifiedLoggingLine(line);
+  }
+
+  void _onExit(Process process, int code) {
+    if (!identical(process, _logProcess)) {
+      return; // Stopped on purpose.
+    }
+    _logProcess = null;
+    final bool wasLive = _live;
+    _live = false;
+    if (_disposed || !_linesController.hasListener) {
+      return;
+    }
+    if (!wasLive) {
+      // A Simulator that is still shut down refuses `spawn`. The stream
+      // starts again once startApp has booted it.
+      _log.printTrace('The Simulator log stream ended before it went live (exit $code).');
+      return;
+    }
+    if (_restarted) {
+      _log.printTrace('The Simulator log stream ended again (exit $code); not restarting it.');
+      return;
+    }
+    _restarted = true;
+    _log.printTrace('The Simulator log stream ended (exit $code); restarting it once.');
+    _starting = _launch().whenComplete(() => _starting = null);
+  }
+
+  void _stop() {
+    final Process? process = _logProcess;
+    _logProcess = null;
+    _live = false;
+    process?.kill();
+  }
+
+  // Greedy, as stock's (`simulators.dart`): `log stream --style json` prints
+  // one field per line, so the message runs to the line's last quote, and an
+  // escaped quote inside it is not the end.
+  static final RegExp _eventMessageRegex = RegExp(r'.*"eventMessage"\s*:\s*(".*")');
 
   /// Processes a single line from the unified log stream.
   @visibleForTesting
@@ -431,7 +540,8 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
 
   @override
   void dispose() {
-    _logProcess?.kill();
+    _disposed = true;
+    _stop();
     if (!_linesController.isClosed) {
       _linesController.close();
     }
@@ -471,6 +581,10 @@ class WatchosDevice extends Device {
   late final DartDevelopmentService _dds = WatchosDartDevelopmentService(logger: logger);
 
   DeviceLogReader? _logReader;
+
+  /// startApp's own subscription to the Simulator log stream, held from the
+  /// launch until the app is stopped or the device is disposed.
+  StreamSubscription<String>? _launchHold;
 
   /// Mac half of the VM Service relay for a profile run on a physical watch.
   WatchosVmRelay? _vmRelay;
@@ -746,8 +860,14 @@ class WatchosDevice extends Device {
     // VM-service banner that the log stream below is waiting to capture.
     await globals.processUtils.run(<String>['xcrun', 'simctl', 'terminate', id, bundleId]);
 
-    final logReader = (_logReader ??= WatchosSimulatorLogReader(name)) as WatchosSimulatorLogReader;
-    await logReader.startLogStream(id);
+    final logReader = await getLogReader() as WatchosSimulatorLogReader;
+    // Hold the stream from here until the app is stopped, so that neither
+    // discovery's cancel below nor a late listener such as drive's ever meets
+    // a stopped stream.
+    _launchHold ??= logReader.logLines.listen(null);
+    // A reader that started on run's early listen, before the boot, may have
+    // failed; start it again now. A live stream is reused.
+    await logReader.ensureStarted();
 
     // Wait until the log stream is actually live before launching, otherwise the
     // embedder prints the VM-service URI (~40ms after launch) before the stream
@@ -1212,6 +1332,8 @@ class WatchosDevice extends Device {
       return false;
     }
 
+    await _launchHold?.cancel();
+    _launchHold = null;
     _logReader?.dispose();
     _logReader = null;
 
@@ -1297,7 +1419,7 @@ class WatchosDevice extends Device {
     bool includePastLogs = false,
   }) {
     if (isSimulator) {
-      return _logReader ??= WatchosSimulatorLogReader(name);
+      return _logReader ??= WatchosSimulatorLogReader(name, deviceId: id, logger: logger);
     }
     return _logReader ??= WatchosPhysicalDeviceLogReader(name);
   }
@@ -1315,6 +1437,8 @@ class WatchosDevice extends Device {
 
   @override
   Future<void> dispose() async {
+    await _launchHold?.cancel();
+    _launchHold = null;
     _logReader?.dispose();
   }
 }

@@ -45,8 +45,10 @@ run.log.print pass
 run.log.debug_print pass
 run.log.multiline pass
 run.log.flutter_error pass
-run.log.quote xfail F5 a message with a double quote is cut and shown raw
-run.log.unhandled_exception xfail F4 engine error lines, such as Unhandled Exception, never reach the console
+# F5, fixed: the greedy eventMessage capture keeps a message with a quote whole.
+run.log.quote pass
+# F4, fixed: the predicate keeps untagged engine lines from Flutter.framework.
+run.log.unhandled_exception pass
 run.log.stdout xfail F6 dart:io stdout writes are lost on the Simulator
 run.log.stderr xfail F6 dart:io stderr writes are lost on the Simulator
 
@@ -54,12 +56,15 @@ run.log.stderr xfail F6 dart:io stderr writes are lost on the Simulator
 # criterion 21, F8)
 modes.profile_no_stack_trace pass
 
+# logs -d <sim> (0005 criterion 18). F3, fixed: the reader is named after the
+# device and starts its stream on the first listen.
+logs.header pass
+logs.markers pass
+
 # Known limitations
 vm.cpu_samples xfail F1 the CPU profiler records no samples on the Simulator
 vm.profiler_flag xfail F2 the Simulator launch passes no debugging options, so the profiler is off
 run.start_paused xfail F2 --start-paused does not reach the app on the Simulator
-logs.header xfail F3 logs names the log reader "Instance of ..." instead of the device
-logs.markers xfail F3 logs never starts the log stream, so it prints no app output
 machine.app_started xfail F7 run --machine stops at the app start with a logger error
 screenshot.png xfail F9 screenshot of a Simulator is refused or writes an empty file
 drive.integration_test xfail F10 drive warns that the integration_test plugin was not detected

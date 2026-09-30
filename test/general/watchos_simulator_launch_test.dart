@@ -27,15 +27,19 @@ const _simId = 'sim-1';
 const _bundleId = 'com.example.demo';
 const _appPath = '/build/watchos/Debug-watchsimulator/Runner.app';
 const _preamble = 'Filtering the log data using "eventType = logEvent"';
+// `log stream --style json` prints one field per line.
 const _vmServiceLine =
-    '{ "eventMessage" : "[flutter:flutter] The Dart VM service is listening on '
-    'http://127.0.0.1:50123/abc=/", "eventType" : "logEvent" },';
+    '  "eventMessage" : "[flutter:flutter] The Dart VM service is listening on '
+    'http://127.0.0.1:50123/abc=/",';
 
 /// A `log stream` process whose output the test writes line by line, and
 /// which runs until the test ends it.
 class _LogStreamProcess extends FakeProcess {
   final _stdout = StreamController<List<int>>();
   final _exit = Completer<int>();
+
+  /// Whether the reader killed this process.
+  bool killed = false;
 
   @override
   Stream<List<int>> get stdout => _stdout.stream;
@@ -57,6 +61,7 @@ class _LogStreamProcess extends FakeProcess {
 
   @override
   bool kill([io.ProcessSignal signal = io.ProcessSignal.sigterm]) {
+    killed = true;
     end(-15);
     return true;
   }
@@ -118,14 +123,16 @@ void main() {
     isSimulator: true,
   );
 
+  WatchosApp app() => WatchosApp(id: _bundleId, projectDirectory: fileSystem.directory('/watchos'));
+
   /// Starts a prebuilt debug launch in fake time; the result lands in the
   /// returned list once the launch returns.
-  List<LaunchResult> start() {
+  List<LaunchResult> start([WatchosDevice? device]) {
     final results = <LaunchResult>[];
     time.run((_) {
-      simulator()
+      (device ?? simulator())
           .startApp(
-            WatchosApp(id: _bundleId, projectDirectory: fileSystem.directory('/watchos')),
+            app(),
             prebuiltApplication: true,
             debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
           )
@@ -251,6 +258,106 @@ void main() {
       expect(results, hasLength(1));
       expect(results.single.started, isTrue);
       expect(results.single.vmServiceUri, isNull);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  // `run` listens to the log reader before startApp has built the app and
+  // booted the Simulator, so the reader's first start can fail.
+  testUsingContext(
+    'a listen before the boot fails once; startApp starts the stream after the boot',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        // The early start, on a Simulator that is still shut down.
+        FakeCommand(
+          command: _logStream(logProcess).command,
+          exitCode: 149,
+          stderr: 'Unable to lookup in current state: Shutdown',
+        ),
+        ...upToTheLogStream(logProcess),
+        _run(
+          <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          onRun: (_) =>
+              Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
+        ),
+      ]);
+      final WatchosDevice device = simulator();
+      final lines = <String>[];
+      unawaited(
+        time.run((_) async {
+          final DeviceLogReader reader = await device.getLogReader();
+          reader.logLines.listen(lines.add);
+        }),
+      );
+      await _advance(time, const Duration(seconds: 1));
+      expect(logger.traceText, contains('ended before it went live'));
+
+      final List<LaunchResult> results = start(device);
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+
+      expect(results.single.vmServiceUri, Uri.parse('http://127.0.0.1:50123/abc=/'));
+      // The early listener, run's console, gets the lines of the second start.
+      expect(lines, contains(startsWith('flutter: The Dart VM service is listening on')));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
+  testUsingContext(
+    'startApp reuses a live stream, and holds it after discovery cancels',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        _logStream(logProcess),
+        _run(<String>['xcrun', 'simctl', 'boot', _simId]),
+        _run(<String>['open', '-a', 'Simulator']),
+        _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
+        _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
+        // No second log stream.
+        _run(
+          <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          onRun: (_) =>
+              Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
+        ),
+        _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
+      ]);
+      final WatchosDevice device = simulator();
+      final lines = <String>[];
+      late StreamSubscription<String> console;
+      unawaited(
+        time.run((_) async {
+          final DeviceLogReader reader = await device.getLogReader();
+          console = reader.logLines.listen(lines.add);
+        }),
+      );
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, Duration.zero);
+
+      final List<LaunchResult> results = start(device);
+      await _advance(time, const Duration(seconds: 1));
+      expect(results.single.vmServiceUri, isNotNull);
+
+      // Discovery has cancelled its subscription, and the console leaves too:
+      // startApp's own hold keeps the stream running.
+      await time.run((_) => console.cancel());
+      await _advance(time, Duration.zero);
+      expect(logProcess.killed, isFalse);
+
+      // Stopping the app releases it.
+      unawaited(time.run((_) => device.stopApp(app())));
+      await _advance(time, Duration.zero);
+      expect(logProcess.killed, isTrue);
+      expect(processManager, hasNoRemainingExpectations);
     },
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
