@@ -27,12 +27,15 @@ import 'watchos_builder.dart';
 import 'watchos_dds.dart';
 import 'watchos_vm_relay.dart';
 
-/// Engine switches the host reads at startup, and the environment variable
-/// each is spelled as on the command line that launches `run`.
+/// Switches a watch app reads from its environment at startup, each spelled
+/// as the environment variable given to the `run` that launches it.
 ///
-/// The engine reads most of these from its own environment already, but the
-/// app runs on the watch and inherits nothing from this Mac, so they have to
-/// be carried across deliberately. Forwarding them here is what makes
+/// Two readers consume them: the engine (the renderer, vsync and semantics
+/// switches) and the host, the Swift code linked into the app (the present
+/// path, the display clock and the CPU log; see `host/FlutterRunner.swift`).
+/// Either way the app runs on the watch or in the Simulator and inherits
+/// nothing from this Mac, so they have to be carried across deliberately.
+/// Forwarding them here is what makes
 ///
 ///   FLUTTER_WATCHOS_RENDERER=software flutter-watchos run --profile -d `<id>`
 ///
@@ -41,20 +44,30 @@ import 'watchos_vm_relay.dart';
 /// otherwise could not do at all: `--dart-entrypoint-args` is desktop-only and
 /// goes to Dart's `main`, not to the embedder.
 ///
-/// Values are passed through untouched; the engine is the only validator.
+/// Values are passed through untouched; the engine or the host is the only
+/// validator.
 @visibleForTesting
 const engineSwitchEnvironment = <String>[
-  // Renderer selection. Impeller on Metal is the engine's default, so the
-  // value that changes anything is "software" — "metal" only forces back what
-  // an app already gets, which is what a renderer A/B's Metal arm wants to say
-  // out loud. Note the empty string never travels (see below), so an A/B arm
-  // has to name its renderer rather than leaving it unset.
+  // Engine: renderer selection. Impeller on Metal is the engine's default, so
+  // the value that changes anything is "software" — "metal" only forces back
+  // what an app already gets, which is what a renderer A/B's Metal arm wants
+  // to say out loud. Note the empty string never travels (see below), so an
+  // A/B arm has to name its renderer rather than leaving it unset.
   'FLUTTER_WATCHOS_RENDERER',
-  // "fallback" restores the engine's free-running 60 Hz timer instead of the
-  // display clock. The A/B switch behind scripts/scroll_vsync_ab.sh.
+  // Engine: "fallback" restores the engine's own 60 Hz timer, which ticks
+  // whether or not a frame is due, instead of the display clock. The A/B
+  // switch behind scripts/scroll_vsync_ab.sh.
   'FLUTTER_WATCHOS_VSYNC',
-  // "0" turns the semantics bridge off.
+  // Engine: "0" turns the semantics bridge off.
   'FLUTTER_WATCHOS_SEMANTICS',
+  // Host: "texture" selects the experimental zero-copy present path, as
+  // FlutterWatchOSPresent does in Info.plist.
+  'FLUTTER_WATCHOS_PRESENT',
+  // Host: "continuous" keeps the display clock ticking while idle, for A/B
+  // measurements.
+  'FLUTTER_WATCHOS_DISPLAY_CLOCK',
+  // Host: a number of seconds; logs the app's CPU time over each such window.
+  'FLUTTER_WATCHOS_CPU_LOG',
 ];
 
 /// The subset of [engineSwitchEnvironment] this process was given, ready to

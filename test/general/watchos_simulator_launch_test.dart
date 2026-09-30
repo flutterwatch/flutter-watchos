@@ -40,6 +40,16 @@ const _vmServiceLine =
     '  "eventMessage" : "[flutter:flutter] The Dart VM service is listening on '
     'http://127.0.0.1:50123/abc=/",';
 
+/// The three engine switches and the three host switches, all set.
+const _switches = <String, String>{
+  'FLUTTER_WATCHOS_RENDERER': 'software',
+  'FLUTTER_WATCHOS_VSYNC': 'fallback',
+  'FLUTTER_WATCHOS_SEMANTICS': '0',
+  'FLUTTER_WATCHOS_PRESENT': 'texture',
+  'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+  'FLUTTER_WATCHOS_CPU_LOG': '2',
+};
+
 /// A `log stream` process whose output the test writes line by line, and
 /// which runs until the test ends it.
 class _LogStreamProcess extends FakeProcess {
@@ -199,6 +209,40 @@ void main() {
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
+    },
+  );
+
+  // Each of the six switches reaches the app once, through the variable
+  // simctl hands to the launched app.
+  testUsingContext(
+    'the launch carries every switch to the app as SIMCTL_CHILD_',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        FakeCommand(
+          command: const <String>['xcrun', 'simctl', 'launch', _simId, _bundleId],
+          environment: <String, String>{
+            for (final MapEntry<String, String> e in _switches.entries)
+              'SIMCTL_CHILD_${e.key}': e.value,
+          },
+          onRun: (_) =>
+              Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
+        ),
+      ]);
+
+      final List<LaunchResult> results = start();
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+
+      expect(results.single.started, isTrue);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+      Platform: () => FakePlatform(environment: _switches),
     },
   );
 

@@ -193,6 +193,16 @@ void main() {
   // The launch path a profile run takes on a watch, driven end to end with a
   // fake devicectl: install, wait for LaunchServices, start the relay, launch
   // through the console. No debugger is involved at any point.
+  // The three engine switches and the three host switches, all set.
+  const switches = <String, String>{
+    'FLUTTER_WATCHOS_RENDERER': 'software',
+    'FLUTTER_WATCHOS_VSYNC': 'fallback',
+    'FLUTTER_WATCHOS_SEMANTICS': '0',
+    'FLUTTER_WATCHOS_PRESENT': 'texture',
+    'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+    'FLUTTER_WATCHOS_CPU_LOG': '2',
+  };
+
   group('profile launch on a physical watch', () {
     late MemoryFileSystem fileSystem;
     late FakeProcessManager processManager;
@@ -275,6 +285,50 @@ void main() {
         ShutdownHooks: () => shutdownHooks,
         Platform: () => FakePlatform(
           environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10'},
+        ),
+      },
+    );
+
+    testUsingContext(
+      'carries every switch in the environment JSON, and none in the argv',
+      () async {
+        List<String>? launch;
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(
+            command: <String>['xcrun', 'devicectl', 'device', 'install', 'app', '--device', 'watch-1', appPath],
+          ),
+          appsQuery(),
+          FakeCommand(
+            command: <Pattern>[
+              'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
+              '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
+              RegExp('.*'), bundleId, '--enable-dart-profiling', '--disable-service-auth-codes',
+              '--vm-service-host=127.0.0.1', RegExp(r'^--vm-service-port=\d+$'),
+            ],
+            onRun: (List<String> command) => launch = command,
+          ),
+        ]);
+        final device = WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false);
+
+        await device.startApp(
+          WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+          prebuiltApplication: true,
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.profile),
+        );
+
+        expect(processManager, hasNoRemainingExpectations);
+        final environment = jsonDecode(launch![14]) as Map<String, Object?>;
+        for (final MapEntry<String, String> e in switches.entries) {
+          expect(environment[e.key], e.value);
+          expect(launch!.where((String a) => a.contains(e.key)), <String>[launch![14]]);
+        }
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        ShutdownHooks: () => shutdownHooks,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'FLUTTER_WATCHOS_RELAY_HOST': '192.0.2.10', ...switches},
         ),
       },
     );

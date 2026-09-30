@@ -81,6 +81,24 @@ void main() {
       );
     });
 
+    // The host reads these three (host/FlutterRunner.swift); the app inherits
+    // nothing from this Mac, so they travel like the engine's.
+    testWithoutContext('carries the host switches: present, display clock, CPU log', () {
+      expect(
+        engineSwitchesFromEnvironment(const <String, String>{
+          'FLUTTER_WATCHOS_PRESENT': 'texture',
+          'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+          'FLUTTER_WATCHOS_CPU_LOG': '2',
+        }),
+        <String, String>{
+          'FLUTTER_WATCHOS_PRESENT': 'texture',
+          'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+          'FLUTTER_WATCHOS_CPU_LOG': '2',
+        },
+      );
+      expect(engineSwitchEnvironment.toSet(), hasLength(engineSwitchEnvironment.length));
+    });
+
     testWithoutContext('ignores unrelated and empty variables', () {
       expect(
         engineSwitchesFromEnvironment(const <String, String>{
