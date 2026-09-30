@@ -68,7 +68,7 @@ void main() {
       expect(p.hasMatch('v3.44.1-tvos.1.2.0'), isFalse); // wrong platform infix
     });
 
-    test('matches a beta-suffixed release tag', () {
+    test('matches a release tag with a pre-release suffix', () {
       expect(
         WatchosUpgradeCommandRunner.latestReleaseTag(
           const <String>['v3.44.4-watchos.0.1.0-beta.1'],

@@ -111,7 +111,7 @@ void main() {
       expect(out.childFile('pubspec.yaml').existsSync(), isTrue);
     });
 
-    testWithoutContext('--dry-run previews findings without writing', () {
+    testWithoutContext('--dry-run reports findings without writing', () {
       final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       final Directory out = fs.directory('/out/gadget_watchos');
