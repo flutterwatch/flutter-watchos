@@ -1,0 +1,152 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'dart:async';
+
+import 'package:flutter_tools/src/application_package.dart';
+import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/io.dart';
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_watchos/commands/logs.dart';
+import 'package:flutter_watchos/watchos_device.dart';
+import 'package:test/fake.dart';
+
+import '../src/context.dart';
+import '../src/fake_process_manager.dart';
+import '../src/test_flutter_command_runner.dart';
+
+// `logs` on a watch: a Simulator streams through stock's command, and a
+// physical watch is refused with guidance before anything runs (spec 0005
+// criteria 18-19).
+
+class _FakeProcessSignal extends Fake implements ProcessSignal {
+  final _controller = StreamController<ProcessSignal>();
+
+  @override
+  Stream<ProcessSignal> watch() => _controller.stream;
+
+  @override
+  bool send(int pid) {
+    _controller.add(this);
+    return true;
+  }
+}
+
+class _NoPackages extends Fake implements ApplicationPackageFactory {
+  @override
+  Future<ApplicationPackage?> getPackageForPlatform(
+    TargetPlatform platform, {
+    BuildInfo? buildInfo,
+    File? applicationBinary,
+  }) async => null;
+}
+
+void main() {
+  late FakeDeviceManager deviceManager;
+  late FakeProcessManager processManager;
+  late BufferLogger logger;
+
+  setUp(() {
+    Cache.disableLocking();
+    deviceManager = FakeDeviceManager();
+    processManager = FakeProcessManager.empty();
+    logger = BufferLogger.test();
+  });
+
+  tearDown(Cache.enableLocking);
+
+  testUsingContext(
+    'logs -d <watch> exits non-zero with the guidance, and runs nothing',
+    () async {
+      deviceManager.attachedDevices.add(
+        WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false),
+      );
+      final command = WatchosLogsCommand(
+        sigint: _FakeProcessSignal(),
+        sigterm: _FakeProcessSignal(),
+      );
+
+      await expectLater(
+        createTestCommandRunner(command).run(<String>['logs', '-d', 'watch-1']),
+        throwsA(
+          isA<ToolExit>()
+              .having((ToolExit e) => e.exitCode, 'exitCode', anyOf(isNull, 1))
+              .having(
+                (ToolExit e) => e.message,
+                'message',
+                allOf(
+                  contains('logs cannot read a physical Apple Watch'),
+                  contains('flutter-watchos run -d watch-1 --profile'),
+                  contains('--watchos-log-to-file'),
+                ),
+              ),
+        ),
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      DeviceManager: () => deviceManager,
+      ProcessManager: () => processManager,
+      ApplicationPackageFactory: () => _NoPackages(),
+      Platform: () => FakePlatform(),
+    },
+  );
+
+  testUsingContext(
+    'logs -d <simulator> names the device and starts the log stream',
+    () async {
+      processManager.addCommand(
+        const FakeCommand(
+          command: <String>[
+            'xcrun',
+            'simctl',
+            'spawn',
+            'sim-1',
+            'log',
+            'stream',
+            '--style',
+            'json',
+            '--predicate',
+            WatchosSimulatorLogReader.predicate,
+          ],
+          stdout:
+              'Filtering the log data using "eventType = logEvent"\n'
+              '  "eventMessage" : "[flutter:flutter] SUITE_MARK_PRINT",\n',
+        ),
+      );
+      deviceManager.attachedDevices.add(
+        WatchosDevice(
+          'sim-1',
+          name: 'Apple Watch Series 11 (46mm)',
+          logger: logger,
+          isSimulator: true,
+        ),
+      );
+      final sigint = _FakeProcessSignal();
+      final command = WatchosLogsCommand(sigint: sigint, sigterm: _FakeProcessSignal());
+
+      final Future<void> run = createTestCommandRunner(
+        command,
+      ).run(<String>['logs', '-d', 'sim-1']);
+      await pumpEventQueue(times: 10);
+      sigint.send(1);
+      await run;
+
+      expect(testLogger.statusText, contains('Showing Apple Watch Series 11 (46mm) logs:'));
+      expect(testLogger.statusText, contains('flutter: SUITE_MARK_PRINT'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      DeviceManager: () => deviceManager,
+      ProcessManager: () => processManager,
+      ApplicationPackageFactory: () => _NoPackages(),
+      Platform: () => FakePlatform(),
+    },
+  );
+}

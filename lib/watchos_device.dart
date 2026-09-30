@@ -144,33 +144,6 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   @override
   String toString() => name;
 
-  /// Starts streaming logs from the physical device using devicectl.
-  Future<void> startLogStream(String deviceId) async {
-    _logProcess = await globals.processManager.start(<String>[
-      'xcrun',
-      'devicectl',
-      'device',
-      'process',
-      'launch',
-      '--terminate-existing',
-      '--device',
-      deviceId,
-      '--console',
-    ]);
-
-    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _processLine(line);
-    });
-
-    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _processLine(line);
-    });
-  }
-
   /// Launches the app on the watch and streams its console output as log
   /// lines.
   Future<void> startLogStreamForBundle(
