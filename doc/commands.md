@@ -135,6 +135,14 @@ where possible; watchOS-specific behaviour is called out per command.
   fails with "Test file not found" — the convention in this repo's examples is
   a single `test_driver/integration_test.dart` shared by every target.
 
+  Near the end of a run the app prints this warning:
+  `Warning: integration_test plugin was not detected.` It is expected: the
+  `integration_test` plugin has no watchOS registration, and the test
+  results still arrive. For the same reason `binding.takeScreenshot` does
+  not work on watchOS, under `drive` or under `test`.
+
+  To run the same tests without a driver file, see [`test`](#test).
+
 - ### `host`
 
   Report how the watch app ships to the App Store, and heal the wiring if
@@ -264,6 +272,16 @@ where possible; watchOS-specific behaviour is called out per command.
   ```sh
   flutter-watchos test
   ```
+
+  With a device id, `test` runs an integration test in the app on a watch
+  Simulator, with no `test_driver/` file. This works on the Simulator only.
+
+  ```sh
+  flutter-watchos test integration_test/<file>.dart -d <simulator-id>
+  ```
+
+  `binding.takeScreenshot` does not work on watchOS here either (see
+  [`drive`](#drive)).
 
 - ### `upgrade`
 
