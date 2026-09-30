@@ -78,6 +78,7 @@ Apps see honest-but-compatible platform values:
 | `Platform.isIOS` | `true` | watchOS is iOS-family; keeps Cupertino defaults, fonts, transitions |
 | `Platform.isWatchOS` | `true` | First-class watch check |
 | `defaultTargetPlatform` | `TargetPlatform.iOS` | Same reason as `isIOS` |
+| `Platform.environment` | empty | As on iOS, Dart reads no environment variables here. For the paths `HOME` or `TMPDIR` would give, use `path_provider` or `Directory.systemTemp` |
 
 Branch watch-specific UI on `FlutterWatchosPlatform.isWatch` (or
 `operatingSystem == "watchos"`), never on screen size alone. `isWatchOS` comes
