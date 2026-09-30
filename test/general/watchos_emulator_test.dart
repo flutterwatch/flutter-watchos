@@ -160,6 +160,37 @@ void main() {
       expect(WatchosEmulator.parseDevicectlOutput(json, logger), isEmpty);
     });
 
+    // Xcode 27 lists this capability for a connected watch that can take
+    // screenshots (spec 0005 criterion 27).
+    testWithoutContext('reads the capture-screenshot capability', () {
+      const json = '''
+{"result":{"devices":[{
+  "identifier":"w-able",
+  "capabilities":[
+    {"featureIdentifier":"com.apple.coredevice.feature.launchapplication","name":"Launch Application"},
+    {"featureIdentifier":"com.apple.coredevice.feature.capturescreenshot","name":"Capture Screenshot"}
+  ],
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"Able Watch"},
+  "connectionProperties":{"tunnelState":"connected"}
+},{
+  "identifier":"w-unable",
+  "capabilities":[{"featureIdentifier":"com.apple.coredevice.feature.launchapplication"}],
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"Unable Watch"},
+  "connectionProperties":{"tunnelState":"connected"}
+}]}}''';
+
+      final List<WatchosDevice> devices = WatchosEmulator.parseDevicectlOutput(json, logger);
+
+      expect(
+        devices.first.coreDeviceCapabilities,
+        contains(WatchosDevice.captureScreenshotCapability),
+      );
+      expect(devices.first.supportsScreenshot, isTrue);
+      expect(devices.last.supportsScreenshot, isFalse);
+    });
+
     testWithoutContext('returns empty on missing result / devices keys', () {
       expect(WatchosEmulator.parseDevicectlOutput('{}', logger), isEmpty);
       expect(WatchosEmulator.parseDevicectlOutput('{"result":{}}', logger), isEmpty);

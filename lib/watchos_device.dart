@@ -218,6 +218,19 @@ class SimulatorLaunchOptions {
   final String? warning;
 }
 
+/// Why a screenshot of a physical watch failed; `screenshot` prints it and
+/// exits non-zero.
+class WatchScreenshotException implements Exception {
+  /// Creates the exception with devicectl's [message].
+  const WatchScreenshotException(this.message);
+
+  /// devicectl's message, then what to check.
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   /// Creates a log reader for a physical watchOS device.
@@ -636,6 +649,7 @@ class WatchosDevice extends Device {
     required this.logger,
     required this.isSimulator,
     this.osVersion,
+    this.coreDeviceCapabilities = const <String>{},
   }) : super(
          category: Category.mobile,
          platformType: PlatformType.custom,
@@ -651,6 +665,14 @@ class WatchosDevice extends Device {
   /// Human-readable OS version such as `watchOS 11.0 22R5xxx` (physical) or
   /// `watchOS 11.0` (simulator).
   final String? osVersion;
+
+  /// The CoreDevice feature identifiers `devicectl list devices` lists for a
+  /// physical watch, such as [captureScreenshotCapability]. Empty for a
+  /// Simulator, and for a watch that is not connected.
+  final Set<String> coreDeviceCapabilities;
+
+  /// The CoreDevice capability behind `devicectl device capture screenshot`.
+  static const captureScreenshotCapability = 'com.apple.coredevice.feature.capturescreenshot';
 
   /// DDS has to bind on the same address family as the watch's Dart VM Service,
   /// which `DebuggingOptions.ipv6` (i.e. `--ipv6`) does not know about.
@@ -1567,12 +1589,18 @@ class WatchosDevice extends Device {
   final DevicePortForwarder portForwarder = const NoOpDevicePortForwarder();
 
   /// A watch Simulator takes screenshots through `simctl io`, as stock iOS
-  /// Simulators do.
+  /// Simulators do. A physical watch takes them through devicectl when its
+  /// CoreDevice capabilities say it can; otherwise stock's `screenshot`
+  /// refuses it by name."
   @override
-  bool get supportsScreenshot => isSimulator;
+  bool get supportsScreenshot =>
+      isSimulator || coreDeviceCapabilities.contains(captureScreenshotCapability);
 
   @override
   Future<void> takeScreenshot(File outputFile) async {
+    if (!isSimulator) {
+      return _takeWatchScreenshot(outputFile);
+    }
     final RunResult result = await globals.processUtils.run(<String>[
       'xcrun',
       'simctl',
@@ -1584,6 +1612,40 @@ class WatchosDevice extends Device {
     if (result.exitCode != 0) {
       logger.printError('Unable to take screenshot of $id:\n${result.stderr}');
     }
+  }
+
+  /// Takes a screenshot of a physical watch through Xcode 27's devicectl.
+  ///
+  /// Throws a [WatchScreenshotException] with devicectl's message when it
+  /// fails, or writes nothing, and leaves no file behind: an empty PNG would
+  /// look like a screenshot.
+  Future<void> _takeWatchScreenshot(File outputFile) async {
+    final RunResult result = await globals.processUtils.run(<String>[
+      'xcrun',
+      'devicectl',
+      'device',
+      'capture',
+      'screenshot',
+      '--device',
+      id,
+      '--destination',
+      outputFile.path,
+    ]);
+    final bool written = outputFile.existsSync() && outputFile.lengthSync() > 0;
+    if (result.exitCode == 0 && written) {
+      return;
+    }
+    if (outputFile.existsSync()) {
+      outputFile.deleteSync();
+    }
+    final String message = <String>[
+      result.stderr.trim(),
+      result.stdout.trim(),
+    ].firstWhere((String m) => m.isNotEmpty, orElse: () => 'devicectl wrote no screenshot.');
+    throw WatchScreenshotException(
+      '$message\n'
+      'Screenshots of a physical Apple Watch need Xcode 27 or later.',
+    );
   }
 
   @override

@@ -297,6 +297,12 @@ class WatchosEmulator {
           logger: logger,
           isSimulator: false,
           osVersion: osVersion.isEmpty ? null : osVersion,
+          coreDeviceCapabilities: <String>{
+            for (final Object? capability
+                in deviceMap['capabilities'] as List<Object?>? ?? const <Object?>[])
+              if (capability is Map && capability['featureIdentifier'] is String)
+                capability['featureIdentifier'] as String,
+          },
         ),
       );
     }
