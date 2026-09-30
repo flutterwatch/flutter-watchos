@@ -8,15 +8,24 @@ import 'package:flutter_watchos/flutter_watchos.dart';
 import 'package:flutter_watchos/src/watchos_ffi_bindings_web.dart' as web;
 
 /// Fake bindings for [WatchStatusBar]: stands in for the clock band the watch
-/// host reports.
+/// host reports and for the flag the host reads to hide the clock.
 class _FakeStatusBarBindings extends WatchOSNativeBindings {
   _FakeStatusBarBindings({this.band = -1}) : super.forTesting();
 
   /// What the host reported, or -1 when nothing has.
   double band;
 
+  /// The hide-the-clock flag as the host would read it.
+  bool clockHidden = false;
+
   @override
   double get clockBandHeight => band;
+
+  @override
+  bool get statusBarHidden => clockHidden;
+
+  @override
+  set statusBarHidden(bool hidden) => clockHidden = hidden;
 }
 
 /// What one build of [_Probe] saw.
@@ -165,6 +174,60 @@ void main() {
       await tester.pumpWidget(_Probe(builds));
 
       expect(builds.last.height, 17);
+    });
+  });
+
+  group('WatchStatusBar.hidden', () {
+    late _FakeStatusBarBindings fake;
+    late int frames;
+
+    setUp(() {
+      fake = _FakeStatusBarBindings();
+      frames = 0;
+      WatchStatusBar.bindingsOverride = fake;
+      WatchStatusBar.isWatchOverride = true;
+      WatchStatusBar.scheduleFrameOverride = () => frames++;
+    });
+
+    tearDown(() {
+      WatchStatusBar.bindingsOverride = null;
+      WatchStatusBar.isWatchOverride = null;
+      WatchStatusBar.scheduleFrameOverride = null;
+    });
+
+    test('a new value asks for one frame', () {
+      WatchStatusBar.hidden = true;
+
+      expect(fake.clockHidden, isTrue);
+      expect(WatchStatusBar.hidden, isTrue);
+      expect(frames, 1);
+    });
+
+    test('the same value again asks for no frame', () {
+      WatchStatusBar.hidden = true;
+      WatchStatusBar.hidden = true;
+      expect(frames, 1);
+
+      WatchStatusBar.hidden = false;
+      WatchStatusBar.hidden = false;
+      expect(fake.clockHidden, isFalse);
+      expect(frames, 2);
+    });
+
+    test('setting the value it already has asks for no frame', () {
+      WatchStatusBar.hidden = false;
+
+      expect(frames, 0);
+    });
+
+    test('off the watch it does nothing', () {
+      WatchStatusBar.isWatchOverride = false;
+
+      WatchStatusBar.hidden = true;
+
+      expect(fake.clockHidden, isFalse);
+      expect(WatchStatusBar.hidden, isFalse);
+      expect(frames, 0);
     });
   });
 

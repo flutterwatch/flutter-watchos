@@ -29,8 +29,11 @@ package gives the clock's band to content that has to start below it:
 
 * **Added:** `WatchStatusBar.heightOf(context)`, the height of the band at
   the top of the screen that the clock sits in. `WatchOSNativeBindings`
-  gains `clockBandHeight`, and `WatchStatusBar` gains the test seam
-  `bindingsOverride`, marked `@visibleForTesting`.
+  gains `clockBandHeight`.
+* **Fixed:** setting `WatchStatusBar.hidden` to a new value now asks for a
+  frame, so the clock hides or shows even on a screen that does not repaint.
+  `WatchStatusBar` gains three test seams marked `@visibleForTesting`:
+  `bindingsOverride`, `isWatchOverride` and `scheduleFrameOverride`.
 
 The example and the API docs changed too:
 

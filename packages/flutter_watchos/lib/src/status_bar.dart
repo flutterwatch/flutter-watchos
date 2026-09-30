@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:flutter/widgets.dart';
 
 import 'watchos_ffi_bindings.dart';
@@ -22,6 +24,10 @@ import 'watchos_info_platform.dart' as platform;
 /// WatchStatusBar.hidden = false;  // back to the system default
 /// ```
 ///
+/// The change shows on the next frame, which setting [hidden] to a new value
+/// requests, so the clock hides or shows even on a screen that does not
+/// repaint.
+///
 /// watchOS offers no way to *reposition* the clock — it is fixed by the
 /// system. An app that wants the time in a custom place hides the system one
 /// and renders its own clock widget in Flutter.
@@ -41,21 +47,49 @@ abstract final class WatchStatusBar {
     return _bindings!;
   }
 
+  static bool? _isWatchOverride;
+
+  static bool get _isWatch => _isWatchOverride ?? platform.isWatch;
+
+  static void Function()? _scheduleFrameOverride;
+
   /// Test seam: replaces the native bindings. `null` restores the real ones.
   @visibleForTesting
   static set bindingsOverride(WatchOSNativeBindings? bindings) {
     _bindings = bindings;
   }
 
+  /// Test seam: makes [hidden] behave as on a watch (`true`) or as off it
+  /// (`false`). `null` restores the platform check.
+  @visibleForTesting
+  static set isWatchOverride(bool? isWatch) {
+    _isWatchOverride = isWatch;
+  }
+
+  /// Test seam: called instead of `PlatformDispatcher.scheduleFrame` when
+  /// [hidden] changes. `null` restores it.
+  @visibleForTesting
+  static set scheduleFrameOverride(void Function()? scheduleFrame) {
+    _scheduleFrameOverride = scheduleFrame;
+  }
+
   /// Whether the app has requested the system time hidden.
-  static bool get hidden => platform.isWatch && _native.statusBarHidden;
+  static bool get hidden => _isWatch && _native.statusBarHidden;
 
   /// Requests the system time hidden (`true`) or shown (`false`, default).
   ///
-  /// The watch host applies the change on the next rendered frame.
+  /// The change shows on the next frame, which the setter requests when the
+  /// value changes, so it takes effect even on a screen that does not
+  /// repaint. Setting the current value again requests nothing. It is safe to
+  /// set before `runApp`: the first frame then carries the value.
   static set hidden(bool value) {
-    if (!platform.isWatch) return;
-    _native.statusBarHidden = value;
+    if (!_isWatch) return;
+    final WatchOSNativeBindings native = _native;
+    if (native.statusBarHidden == value) return;
+    native.statusBarHidden = value;
+    // A frame from dart:ui, not from SchedulerBinding: this needs no binding,
+    // so it neither throws nor creates one before runApp.
+    (_scheduleFrameOverride ?? PlatformDispatcher.instance.scheduleFrame)();
   }
 
   /// The height of the band at the top of the screen that the clock sits in,
