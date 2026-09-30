@@ -16,12 +16,10 @@ import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
-import 'package:flutter_tools/src/commands/channel.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/commands/daemon.dart';
 import 'package:flutter_tools/src/commands/debug_adapter.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
-import 'package:flutter_tools/src/commands/downgrade.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
@@ -48,9 +46,11 @@ import 'build_targets/watchos_hooks.dart' show WatchosHookRunner;
 import 'commands/attach.dart';
 import 'commands/build.dart';
 import 'commands/build_registry.dart';
+import 'commands/channel.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
+import 'commands/downgrade.dart';
 import 'commands/drive.dart';
 import 'commands/host.dart';
 import 'commands/login.dart';
@@ -105,12 +105,10 @@ Future<void> main(List<String> args) async {
       // Commands forwarded directly from flutter_tools — these have no
       // watchOS-specific behaviour, so we register them as-is.
       AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
-      ChannelCommand(verboseHelp: verboseHelp),
       ConfigCommand(verboseHelp: verboseHelp),
       DaemonCommand(hidden: !verboseHelp),
       DebugAdapterCommand(verboseHelp: verboseHelp),
       DoctorCommand(verbose: verbose),
-      DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
       EmulatorsCommand(),
       GenerateCommand(),
       GenerateLocalizationsCommand(
@@ -132,6 +130,10 @@ Future<void> main(List<String> args) async {
       // upstream (which stock UpgradeCommand would do, breaking the
       // engine-artifact pin).
       WatchosUpgradeCommand(verboseHelp: verboseHelp),
+      // `channel` shows the pin and `downgrade` refuses: the stock commands
+      // move the pinned SDK, which the next run would reset.
+      WatchosChannelCommand(),
+      WatchosDowngradeCommand(),
       WatchosAttachCommand(
         verboseHelp: verboseHelp,
         stdio: globals.stdio,
