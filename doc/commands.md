@@ -43,10 +43,15 @@ where possible; watchOS-specific behaviour is called out per command.
   flutter-watchos build watchos --simulator
   ```
 
-  For a physical watch, build AOT:
+  For a physical watch, build AOT. Profile mode keeps logging and DevTools:
 
   ```sh
   flutter-watchos build watchos --profile
+  ```
+
+  Release mode is the fastest, and the one you ship:
+
+  ```sh
   flutter-watchos build watchos --release
   ```
 
@@ -211,14 +216,21 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos login
-  flutter-watchos logout
   ```
 
   `login` prints a URL plus a short code; approve it in a browser and the
   CLI finishes automatically. Credentials are stored in
   `~/.flutter-watchos/credentials.json`, and the next build downloads the
-  engines the machine was missing. `logout` revokes this machine's sign-in
-  on the service, then removes the file. See [accounts.md](accounts.md).
+  engines the machine was missing.
+
+  `logout` revokes this machine's sign-in on the service, then removes the
+  file:
+
+  ```sh
+  flutter-watchos logout
+  ```
+
+  See [accounts.md](accounts.md).
 
 - ### `precache`
 

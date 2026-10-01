@@ -39,25 +39,31 @@ being down — is ignored. If you are not signed in, nothing is sent.
 
 ## Turning it off
 
-It is on by default. Any one of these three turns it off:
+It is on by default. Any one of these three turns it off.
 
-- **On this machine:** `flutter-watchos build-registry --disable`. It stays
-  off until you run `flutter-watchos build-registry --enable`.
-- **In one shell, or a CI job:** `export FLUTTER_WATCHOS_BUILD_REGISTRY=0`.
-  It holds for every build started from that shell until the shell closes.
-  The values `0`, `false`, `off` and `no`, in upper or lower case, turn it
-  off. Any other value, `1` included, leaves the choice to the setting
-  above. Set to one of those four, the variable wins over the setting:
-  `build-registry --enable` does not turn the registry back on in that
-  shell. To keep it off in every new terminal, add the line to `~/.zshrc`.
-- **For one build:** add `--no-register-build` to
-  `flutter-watchos build watchos --release`.
-
-Each line below is one of the three, ready to paste on its own:
+**On this machine.** It stays off until you run
+`flutter-watchos build-registry --enable`:
 
 ```sh
 flutter-watchos build-registry --disable
+```
+
+**In one shell, or a CI job.** It holds for every build started from that
+shell until the shell closes:
+
+```sh
 export FLUTTER_WATCHOS_BUILD_REGISTRY=0
+```
+
+The values `0`, `false`, `off` and `no`, in upper or lower case, turn it off.
+Any other value, `1` included, leaves the choice to the setting above. Set to
+one of those four, the variable wins over the setting:
+`build-registry --enable` does not turn the registry back on in that shell.
+To keep it off in every new terminal, add the line to `~/.zshrc`.
+
+**For one build.** Add `--no-register-build` to the release build:
+
+```sh
 flutter-watchos build watchos --release --no-register-build
 ```
 

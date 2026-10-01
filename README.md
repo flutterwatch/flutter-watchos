@@ -53,10 +53,15 @@ Build and run on a watchOS Simulator (debug, with hot reload and DevTools):
 flutter-watchos run -d <simulator_id>
 ```
 
-Build and run on a paired Apple Watch (AOT; profile has logging and DevTools):
+Build and run on a paired Apple Watch in profile mode (AOT, with logging and DevTools):
 
 ```sh
 flutter-watchos run -d <watch_id> --profile
+```
+
+Or in release mode (AOT, and fastest):
+
+```sh
 flutter-watchos run -d <watch_id> --release
 ```
 
