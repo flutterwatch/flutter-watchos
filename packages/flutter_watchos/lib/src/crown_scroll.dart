@@ -52,10 +52,12 @@ const String _crownScrollMarker = 'flutter_watchos.crownScroll';
 /// between the insets, and no row ever shows above or below it.
 ///
 /// ```dart
-/// // A ListView or GridView with no padding takes the insets itself.
+/// // A ListView or GridView with no padding takes the top and bottom insets
+/// // itself and leaves the side insets to its rows. A plain Text row ignores
+/// // them, runs from edge to edge, and loses glyphs to the rounded corners.
 /// WatchCrownScroll(child: ListView(children: rows));
 ///
-/// // With your own padding, add the insets to it.
+/// // With your own padding, add the insets to it: the sides get them too.
 /// WatchCrownScroll(
 ///   child: ListView(
 ///     padding: MediaQuery.paddingOf(context) +
