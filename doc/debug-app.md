@@ -80,7 +80,7 @@ the watch slept; if it kept rendering, the transport failed.
 
 What works, measured on an Apple Watch Series 10 (watchOS 26.5):
 
-- **Live DevTools** — attaches, inspects isolates, evaluates expressions.
+- **Live DevTools** — attaches and inspects isolates.
 - **The Flutter Frames chart** — the framework's `Flutter.Frame` events reach
   DevTools with per-frame build, raster and vsync-overhead timings. Measured at
   a sustained 59.4 frames/second on a Series 10.
@@ -135,6 +135,9 @@ Current limits:
   (`SchedulerBinding.addTimingsCallback`) runs in-process and costs nothing on
   the wire.
 - **Hot reload is Simulator-only** (AOT on device, as above).
+- **Breakpoints and expression evaluation work only on the Simulator.** A
+  watch runs the profile (AOT) VM, which has no debugger: it answers those
+  requests with "Debugger is disabled in AOT mode."
 
 ## Attaching
 

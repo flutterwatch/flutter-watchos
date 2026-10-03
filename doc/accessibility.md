@@ -49,6 +49,10 @@ with SwiftUI's modifiers rather than Flutter's.
 These update while your app is running, so an app that respects
 `MediaQuery.textScaler` grows its text with the watch's own setting.
 
+Bold Text and Increase Contrast are not forwarded to Flutter, so
+`MediaQuery.boldText` and `.highContrast` stay false. `MediaQuery.invertColors`
+is always false: the watch has no Invert Colours setting.
+
 ## What watchOS does not give us
 
 **`SemanticsService.announce()` does nothing.** watchOS has no API to make a
@@ -57,10 +61,6 @@ screen reader speak an arbitrary string: UIKit's
 equivalent. The call is accepted and ignored. If a change matters to a VoiceOver
 user, put it somewhere they can navigate to — a `liveRegion: true` node, or a
 label that reflects the new state — instead of announcing it.
-
-**Bold Text, Increase Contrast, and Invert Colours are not reported.** watchOS
-exposes no query for them, so `MediaQuery.boldText`, `.highContrast`, and
-`.invertColors` stay false rather than being guessed at.
 
 ## Not just VoiceOver
 

@@ -35,14 +35,23 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Build the watch app bundle (`Runner.app`).
 
-  ```sh
-  # Simulator — always a debug (JIT) build; the default mode is lowered
-  # automatically (an explicit --release/--profile with --simulator errors,
-  # because there is no AOT Simulator engine)
-  flutter-watchos build watchos --simulator
+  For the Simulator it is always a debug (JIT) build. The default mode is
+  lowered automatically, and an explicit `--release` or `--profile` with
+  `--simulator` is an error, because there is no AOT Simulator engine:
 
-  # Physical watch, AOT
+  ```sh
+  flutter-watchos build watchos --simulator
+  ```
+
+  For a physical watch, build AOT. Profile mode keeps logging and DevTools:
+
+  ```sh
   flutter-watchos build watchos --profile
+  ```
+
+  Release mode is the fastest, and the one you ship:
+
+  ```sh
   flutter-watchos build watchos --release
   ```
 
@@ -68,11 +77,16 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Create a new Flutter project with a watchOS runner.
 
-  ```sh
-  # New app
-  flutter-watchos create my_app --platforms=watchos
+  A new app:
 
-  # Add watchOS to an existing Flutter project (run in the project dir)
+  ```sh
+  flutter-watchos create my_app --platforms=watchos
+  ```
+
+  To add watchOS to an existing Flutter project, run this in the project
+  directory:
+
+  ```sh
   flutter-watchos create . --platforms=watchos
   ```
 
@@ -126,6 +140,14 @@ where possible; watchOS-specific behaviour is called out per command.
   fails with "Test file not found" — the convention in this repo's examples is
   a single `test_driver/integration_test.dart` shared by every target.
 
+  Near the end of a run the app prints this warning:
+  `Warning: integration_test plugin was not detected.` It is expected: the
+  `integration_test` plugin has no watchOS registration, and the test
+  results still arrive. For the same reason `binding.takeScreenshot` does
+  not work on watchOS, under `drive` or under `test`.
+
+  To run the same tests without a driver file, see [`test`](#test).
+
 - ### `host`
 
   Report how the watch app ships to the App Store, and heal the wiring if
@@ -140,8 +162,10 @@ where possible; watchOS-specific behaviour is called out per command.
     it: the iOS Runner gets an "Embed Prebuilt watchOS App" build phase and
     the watch Info.plist declares `WKCompanionAppBundleIdentifier`.
 
+  `host` reports the mode and reconciles the wiring:
+
   ```sh
-  flutter-watchos host    # report the mode + reconcile the wiring
+  flutter-watchos host
   ```
 
   There is nothing to configure: add an iOS app (`flutter create
@@ -159,9 +183,21 @@ where possible; watchOS-specific behaviour is called out per command.
   Show or change whether release builds are registered with your
   flutterwatch.dev account (what fills "My apps" in the console).
 
+  On its own, the command shows the current state and what is sent:
+
   ```sh
-  flutter-watchos build-registry            # show the current state, and what is sent
-  flutter-watchos build-registry --disable  # never register builds from this machine
+  flutter-watchos build-registry
+  ```
+
+  `--disable` stops registering builds from this machine:
+
+  ```sh
+  flutter-watchos build-registry --disable
+  ```
+
+  `--enable` turns it back on:
+
+  ```sh
   flutter-watchos build-registry --enable
   ```
 
@@ -180,14 +216,21 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos login
-  flutter-watchos logout
   ```
 
   `login` prints a URL plus a short code; confirm the code in a browser and
   the CLI finishes automatically. Credentials are stored in
   `~/.flutter-watchos/credentials.json`, and the next build downloads the
-  engines the machine was missing. `logout` revokes this machine's sign-in
-  on the service, then removes the file. See [accounts.md](accounts.md).
+  engines the machine was missing.
+
+  `logout` revokes this machine's sign-in on the service, then removes the
+  file:
+
+  ```sh
+  flutter-watchos logout
+  ```
+
+  See [accounts.md](accounts.md).
 
 - ### `precache`
 
@@ -201,12 +244,11 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `plugin`
 
-  Inspect the plugins a project uses and their watchOS support, or
-  scaffold a `*_watchos` FFI package from an existing iOS/macOS plugin
-  (see [plugin-porting.md](plugin-porting.md)).
+  Authoring helpers for watchOS plugins. Today the only one is `port`, which
+  scaffolds a federated `*_watchos` FFI package from an existing iOS or
+  macOS plugin (see [plugin-porting.md](plugin-porting.md)).
 
   ```sh
-  flutter-watchos plugin list
   flutter-watchos plugin port --from-pub url_launcher_ios
   ```
 
@@ -215,9 +257,16 @@ where possible; watchOS-specific behaviour is called out per command.
   Build, install, and launch. On a simulator this is the full debug
   experience: hot reload (`r`), hot restart (`R`), DevTools.
 
+  On a simulator, debug with hot reload:
+
   ```sh
-  flutter-watchos run -d <simulator-id>            # debug + hot reload
-  flutter-watchos run -d <watch-id> --profile      # AOT on a physical watch
+  flutter-watchos run -d <simulator-id>
+  ```
+
+  On a physical watch, AOT:
+
+  ```sh
+  flutter-watchos run -d <watch-id> --profile
   ```
 
   Mode and target must agree: a physical watch needs `--profile` or
@@ -235,6 +284,16 @@ where possible; watchOS-specific behaviour is called out per command.
   ```sh
   flutter-watchos test
   ```
+
+  With a device id, `test` runs an integration test in the app on a watch
+  Simulator, with no `test_driver/` file. This works on the Simulator only.
+
+  ```sh
+  flutter-watchos test integration_test/<file>.dart -d <simulator-id>
+  ```
+
+  `binding.takeScreenshot` does not work on watchOS here either (see
+  [`drive`](#drive)).
 
 - ### `upgrade`
 
@@ -256,7 +315,12 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos upload --api-key-id ABC123XYZ --api-issuer 12345678-...
-  flutter-watchos upload --validate-only    # App Store checks, no upload
+  ```
+
+  `--validate-only` runs the App Store checks without uploading:
+
+  ```sh
+  flutter-watchos upload --validate-only
   ```
 
   The key id/issuer can also come from `APP_STORE_CONNECT_API_KEY_ID` /

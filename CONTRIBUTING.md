@@ -46,24 +46,38 @@ pub.dev before pushing `main` (`cd packages/flutter_watchos &&
 `main` tells people to add it from pub.dev, so it has to resolve as soon as
 `main` is public.
 
+Start from an up-to-date `main`:
+
 ```bash
 git checkout main
 git pull --ff-only origin main
+```
 
-# --no-ff is the point: one merge commit per release.
+Merge `dev` with `--no-ff`. That is the point: one merge commit per release.
+
+```bash
 git merge --no-ff dev -m "Release <version>: <summary>"
+```
 
-# The tag is what `flutter-watchos upgrade` looks for, so it must have this
-# exact shape: v<flutter version>-watchos.<X.Y.Z>, e.g. v3.47.4-watchos.0.1.0.
-# `upgrade` ignores any other tag.
+Tag the merge. The tag is what `flutter-watchos upgrade` looks for, so it
+must have this exact shape: `v<flutter version>-watchos.<X.Y.Z>`, e.g.
+`v3.47.4-watchos.0.1.0`. `upgrade` ignores any other tag.
+
+```bash
 git tag -a v<flutter>-watchos.<X.Y.Z> -m "flutter-watchos <X.Y.Z>"
+```
 
-# Push main and that one tag, by name, in one go. Never --tags or
-# --follow-tags: they push every local tag reachable from main, including
-# ones that were never meant to be released.
+Push `main` and that one tag, by name, in one go. Never use `--tags` or
+`--follow-tags`: they push every local tag reachable from `main`, including
+ones that were never meant to be released.
+
+```bash
 git push --atomic origin main refs/tags/v<flutter>-watchos.<X.Y.Z>
+```
 
-# Only released tags belong on GitHub: this lists what is there.
+Only released tags belong on GitHub. This lists what is there:
+
+```bash
 git ls-remote --tags origin
 ```
 

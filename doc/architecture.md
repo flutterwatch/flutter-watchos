@@ -78,6 +78,7 @@ Apps see honest-but-compatible platform values:
 | `Platform.isIOS` | `true` | watchOS is iOS-family; keeps Cupertino defaults, fonts, transitions |
 | `Platform.isWatchOS` | `true` | First-class watch check |
 | `defaultTargetPlatform` | `TargetPlatform.iOS` | Same reason as `isIOS` |
+| `Platform.environment` | empty | As on iOS, Dart reads no environment variables here. For the paths `HOME` or `TMPDIR` would give, use `path_provider` or `Directory.systemTemp` |
 
 Branch watch-specific UI on `FlutterWatchosPlatform.isWatch` (or
 `operatingSystem == "watchos"`), never on screen size alone. `isWatchOS` comes
@@ -100,11 +101,14 @@ any `lib/` shared with those targets.
   requires an `arm64_32` slice in the watch executable. The engine is
   arm64-only, so the template ships a stub arm64_32 slice with a "Requires
   Apple Watch Series 9 or later" fallback screen; only the executable needs
-  the fat slice, not the frameworks.
+  the fat slice, not the frameworks. `ARCHS` stays unset: with Xcode 27,
+  the Standard Architectures build `arm64_32` only below 27.0, which is when
+  the slice is needed. Linking the stub prints `ld: warning: ignoring file …
+  Flutter.framework … arm64_32`, which is expected.
 
 ## Repository layout
 
-```
+```text
 flutter-watchos/
 ├── bin/                 # entrypoints + pinned Flutter/engine versions
 ├── lib/                 # the CLI: DI overrides over flutter_tools

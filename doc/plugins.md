@@ -210,13 +210,15 @@ needs these callbacks and the app cannot deliver them.
 
 `flutter-watchos plugin port` scaffolds a federated `*_watchos` package from
 an existing iOS/macOS plugin, so you start from a wired-up package instead of
-an empty one:
+an empty one. From pub.dev:
 
 ```sh
-# from pub.dev
 flutter-watchos plugin port --from-pub sensors_plus
+```
 
-# or from a git checkout
+Or from a git checkout:
+
+```sh
 flutter-watchos plugin port --from-git https://github.com/… 
 ```
 
