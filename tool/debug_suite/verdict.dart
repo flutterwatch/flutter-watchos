@@ -7,7 +7,8 @@
 /// Every check of `tool/debug_suite/run.sh` writes one line to a results file:
 /// `PASS <id> <detail>`, `FAIL <id> <detail>` or `SKIP <id> <reason>`.
 /// `expectations.txt` lists every check once, as `<id> pass` or
-/// `<id> xfail <F-id> <what is wrong>`. An expected failure is strict: a check
+/// `<id> xfail <limitation> <what is wrong>`, where the limitation is named in
+/// lowercase words joined by hyphens. An expected failure is strict: a check
 /// that is expected to fail and passes fails the suite, so the known-limitation
 /// line in the docs gets updated in the same change that fixes it.
 ///
@@ -21,7 +22,7 @@ import 'dart:io';
 /// What a check is expected to do.
 class Expectation {
   /// Creates an expectation for check [id].
-  const Expectation(this.id, {required this.expectPass, this.failureId, this.reason});
+  const Expectation(this.id, {required this.expectPass, this.limitation, this.reason});
 
   /// The check's id, as `run.sh` prints it.
   final String id;
@@ -29,9 +30,9 @@ class Expectation {
   /// Whether the check is expected to pass.
   final bool expectPass;
 
-  /// The known limitation the check measures (`F1`-`F10`), for an expected
-  /// failure.
-  final String? failureId;
+  /// The known limitation the check measures, such as `empty-cpu-profile`,
+  /// for an expected failure.
+  final String? limitation;
 
   /// What is wrong while the limitation stands.
   final String? reason;
@@ -64,9 +65,13 @@ class CheckResult {
   final String detail;
 }
 
+/// The name of a known limitation: lowercase words joined by hyphens.
+final RegExp _limitationName = RegExp(r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$');
+
 /// Parses `expectations.txt`. Blank lines and `#` lines are ignored.
 ///
-/// Throws a [FormatException] for a malformed line or a repeated id.
+/// Throws a [FormatException] for a malformed line or a repeated id. An
+/// xfail line needs a limitation name and what is wrong.
 Map<String, Expectation> parseExpectations(String text) {
   final expectations = <String, Expectation>{};
   for (final String raw in const LineSplitter().convert(text)) {
@@ -78,15 +83,15 @@ Map<String, Expectation> parseExpectations(String text) {
     final Expectation expectation;
     if (words.length == 2 && words[1] == 'pass') {
       expectation = Expectation(words[0], expectPass: true);
-    } else if (words.length >= 3 && words[1] == 'xfail' && RegExp(r'^F\d+$').hasMatch(words[2])) {
+    } else if (words.length >= 4 && words[1] == 'xfail' && _limitationName.hasMatch(words[2])) {
       expectation = Expectation(
         words[0],
         expectPass: false,
-        failureId: words[2],
+        limitation: words[2],
         reason: words.skip(3).join(' '),
       );
     } else {
-      throw FormatException('Not "<id> pass" or "<id> xfail F<n> <reason>"', line);
+      throw FormatException('Not "<id> pass" or "<id> xfail <limitation> <reason>"', line);
     }
     if (expectations.containsKey(expectation.id)) {
       throw FormatException('Check listed twice', line);
@@ -157,11 +162,11 @@ Verdict judge(Map<String, Expectation> expectations, List<CheckResult> results) 
       case (Outcome.fail, true):
         problems.add('${result.id}: failed: ${result.detail}');
       case (Outcome.fail, false):
-        report.add('xfail   ${result.id} (${expectation.failureId}: ${expectation.reason})');
+        report.add('xfail   ${result.id} (${expectation.limitation}: ${expectation.reason})');
       case (Outcome.pass, false):
         problems.add(
-          '${result.id}: passed, but ${expectation.failureId} expects it to fail. '
-          'Update expectations.txt and the docs that describe ${expectation.failureId}.',
+          '${result.id}: passed, but ${expectation.limitation} expects it to fail. '
+          'Update expectations.txt and the docs that describe ${expectation.limitation}.',
         );
       case (Outcome.skip, _):
         report.add('skipped ${result.id} (${result.detail})');

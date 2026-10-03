@@ -3,16 +3,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# The watch Simulator debug suite (spec 0005 criterion 36, spec 0007
-# criterion 43).
+# The watch Simulator debug suite: the debugging checks that need a booted
+# watch Simulator, which the unit tests cannot make.
 #
 # Creates an app from fixture_main.dart.tmpl and runs the debugging checks
 # against it on one watch Simulator: run with r, R and q, vmcheck through the
 # printed VM Service URI, DevTools over HTTP, attach, the log matrix in the run
 # console and in logs, --start-paused, --machine, the mode refusal, screenshot,
 # test, drive and --trace-startup. Each check writes one PASS, FAIL or SKIP
-# line; verdict.dart compares them with expectations.txt, where a known
-# limitation (F1-F10) is a strict expected failure.
+# line; verdict.dart compares them with expectations.txt, where a check that
+# a known limitation makes fail is a strict expected failure.
 #
 # Usage:
 #   tool/debug_suite/run.sh <simulator-udid>

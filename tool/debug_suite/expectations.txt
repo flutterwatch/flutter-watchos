@@ -4,19 +4,20 @@
 #
 # What each check of run.sh is expected to do, one line per check:
 #   <id> pass
-#   <id> xfail <F-id> <what is wrong while the limitation stands>
-# F-ids are the failures of the 2026-09-29 debugging report (spec 0005,
-# Context). An xfail check that passes fails the suite: when a fix lands,
-# change its line here and the doc that describes the limitation.
+#   <id> xfail <limitation> <what is wrong while the limitation stands>
+# A limitation is named in lowercase words joined by hyphens. An xfail check
+# that passes fails the suite: when a fix lands, change its line to pass,
+# name the limitation in a "Fixed:" comment above it, and update the doc that
+# describes it.
 
-# run -d <sim>: URLs, hot reload, hot restart, q (0005 criterion 1)
+# run -d <sim>: URLs, hot reload, hot restart, q
 run.vm_service_url pass
 run.devtools_url pass
 run.hot_reload pass
 run.hot_restart pass
 run.quit pass
 
-# vmcheck through the printed URI (0005 criteria 2-3)
+# vmcheck through the printed URI
 vm.get_vm pass
 vm.get_isolate pass
 vm.evaluate pass
@@ -28,48 +29,54 @@ vm.heap_snapshot pass
 vm.flutter_frame_events pass
 vm.timeline_frames pass
 
-# DevTools served by DDS (0005 criterion 4)
+# DevTools served by DDS
 devtools.http pass
 
-# attach through the printed URI, then d (0005 criterion 14)
+# attach through the printed URI, then d
 attach.debug_url pass
 
-# test, test integration_test -d, drive, run --trace-startup (0005 criteria 5-6)
+# test, test integration_test -d, drive, run --trace-startup
 test.unit pass
 test.integration pass
 drive.exit pass
 trace.startup pass
 
-# The run console (0005 criterion 16)
+# The run console
 run.log.print pass
 run.log.debug_print pass
 run.log.multiline pass
 run.log.flutter_error pass
-# F5, fixed: the greedy eventMessage capture keeps a message with a quote whole.
+# Fixed: cut-quoted-message. The greedy eventMessage capture keeps a message
+# with a quote whole.
 run.log.quote pass
-# F4, fixed: the predicate keeps untagged engine lines from Flutter.framework.
+# Fixed: dropped-engine-lines. The predicate keeps untagged engine lines from
+# Flutter.framework.
 run.log.unhandled_exception pass
-run.log.stdout xfail F6 dart:io stdout writes are lost on the Simulator
-run.log.stderr xfail F6 dart:io stderr writes are lost on the Simulator
+run.log.stdout xfail lost-stdio dart:io stdout writes are lost on the Simulator
+run.log.stderr xfail lost-stdio dart:io stderr writes are lost on the Simulator
 
-# run --profile on a Simulator is refused with no stack trace (0005
-# criterion 21, F8)
+# run --profile on a Simulator is refused with no stack trace.
+# Fixed: mode-stack-trace.
 modes.profile_no_stack_trace pass
 
-# logs -d <sim> (0005 criterion 18). F3, fixed: the reader is named after the
+# logs -d <sim>. Fixed: unnamed-log-reader. The reader is named after the
 # device and starts its stream on the first listen.
 logs.header pass
 logs.markers pass
 
-# The Simulator launch passes stock's debugging options (0005 criteria 8-9).
-# F2, fixed: --enable-dart-profiling and --start-paused reach the app.
+# The Simulator launch passes stock's debugging options.
+# Fixed: dropped-launch-options. --enable-dart-profiling and --start-paused
+# reach the app.
 vm.profiler_flag pass
 run.start_paused pass
 
-# screenshot -d <sim> (0008 criterion 3). F9, fixed: simctl io takes it.
+# screenshot -d <sim>. Fixed: empty-screenshot. simctl io takes it.
 screenshot.png pass
 
+# run --machine reports the app start. Fixed: machine-logger-error. It no
+# longer stops there with a logger error: --machine gets stock's logger.
+machine.app_started pass
+
 # Known limitations
-vm.cpu_samples xfail F1 the CPU profiler records no samples on the Simulator
-machine.app_started xfail F7 run --machine stops at the app start with a logger error
-drive.integration_test xfail F10 drive warns that the integration_test plugin was not detected
+vm.cpu_samples xfail empty-cpu-profile the CPU profiler records no samples on the Simulator
+drive.integration_test xfail integration-test-warning drive warns that the integration_test plugin was not detected

@@ -15,7 +15,7 @@ void main() {
   const expectationsText = '''
 # comment
 vm.evaluate pass
-vm.cpu_samples xfail F1 the CPU profiler records no samples
+vm.cpu_samples xfail empty-cpu-profile the CPU profiler records no samples
 ''';
 
   Verdict run(String results) => judge(parseExpectations(expectationsText), parseResults(results));
@@ -28,7 +28,7 @@ FAIL vm.cpu_samples sampleCount=0
 ''');
     expect(verdict.problems, isEmpty);
     expect(verdict.isGreen, isTrue);
-    expect(verdict.report, contains(startsWith('xfail   vm.cpu_samples (F1:')));
+    expect(verdict.report, contains(startsWith('xfail   vm.cpu_samples (empty-cpu-profile:')));
   });
 
   test('a check expected to pass that fails is a problem', () {
@@ -42,7 +42,7 @@ FAIL vm.cpu_samples sampleCount=0
     expect(verdict.isGreen, isFalse);
     expect(
       verdict.problems.single,
-      startsWith('vm.cpu_samples: passed, but F1 expects it to fail'),
+      startsWith('vm.cpu_samples: passed, but empty-cpu-profile expects it to fail'),
     );
   });
 
@@ -67,7 +67,9 @@ PASS vm.new_check ok
 
   test('malformed or repeated expectation lines are rejected', () {
     expect(() => parseExpectations('vm.a maybe\n'), throwsFormatException);
-    expect(() => parseExpectations('vm.a xfail X1 why\n'), throwsFormatException);
+    expect(() => parseExpectations('vm.a xfail Lost_Stdio why\n'), throwsFormatException);
+    expect(() => parseExpectations('vm.a xfail lost-stdio\n'), throwsFormatException);
+    expect(parseExpectations('vm.a xfail lost-stdio why\n')['vm.a']!.limitation, 'lost-stdio');
     expect(() => parseExpectations('vm.a pass\nvm.a pass\n'), throwsFormatException);
   });
 
@@ -112,18 +114,37 @@ PASS vm.new_check ok
   });
 
   // A limitation is either still an expected failure or, once fixed, named in
-  // the comment above the check that now passes, so none is dropped silently.
-  test('the shipped expectations parse and account for F1-F10', () {
+  // the "Fixed:" comment above the check that now passes, so none is dropped
+  // silently. A new limitation is added here too.
+  test('the shipped expectations parse and account for every known limitation', () {
+    const known = <String>{
+      'empty-cpu-profile',
+      'dropped-launch-options',
+      'unnamed-log-reader',
+      'dropped-engine-lines',
+      'cut-quoted-message',
+      'lost-stdio',
+      'machine-logger-error',
+      'mode-stack-trace',
+      'empty-screenshot',
+      'integration-test-warning',
+    };
     final String text = File('tool/debug_suite/expectations.txt').readAsStringSync();
     final Map<String, Expectation> shipped = parseExpectations(text);
-    final Set<String> mentioned = RegExp(
-      r'\bF\d+\b',
-    ).allMatches(text).map((Match m) => m[0]!).toSet();
-    for (var n = 1; n <= 10; n++) {
-      expect(mentioned, contains('F$n'));
-    }
-    for (final Expectation e in shipped.values.where((Expectation e) => !e.expectPass)) {
-      expect(int.parse(e.failureId!.substring(1)), inInclusiveRange(1, 10), reason: e.id);
-    }
+    final expectedToFail = <String>{
+      for (final Expectation e in shipped.values)
+        if (!e.expectPass) e.limitation!,
+    };
+    final fixed = <String>{
+      for (final RegExpMatch m in RegExp(
+        r'^# .*Fixed: ([a-z0-9-]+)\.',
+        multiLine: true,
+      ).allMatches(text))
+        m[1]!,
+    };
+    expect(expectedToFail.difference(known), isEmpty, reason: 'an xfail names no known limitation');
+    expect(fixed.difference(known), isEmpty, reason: 'a Fixed: comment names no known limitation');
+    expect(known.difference(expectedToFail.union(fixed)), isEmpty, reason: 'dropped silently');
+    expect(expectedToFail.intersection(fixed), isEmpty, reason: 'both fixed and expected to fail');
   });
 }
