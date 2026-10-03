@@ -45,14 +45,30 @@ String? watchosCreateTemplateError(String templateType) {
       'For plugins that target other platforms, use stock `flutter create`.';
 }
 
-/// The project types that make no app, each with what it makes: a package or
-/// a module has nothing to run on a watch, so `create` adds no `watchos/` to
-/// them.
-const Map<FlutterTemplateType, String> _typesWithoutApp = <FlutterTemplateType, String>{
-  FlutterTemplateType.package: 'a package',
-  FlutterTemplateType.packageFfi: 'an FFI package',
-  FlutterTemplateType.module: 'a module',
-};
+/// What `create` says, instead of adding `watchos/`, for a project of type
+/// [type] that is not an app, or null for an app.
+///
+/// Only an app gets the watch app runner in `watchos/`. A package or a module
+/// has nothing to run on a watch. A plugin has no app either, and its
+/// `watchos/` folder, if it has one, holds its own watchOS implementation; a
+/// stock plugin gets one through `flutter-watchos plugin port`. A type that
+/// cannot be read is taken as an app, as before.
+String? watchosCreateNoAppMessage(FlutterTemplateType? type) {
+  final String? what = switch (type) {
+    FlutterTemplateType.app || null => null,
+    FlutterTemplateType.package => 'a package',
+    FlutterTemplateType.packageFfi => 'an FFI package',
+    FlutterTemplateType.module => 'a module',
+    FlutterTemplateType.plugin => 'a plugin',
+    FlutterTemplateType.pluginFfi => 'an FFI plugin',
+  };
+  if (what == null) {
+    return null;
+  }
+  final bool plugin = type == FlutterTemplateType.plugin || type == FlutterTemplateType.pluginFfi;
+  return 'No watchos/ was added: $what has no app to run on a watch.'
+      '${plugin ? ' flutter-watchos plugin port makes a watchOS implementation of a plugin.' : ''}';
+}
 
 // The two guides a companion app's watch layout needs, by absolute URL, as the
 // build-registry notice gives its doc: a repository path does not open from a
@@ -177,18 +193,16 @@ class WatchosCreateCommand extends CreateCommand {
     if (exitCode != FlutterCommandResult.success()) {
       return exitCode;
     }
-    // A package or a module has no app to run on a watch. The type is the one
-    // stock create just wrote to .metadata, so `create .` in an existing
-    // package, which names no --template, gets no watchos/ either.
+    // Only an app gets the watch app runner. The type is the one stock create
+    // just wrote to .metadata, so `create .` in an existing package, module or
+    // plugin, which names no --template, gets no runner either.
     final FlutterTemplateType? made = FlutterProjectMetadata(
       globals.fs.directory(projectDirPath).childFile('.metadata'),
       globals.logger,
     ).projectType;
-    final String? withoutApp = _typesWithoutApp[made];
-    if (withoutApp != null) {
-      globals.logger.printStatus(
-        'No watchos/ was added: $withoutApp has no app to run on a watch.',
-      );
+    final String? noApp = watchosCreateNoAppMessage(made);
+    if (noApp != null) {
+      globals.logger.printStatus(noApp);
       return FlutterCommandResult.success();
     }
     await _renderWatchosRunner(projectDirPath, name);
