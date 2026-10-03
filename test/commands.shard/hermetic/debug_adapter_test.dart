@@ -19,6 +19,14 @@ import '../../src/context.dart';
 
 const String _tool = '/clone/bin/flutter-watchos';
 
+/// The timeout of each test that runs stock's adapter.
+///
+/// The adapter starts a real process, a shell script standing in for the
+/// tool, and the test waits for it to write its arguments. That takes about a
+/// second on an idle machine and more on a loaded CI runner, over the 2 s every
+/// other test gets.
+const _adapterTimeout = Timeout(Duration(seconds: 10));
+
 /// [json] framed as a Debug Adapter Protocol message.
 List<int> _frame(Map<String, Object?> json) {
   final List<int> body = utf8.encode(jsonEncode(json));
@@ -207,7 +215,9 @@ void main() {
         ..add(_frame(_request(2, 'configurationDone')))
         ..add(_frame(request));
       final recordFile = io.File(record);
-      final DateTime deadline = DateTime.now().add(const Duration(seconds: 20));
+      // Under [_adapterTimeout], so a tool that never starts fails with what
+      // the adapter sent rather than with a bare timeout.
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 8));
       while (!recordFile.existsSync() || !recordFile.readAsStringSync().endsWith('\n')) {
         if (DateTime.now().isAfter(deadline)) {
           fail('no tool started; the adapter sent: ${utf8.decode(sent, allowMalformed: true)}');
@@ -285,7 +295,7 @@ void main() {
       // Stock removed the first of its arguments, `run`, for the custom tool.
       expect(argv[1], '--machine');
     });
-  });
+  }, timeout: _adapterTimeout);
 
   group('WatchosDebugAdapterCommand', () {
     testUsingContext('a given tool path is the one sessions start', () {

@@ -195,11 +195,13 @@ void main() {
       }
     });
 
-    test('exits 0 on a matching line in each mode, for all eight screen sizes', () {
-      final insets =
-          json.decode(io.File(insetsFixturePath).readAsStringSync()) as Map<String, Object?>;
-      final corners = json.decode(io.File(fixturePath).readAsStringSync()) as Map<String, Object?>;
-      for (final String size in insets.keys) {
+    // One test per screen size: each runs the script twice, well within the
+    // 2 s every test gets, where all eight sizes in one test took up to 4 s.
+    final insets =
+        json.decode(io.File(insetsFixturePath).readAsStringSync()) as Map<String, Object?>;
+    final corners = json.decode(io.File(fixturePath).readAsStringSync()) as Map<String, Object?>;
+    for (final String size in insets.keys) {
+      test('exits 0 on a matching line in each mode, for the $size screen', () {
         final entry = insets[size]! as Map<String, Object?>;
         final List<num> wh = size.split('x').map(num.parse).toList();
         final logical = '${wh[0].toStringAsFixed(2)}x${wh[1].toStringAsFixed(2)}';
@@ -225,8 +227,8 @@ void main() {
         );
         final io.ProcessResult cornerResult = check(cornerLine.toString());
         expect(cornerResult.exitCode, 0, reason: '$size corners: ${cornerResult.stderr}');
-      }
-    });
+      });
+    }
 
     test('reads the first SAFEAREA| line of an os_log dump', () {
       final io.ProcessResult result = check(
