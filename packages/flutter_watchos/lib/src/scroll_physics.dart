@@ -27,8 +27,10 @@ import 'package:flutter/widgets.dart';
 ///    the finger lifts. A flick made during a fling starts at the finger's
 ///    own velocity: nothing carries over, unlike iOS.
 ///
-/// The Digital Crown never goes through these physics: the native scroll
-/// view that owns the crown moves the content, edges included.
+/// With the current watch host the Digital Crown does not go through these
+/// physics: the native scroll view that owns the crown moves the content,
+/// edges included. An app that still compiles its own watchOS runner keeps
+/// the older crown, which scrolls through them.
 ///
 /// Applied automatically by [WatchCrownScroll]; for app-wide use install
 /// [WatchScrollBehavior] or pass the physics explicitly:

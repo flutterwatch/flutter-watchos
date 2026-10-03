@@ -109,7 +109,9 @@ SingleChildScrollView(
 );
 
 CustomScrollView(
-  slivers: [SliverSafeArea(sliver: SliverList.list(children: const [/* ... */]))],
+  slivers: [
+    SliverSafeArea(sliver: SliverList.list(children: const [/* ... */])),
+  ],
 );
 ```
 
