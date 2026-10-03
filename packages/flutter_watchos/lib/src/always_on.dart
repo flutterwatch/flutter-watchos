@@ -129,7 +129,7 @@ abstract final class WatchAlwaysOn {
 /// The burst is what actually closes the race, and it deliberately lands in the
 /// moment right after the lifecycle event, while the app is still being
 /// scheduled normally: once watchOS has settled into the Always-On state it
-/// keeps the app running but is free to fire its timers less often, and after
+/// keeps the app running but may fire its timers less often, and after
 /// about two minutes frontmost apps drop to the background entirely.
 ///
 /// After the burst a slow trickle continues while the app is away from

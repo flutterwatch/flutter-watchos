@@ -22,13 +22,16 @@
 /// Returns true if running on watchOS (compiled with TARGET_OS_WATCH).
 FLUTTER_WATCHOS_EXPORT bool flutter_watchos_is_watchos(void);
 
-/// Returns the OS version string (e.g., "11.0"). Caller must NOT free.
+/// Returns the OS version string (e.g., "11.0"). The string is static storage
+/// the package owns: the caller must not release it.
 FLUTTER_WATCHOS_EXPORT const char* flutter_watchos_system_version(void);
 
-/// Returns the device model (e.g., "Apple Watch"). Caller must NOT free.
+/// Returns the device model (e.g., "Apple Watch"). The string is static
+/// storage the package owns: the caller must not release it.
 FLUTTER_WATCHOS_EXPORT const char* flutter_watchos_device_model(void);
 
-/// Returns the machine identifier (e.g., "Watch7,1"). Caller must NOT free.
+/// Returns the machine identifier (e.g., "Watch7,1"). The string is static
+/// storage the package owns: the caller must not release it.
 FLUTTER_WATCHOS_EXPORT const char* flutter_watchos_machine_id(void);
 
 /// Returns true if running in the simulator.
