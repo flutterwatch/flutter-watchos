@@ -1,11 +1,186 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
+
+Debugging on the watch Simulator now takes stock Flutter's launch options
+and fails plainly when the app does not start, and every command says,
+before it builds anything, when a mode, an option or a stock command does
+not fit a watch.
+
+- **A new engine, `engine-a0d92ed11913`.** It is built from the same
+  Flutter 3.47.5, so the Flutter SDK does not change, and `upgrade`
+  downloads the new engine once: about 25 MB signed out, about 66 MB
+  signed in. On the watchOS Simulator, DevTools' CPU Profiler now records
+  samples; `getCpuSamples` used to return none. On a physical watch it is
+  still empty, as
+  [Profiling on a physical watch](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/debug-app.md#profiling-on-a-physical-watch)
+  says.
+
+- **Each mode runs where it can, and the tool says so before building.** The
+  watchOS Simulator engine is JIT only and a physical watch has no JIT
+  engine, so the Simulator runs debug and a watch runs profile and release.
+  `run`, `drive`, `attach` and `build watchos` now stop with that guidance
+  before anything is built; they used to build and then fail, often with a
+  stack trace. Each command the guidance offers stands alone on its line,
+  with no comment after it, and `test integration_test -d <watch>`, which
+  runs debug, stops with the same guidance. `run`, `drive` and `install`
+  refuse `--use-application-binary` for a watch or a watch Simulator, in
+  every mode, before anything is built: flutter-watchos installs the app it
+  builds from the project, and the flag used to be ignored. The lldb launch
+  path that a prebuilt debug app took on a watch is gone, with its
+  `FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS`. `attach -d <watch>` without
+  `--debug-url` or `--debug-port` stops and points to `run --profile`, which
+  prints a DevTools link.
+
+- **Stock launch options reach a watch app.** On the Simulator, and on a
+  watch in profile mode, `--start-paused`, `--dart-flags`, `--trace-startup`
+  and the other stock debugging options were dropped; they now reach the app
+  as they reach an iOS app, and `--dart-flags` and the trace options arrive
+  without the quotes stock adds for iOS. `--device-vmservice-port` chooses
+  the VM Service port, and `--enable-software-rendering` selects the
+  software renderer. `FLUTTER_WATCHOS_PRESENT`,
+  `FLUTTER_WATCHOS_DISPLAY_CLOCK` and `FLUTTER_WATCHOS_CPU_LOG`, set for a
+  `run`, now reach the app, as the
+  [README](https://github.com/flutterwatch/flutter-watchos#readme) says.
+  `--route` has no effect on watchOS, where an app starts at its home route,
+  and `run` and `drive` now say so.
+
+- **A Simulator launch that does not start says so.** A debug launch waited
+  30 seconds for the Dart VM Service and then reported success without it,
+  so `run` had nothing to connect to and `drive` stopped on an error. It now
+  waits 60 seconds and fails, saying whether the log stream was live and
+  whether the app is still running. On a physical watch, `run --release` no
+  longer waits 30 seconds for a VM Service a release app does not have, nor
+  warns about the Local Network permission; it returns as soon as the app's
+  console starts.
+
+- **Logs and screenshots on the Simulator.** `logs -d <simulator>` streams
+  the app's output (it printed nothing), a message is no longer cut at its
+  first escaped quote, and engine lines such as `Unhandled Exception` are no
+  longer dropped. `logs` on a physical watch stops and points to
+  `run --profile` and `--watchos-log-to-file`. `screenshot -d <simulator>`,
+  and `s` in `run`, take a screenshot through `simctl`; `s` used to leave an
+  empty file. A paired watch takes one through `devicectl` when it reports
+  that it can (Xcode 27 or later).
+
+- **`run -d <UDID>` boots a shut-down watch Simulator**, then opens the app
+  that shows it: Device Hub on Xcode 27, Simulator on Xcode 26. `devices`
+  still lists booted Simulators only. `attach`, `logs`, `install` and
+  `screenshot`, given the UDID of a shut-down Simulator, used to report that
+  no device was found; they now say it is shut down and point to `run`.
+
+- **Xcode 26.0 or later is checked.** A build on an older Xcode stops before
+  compiling anything native and names both versions. `doctor` reports an
+  Xcode or a watchOS SDK older than 26.0 as an error, names the Xcode build
+  and the highest available watchOS Simulator runtime, and adds a hint when
+  none is 26.0 or later. Its CocoaPods hint now says CocoaPods is needed
+  only for a `watchos/Podfile`.
+
+- **The deployment target is read the way Xcode reads it**, per
+  configuration and through xcconfig files. A project at watchOS 27.0 no
+  longer gets an `arm64_32` host module that Xcode never uses, a project
+  whose Debug and Release differ gets the right one for each, and plugin
+  sources the tool compiles target the app's own
+  `WATCHOS_DEPLOYMENT_TARGET`.
+
+- **`doctor` warns when `flutter-watchos` on your PATH is another
+  checkout.** An older checkout earlier on PATH kept answering to
+  `flutter-watchos`, and nothing said so. The `Flutter` entry now names both
+  and says to put this checkout's `bin/` at the front of PATH, and the
+  install steps in the README and in [Getting
+  started](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/get-started.md)
+  now do that: `export PATH="$PWD/bin:$PATH"`. Getting started also gives
+  the line that keeps it there, with the checkout's own path.
+
+- **Stock commands that do not fit a watch say so.** `build` offers only
+  `watchos`: `build apk`, `build ipa` and the other stock targets exit
+  naming stock `flutter build <target>`, and `build ipa` gives the route
+  that fits the project. `build watchos` refuses `--analyze-size` and
+  `--code-size-directory`, which never produced a report. `channel` shows
+  the pinned Flutter and says flutter-watchos follows no channel;
+  `channel <name>` and `downgrade` refuse instead of moving the SDK that the
+  next run puts back. `run`, `drive` and `install` refuse `--flavor` for a
+  watch, whose build has no flavors, and a pubspec `default-flavor` warns
+  once. `analyze` now works, and `update-packages` is no longer offered.
+  After a usage error the hint names `flutter-watchos -h`.
+
+- **`daemon`, `--machine` and `debug-adapter` behave as stock's.** `daemon`
+  and `--machine` get stock's logger, so `run --machine` and
+  `attach --machine` no longer stop at the app start with a logger error,
+  and `--prefixed-errors` applies. `debug-adapter` starts `flutter-watchos`
+  rather than the pinned SDK's `flutter` for the sessions it runs. Custom
+  devices are on inside flutter-watchos, so `daemon` reports them supported
+  without `flutter config --enable-custom-devices`. The wrapper prints its
+  setup progress on stderr, where a tool reading JSON from stdout does not
+  trip on it, and `proxy_root` links the Dart SDK and the Flutter version
+  file an IDE looks for.
+
+- **`create` adds `watchos/` only to an app.** A package, an FFI package, a
+  module or a plugin, made by `create` or recreated with `create .`, gets no
+  watch runner, and one line says so; for a plugin, it names
+  `flutter-watchos plugin port`, which makes a watchOS implementation. A
+  watch-only `create` refuses `--list-samples`. Commands run in a plugin
+  package, `test` for one, no longer write app wiring into the plugin's
+  `watchos/`.
+
+- **A missing watchOS plugin package is named.** When an app uses a plugin
+  that has a published watchOS package, the tool names it with the command
+  that adds it, for example
+  `flutter-watchos pub add shared_preferences_watchos`. The data-assets
+  notice no longer names `objective_c`, which every app with `path_provider`
+  saw and the watch never uses.
 
 - **`login` says what you do in the browser.** It waits for you to confirm
   the code it printed, and a code that runs out "expired before it was
   confirmed". It used to wait "for approval", as if someone else had to say
   yes. An engine the service holds back is now "not available, skipped".
+
+- Smaller things: the notice after the first registered release build, and
+  `build-registry`, give each way to turn registration off as a sentence and
+  then the command alone on its line, ready to paste
+  (`export FLUTTER_WATCHOS_BUILD_REGISTRY=0`, where a bare assignment never
+  reached the tool); `upload --ipa` help says the `.ipa` is an App Store
+  export from Xcode; the port options of `run`, `drive`, `attach`, `test`
+  and `debug-adapter` say "random unused port" in their help; a checkout
+  that lacks its `watchos/` template makes `create` stop and name the path
+  it looked for, where it used to report a watch project it had not made; a
+  command lists the watches and Simulators once, where `attach` listed them
+  three times; `channel --help` names `flutter-watchos`.
+
+- Docs: shell blocks hold commands only, and what each one does is in the
+  text around it, so no comment is pasted along with a command. The
+  supported watches are named in full: Series 9 or later, Ultra 2 or later,
+  or SE 3, on watchOS 26.0 or later.
+  [doc/publish-app.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/publish-app.md)
+  says to leave `ARCHS` unset and to expect one `arm64_32` linker warning.
+  [doc/debug-app.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/debug-app.md)
+  says breakpoints and expression evaluation work only on the Simulator,
+  where a watch's logs go, and that a `run` session can no longer hot reload
+  once an `attach` to its app is detached, so each app takes one session at
+  a time.
+  [doc/commands.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/commands.md)
+  adds `test -d` for integration tests on the Simulator without a driver
+  file, explains the `integration_test` warning under `drive`, drops
+  `plugin list`, which does not exist, and says what `attach`, `logs`,
+  `screenshot`, `install` and `channel` do for a watch.
+  [doc/accessibility.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/accessibility.md)
+  says Bold Text and Increase Contrast are not forwarded,
+  [doc/architecture.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/architecture.md)
+  that `Platform.environment` is empty on watchOS, and
+  [doc/accounts.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/accounts.md)
+  that every account gets every engine. The README documents
+  `FLUTTER_WATCHOS_DISPLAY_CLOCK` and `FLUTTER_WATCHOS_CPU_LOG`. On GitHub,
+  `package:flutter_watchos`'s README says what keeps its FFI symbols in the
+  app; pub.dev shows it with the package's next release.
+
+- For contributors: CI runs on macOS 26, typechecks the host sources with
+  Xcode 26.0.1 and 26.6, analyses and tests `package:flutter_watchos`, its
+  example and the crown runtime, holds each test to 2 seconds, checks that a
+  new engine pin is served before it reaches anyone, and runs each release
+  tag against the live service. Every source file carries the license
+  header, and a test keeps it so. New scripts: `tool/xcode_matrix.sh`,
+  `tool/debug_suite/`, `tool/safe_area/` and
+  `tool/check_untested_commits.sh`.
 
 ## 0.1.0
 

@@ -10,7 +10,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 ## Current version
 
-- flutter-watchos: `0.1.0`
+- flutter-watchos: `0.1.1`
 - Flutter SDK: `3.47.5` (`6a19cca56475dbfba1478ee68d7bd0c2ef891da1`)
 - watchOS engine artifacts: `engine-a0d92ed11913`
 
@@ -156,6 +156,11 @@ Text input (the system keyboard), Digital Crown scrolling and haptics, and app-l
 Apps render with **Impeller on Metal**, the same renderer Flutter uses on iOS — no opt-in required. If a watch cannot open a Metal device the engine falls back to Skia's software rasterizer on its own, and an app can ask for that path explicitly with `FLTEnableImpeller` set to `false` in `watchos/Runner/Info.plist`.
 
 Each frame reaches the screen as an image the engine hands to SwiftUI. An **experimental** zero-copy alternative shows the engine's render target directly through a SceneKit material (`FlutterWatchOSPresent` set to `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` in the environment for a `run`). It covers frames with platform views too. It is off by default and untested with App Review; on a Series 10 it cut raster time by about two thirds for frames without platform views. Treat it as something to evaluate, not to ship.
+
+Two more switches of the app's host help when measuring it, set in the environment for a `run` the same way:
+
+- `FLUTTER_WATCHOS_DISPLAY_CLOCK=continuous` keeps the display clock ticking while nothing on screen changes. By default it pauses after about half a second with nothing to draw, so a still app is not woken on every refresh.
+- `FLUTTER_WATCHOS_CPU_LOG=<seconds>` writes the app's CPU use, as a percentage, to the system log once per window of that many seconds (at least 1).
 
 ## Docs
 
