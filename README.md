@@ -146,6 +146,7 @@ Each frame reaches the screen as an image the engine hands to SwiftUI. An **expe
 
 - [Getting started](doc/get-started.md)
 - [Supported commands](doc/commands.md)
+- [Layout on Apple Watch](doc/layout.md)
 - [Debugging apps](doc/debug-app.md)
 - [Measuring performance on a watch](doc/benchmarking.md)
 - [The 300 MB memory ceiling](doc/memory.md)

@@ -79,6 +79,11 @@ Lay the two UIs out separately — the watch wants whole-row tap targets, haptic
 confirmation, Digital Crown scrolling and as little text entry as possible, and
 reusing the phone's layout produces an app that is bad on both.
 
+Until the watch has a tree of its own, it runs the phone's `lib/main.dart`.
+[layout.md](layout.md) says what the phone's `AppBar`, lists and floating
+action button do on the watch, and how to lay out each kind of watch screen
+around its rounded corners and the clock.
+
 But share the **design system**, in a third directory both UIs import. Two
 screens that nobody ever sees side by side drift: one picks a seed colour
 "tuned" for black, the other paints the same status a different green, and the

@@ -143,9 +143,15 @@ overlays are converted automatically. Values are clamped to `0.3 – 1.0`
 distance — purpose-built watch UI at the default scale is always the better
 end state, so treat this as a porting aid, not a design strategy.
 
+The same file takes `FlutterWatchOSSafeArea`, which chooses whether the safe
+area keeps content below the clock or, by default, only clear of the screen's
+rounded corners. [layout.md](layout.md) explains both values.
+
 ## Where to go next
 
 - [commands.md](commands.md) — every supported command with examples
+- [layout.md](layout.md) — the safe area and the clock, and how to lay out
+  lists, fixed screens and games around them
 - [architecture.md](architecture.md) — how the embedder works (rendering,
   input, text entry, platform identity)
 - [debug-app.md](debug-app.md) — attaching a debugger, logs, common issues
