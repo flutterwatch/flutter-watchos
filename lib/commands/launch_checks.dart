@@ -36,6 +36,22 @@ void throwIfWatchCannotRunMode({
   }
 }
 
+/// What `run` and `drive` print when `--route` is given for a watch target.
+///
+/// Nothing applies an initial route to a watch app, on a physical watch or
+/// on the Simulator: it starts at its home route. The option still reaches
+/// the app's launch arguments, as in stock.
+const String kWatchosRouteWarning =
+    '--route has no effect on watchOS: the app starts at its home route.';
+
+/// Prints [kWatchosRouteWarning] once when [route] is given and a target
+/// among [devices] is a watch or a watch Simulator.
+void warnIfWatchIgnoresRoute({required String? route, required Iterable<Device> devices}) {
+  if (route != null && devices.any((Device device) => device is WatchosDevice)) {
+    globals.printWarning(kWatchosRouteWarning);
+  }
+}
+
 /// What a command prints, before it exits, when `-d` names a watch Simulator
 /// by its UDID and that Simulator is shut down.
 ///

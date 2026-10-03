@@ -47,5 +47,6 @@ class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts, Un
       defaultFlavor: project.manifest.defaultFlavor,
       devices: <Device>[device],
     );
+    warnIfWatchIgnoresRoute(route: route, devices: <Device>[device]);
   }
 }

@@ -219,4 +219,41 @@ void main() {
       expect(logger.warningText, isEmpty);
     }, overrides: overrides());
   });
+
+  group('run --route', () {
+    for (final (List<String> args, String target) in <(List<String>, String)>[
+      (<String>['-d', kSimulatorId], 'the Simulator'),
+      (<String>['-d', kWatchId, '--profile'], 'a physical watch'),
+    ]) {
+      testUsingContext('--route for $target gives one warning and the run goes on', () async {
+        await createTestCommandRunner(
+          command,
+        ).run(<String>['run', '--no-pub', ...args, '--route', '/details']);
+
+        expect(command.reachedRunCommand, isTrue);
+        expect(kWatchosRouteWarning.allMatches(logger.warningText), hasLength(1));
+        expect(forbiddenWordsIn(logger.warningText), isEmpty);
+      }, overrides: overrides());
+    }
+
+    testUsingContext('a watch run without --route gives no warning', () async {
+      await createTestCommandRunner(command).run(<String>['run', '--no-pub', '-d', kSimulatorId]);
+
+      expect(command.reachedRunCommand, isTrue);
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('--route for an iPhone keeps stock behaviour', () async {
+      deviceManager.attachedDevices = <Device>[
+        FakeDevice('iPhone', 'iphone-id', type: PlatformType.ios),
+      ];
+
+      await createTestCommandRunner(
+        command,
+      ).run(<String>['run', '--no-pub', '-d', 'iphone-id', '--route', '/details']);
+
+      expect(command.reachedRunCommand, isTrue);
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides());
+  });
 }

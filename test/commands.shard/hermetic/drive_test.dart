@@ -158,4 +158,22 @@ void main() {
       expect(forbiddenWordsIn(logger.warningText), isEmpty);
     }, overrides: overrides());
   });
+
+  group('drive --route', () {
+    testUsingContext('--route for a watch gives one warning and the drive goes on', () async {
+      await createTestCommandRunner(
+        command,
+      ).run(<String>['drive', '--no-pub', '-d', kSimulatorId, '--route', '/details']);
+
+      expect(command.reachedRunCommand, isTrue);
+      expect(kWatchosRouteWarning.allMatches(logger.warningText), hasLength(1));
+    }, overrides: overrides());
+
+    testUsingContext('a drive without --route gives no warning', () async {
+      await createTestCommandRunner(command).run(<String>['drive', '--no-pub', '-d', kSimulatorId]);
+
+      expect(command.reachedRunCommand, isTrue);
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides());
+  });
 }

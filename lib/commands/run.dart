@@ -34,6 +34,7 @@ class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts, Unused
       defaultFlavor: project.manifest.defaultFlavor,
       devices: targets,
     );
+    warnIfWatchIgnoresRoute(route: route, devices: targets);
   }
 
   // Let the base RunCommand.runCommand() handle everything:
