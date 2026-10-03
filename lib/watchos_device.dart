@@ -182,7 +182,8 @@ List<String> physicalLaunchArguments(
 ];
 
 /// The options whose value stock `getIOSLaunchArguments` wraps in literal
-/// double quotes for a physical device.
+/// double quotes: all four for a physical device, all but `--dart-flags` for
+/// a Simulator.
 const List<String> _quotedStockOptions = <String>[
   '--dart-flags',
   '--trace-to-file',
@@ -194,11 +195,11 @@ const List<String> _quotedStockOptions = <String>[
 /// options in [_quotedStockOptions], as in `--dart-flags="--foo"`.
 ///
 /// Stock adds them for ios-deploy, which passes the launch arguments as one
-/// string that is split like a shell line, quotes removed. devicectl passes
-/// each argument to the app as it is, and the engine keeps the quotes as part
-/// of the value: it would read `"--foo"` as the Dart flag, which no allowed
-/// flag matches, and stop the app, and a trace file or category name would
-/// keep its quotes. Quotes inside the value are kept.
+/// string that is split like a shell line, quotes removed. devicectl and
+/// simctl pass each argument to the app as it is, and the engine keeps the
+/// quotes as part of the value: it would read `"--foo"` as the Dart flag,
+/// which no allowed flag matches, and stop the app, and a trace file or
+/// category name would keep its quotes. Quotes inside the value are kept.
 @visibleForTesting
 String withoutStockQuotes(String argument) {
   for (final String option in _quotedStockOptions) {
@@ -218,7 +219,8 @@ class SimulatorLaunchOptions {
   /// `run` passes.
   ///
   /// The argv is stock `getIOSLaunchArguments` for a Simulator, without the
-  /// flags [isFilteredLaunchArgument] names. On a Simulator the app and the
+  /// flags [isFilteredLaunchArgument] names, and with the values stock quotes
+  /// passed without the quotes ([withoutStockQuotes]). On a Simulator the app and the
   /// tool share one host, so `--device-vmservice-port Q` binds the VM to Q,
   /// and wins over a host port P that would bind it too: the argv then
   /// carries `--vm-service-port=Q` once, and [warning] says that P is
@@ -240,7 +242,7 @@ class SimulatorLaunchOptions {
           platformArgs,
         ))
           if (!isFilteredLaunchArgument(argument) && !argument.startsWith('--vm-service-port='))
-            argument,
+            withoutStockQuotes(argument),
         if (boundPort != null) '--vm-service-port=$boundPort',
       ],
       environment: launchOptionSwitches(options),

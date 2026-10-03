@@ -582,7 +582,8 @@ void main() {
 
   group('SimulatorLaunchOptions', () {
     // Mirrors stock simulators_test.dart 'startApp forwards all supported
-    // debugging options', with DDS on, so no host port binds the VM.
+    // debugging options', with DDS on, so no host port binds the VM, and the
+    // trace values without stock's quotes.
     DebuggingOptions everyOption({int? hostPort, int? devicePort, bool dds = true}) =>
         DebuggingOptions.enabled(
           const BuildInfo(
@@ -622,11 +623,11 @@ void main() {
       '--dart-flags=--baz',
       '--use-test-fonts',
       '--trace-systrace',
-      '--trace-to-file="path/to/trace.binpb"',
+      '--trace-to-file=path/to/trace.binpb',
       '--skia-deterministic-rendering',
       '--trace-skia',
-      '--trace-allowlist="foo,bar"',
-      '--trace-skia-allowlist="skia.a,skia.b"',
+      '--trace-allowlist=foo,bar',
+      '--trace-skia-allowlist=skia.a,skia.b',
       '--endless-trace-buffer',
       '--profile-microtasks',
       '--verbose-logging',
@@ -644,6 +645,9 @@ void main() {
 
       expect(options.arguments, unorderedEquals(forwarded));
       expect(options.arguments.toSet(), hasLength(options.arguments.length));
+      // simctl passes each argument as it is: the quotes stock adds around the
+      // trace values would reach the engine as part of them.
+      expect(options.arguments.where((String argument) => argument.contains('"')), isEmpty);
       for (final filtered in <String>[
         '--enable-checked-mode',
         '--verify-entry-points',
