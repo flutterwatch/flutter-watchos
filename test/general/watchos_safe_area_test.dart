@@ -175,6 +175,14 @@ void main() {
         expect(at, greaterThan(body.indexOf('let scale = WatchContentScale.value')));
         expect(at, lessThan(body.indexOf('if WatchSafeAreaMode.usesCornerInset')));
         expect(at, lessThan(body.indexOf('FlutterWatchOSHostSetSafeAreaInsets(')));
+        // Nothing between the scale and the call can make it conditional.
+        final String before = body.substring(
+          body.indexOf('let scale = WatchContentScale.value'),
+          at,
+        );
+        expect(before, isNot(contains('if ')));
+        expect(before, isNot(contains('guard ')));
+        expect(before, isNot(contains('{')));
         expect('setClockBandHeightFn'.allMatches(runner).length, 2);
       },
     );

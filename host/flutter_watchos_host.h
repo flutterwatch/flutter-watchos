@@ -146,10 +146,13 @@ bool FlutterWatchOSHostRun(const char* bundle_path,
 // Forward one touch sample in logical points. `ended` marks the final sample.
 void FlutterWatchOSHostTouch(double x_points, double y_points, bool ended);
 
-// Report the watch's safe area in logical points — SwiftUI's `safeAreaInsets`
-// verbatim. Reaches `MediaQuery.padding`, so it is what `SafeArea` insets by.
-// Must be measured outside `.ignoresSafeArea()` and outside a ScrollView;
-// both report zeros. Callable before or after Run.
+// Report the safe area Dart sees as `MediaQuery.padding` (what `SafeArea`
+// insets by), in logical points: points divided by the content scale. The
+// bundled host sends the uniform corner inset on all four sides in the default
+// `corners` mode, and SwiftUI's `safeAreaInsets` in `platform` mode or for a
+// watch its corner table does not know. The insets must be measured outside
+// `.ignoresSafeArea()` and outside a ScrollView; both report zeros. Callable
+// before or after Run.
 void FlutterWatchOSHostSetSafeAreaInsets(double top_points,
                                          double right_points,
                                          double bottom_points,

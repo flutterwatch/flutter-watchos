@@ -52,8 +52,8 @@ To get the `platform` insets:
 
 ### Keeping the layout from before 0.1.0
 
-Before 0.1.0, `platform` was the default. From 0.1.0 every app gets `corners`
-on its next build, with no change to its own code: a `ListView` with no
+Before 0.1.0, `platform` was the default. From 0.1.0 every app on the current
+template gets `corners` on its next build, with no change to its own code: a `ListView` with no
 `padding` starts its first row under the clock, and an `AppBar` moves up into
 the clock's band. To keep the earlier layout, where the padding also keeps
 content below the clock, add `FlutterWatchOSSafeArea` with the value
@@ -63,6 +63,14 @@ content below the clock, add `FlutterWatchOSSafeArea` with the value
 <key>FlutterWatchOSSafeArea</key>
 <string>platform</string>
 ```
+
+An app that still compiles its own runner
+(`watchos/Runner/FlutterRunner.swift`, which `create` wrote before the watch
+host moved into the tool) gets neither mode: its runner reports no safe area,
+so `MediaQuery.padding` stays zero, the key has no effect and
+`WatchStatusBar.heightOf` returns 0. Its build warns that the runner predates
+the current host's crown scrolling; moving to the current template brings the
+safe area with it.
 
 ## The clock band
 
