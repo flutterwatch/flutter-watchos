@@ -79,6 +79,9 @@ screenshot.png pass
 # longer stops there with a logger error: --machine gets stock's logger.
 machine.app_started pass
 
+# The CPU profiler records samples on the Simulator. Fixed: empty-cpu-profile.
+# The engine's Simulator build resolves the thread calls the sampler needs.
+vm.cpu_samples pass
+
 # Known limitations
-vm.cpu_samples xfail empty-cpu-profile the CPU profiler records no samples on the Simulator
 drive.integration_test xfail integration-test-warning drive warns that the integration_test plugin was not detected
