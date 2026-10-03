@@ -44,9 +44,12 @@ stock Flutter's dozen-line iOS Runner. Rendering, input, and text input are
 handled by the engine and the host module, so improvements ship with engine
 and CLI updates without touching your app project:
 
-- **Input.** Touch and the Digital Crown work out of the box, with a native
-  scroll feel. Raw crown input is available to Dart via the `flutter_watchos`
-  package's `WatchCrown` for games, pickers, and custom controls.
+- **Input.** Touch and the Digital Crown work out of the box. The crown
+  drives a hidden native scroll view shaped like the app's list, so its
+  acceleration, haptics and edge are watchOS's own, and a small runtime the
+  CLI compiles into every app moves the list with it. Raw crown input is
+  available to Dart via the `flutter_watchos` package's `WatchCrown` for
+  games, pickers, and custom controls.
 - **Text input** works with no app code: tapping a Flutter `TextField` raises
   the watchOS system keyboard, with pre-filled text, `obscureText` masking,
   and edits round-tripping back into your Dart controllers.

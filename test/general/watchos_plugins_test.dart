@@ -3,19 +3,25 @@
 // found in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io' as io;
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:flutter_watchos/build_targets/application.dart'
+    show WatchosBuildTargets, WatchosDartPluginRegistrantTarget;
 import 'package:flutter_watchos/watchos_plugins.dart'
     show
         WatchosPlugin,
         auditPluginsWithoutWatchosSupport,
+        copyWatchosCrownRuntime,
         ensureReadyForWatchosTooling,
-        recommendWatchosPluginsToInstall;
+        recommendWatchosPluginsToInstall,
+        watchosDartPluginRegistrantSource;
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/host_sources.dart';
 
 void main() {
   late MemoryFileSystem fileSystem;
@@ -477,4 +483,85 @@ flutter:
       },
     );
   });
+
+  group('native crown runtime', () {
+    testWithoutContext('the registrant installs it before any plugin', () {
+      final String source = watchosDartPluginRegistrantSource(
+        <WatchosPlugin>[
+          WatchosPlugin(name: 'flutter_watchos', dartPluginClass: 'FlutterWatchos'),
+        ],
+        crownRuntime: true,
+      );
+      expect(
+        source,
+        contains("import 'watchos_crown_runtime.dart' as flutter_watchos_crown_runtime;"),
+      );
+      final int install = source.indexOf('flutter_watchos_crown_runtime.install();');
+      final int plugin = source.indexOf('flutter_watchos.FlutterWatchos.registerWith();');
+      expect(install, greaterThan(0));
+      expect(plugin, greaterThan(install));
+    });
+
+    testWithoutContext('the registrant without a runtime registers plugins only', () {
+      final String source = watchosDartPluginRegistrantSource(
+        <WatchosPlugin>[],
+        crownRuntime: false,
+      );
+      expect(source, isNot(contains('crown_runtime')));
+      expect(source, contains('static void register() {'));
+    });
+
+    testWithoutContext('the runtime is copied next to the registrant, and refreshed', () {
+      final Directory root = fileSystem.directory('/cli');
+      final File runtime = root.childFile('runtime/lib/watchos_crown_runtime.dart')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('void install() {}');
+      final Directory build = fileSystem.directory('/app/.dart_tool/flutter_build')
+        ..createSync(recursive: true);
+
+      expect(copyWatchosCrownRuntime(root, build), isTrue);
+      expect(
+        build.childFile('watchos_crown_runtime.dart').readAsStringSync(),
+        'void install() {}',
+      );
+
+      runtime.writeAsStringSync('void install() { /* v2 */ }');
+      expect(copyWatchosCrownRuntime(root, build), isTrue);
+      expect(
+        build.childFile('watchos_crown_runtime.dart').readAsStringSync(),
+        contains('v2'),
+      );
+    });
+
+    testWithoutContext('an installation without the runtime removes a stale copy', () {
+      final Directory build = fileSystem.directory('/app/.dart_tool/flutter_build')
+        ..createSync(recursive: true);
+      build.childFile('watchos_crown_runtime.dart').writeAsStringSync('old');
+      expect(copyWatchosCrownRuntime(fileSystem.directory('/cli'), build), isFalse);
+      expect(build.childFile('watchos_crown_runtime.dart').existsSync(), isFalse);
+    });
+
+    testWithoutContext('a run session regenerates the watchOS registrant on reload', () {
+      // The stock target would rewrite (or delete) the registrant at every
+      // hot reload or restart and drop the runtime and watchOS plugins.
+      expect(
+        const WatchosBuildTargets().dartPluginRegistrantTarget,
+        isA<WatchosDartPluginRegistrantTarget>(),
+      );
+    });
+
+    testWithoutContext('the shipped runtime is in place', () {
+      final shipped = io.File(cliRootPath('runtime/lib/watchos_crown_runtime.dart'));
+      final String text = shipped.readAsStringSync();
+      expect(text, contains('void install()'));
+      // Copied into apps whose own language version may be older.
+      expect(text, contains('// @dart = 3.9'));
+      // Imports nothing but the SDK and Flutter: an app has no other package
+      // the runtime could rely on.
+      for (final String line in text.split('\n').where((String l) => l.startsWith('import '))) {
+        expect(line, anyOf(startsWith("import 'dart:"), startsWith("import 'package:flutter/")));
+      }
+    });
+  });
+
 }

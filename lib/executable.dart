@@ -37,13 +37,13 @@ import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
-import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
+import 'build_targets/application.dart' show WatchosBuildTargets;
 import 'build_targets/watchos_hooks.dart' show WatchosHookRunner;
 import 'commands/attach.dart';
 import 'commands/build.dart';
@@ -213,7 +213,7 @@ Future<void> main(List<String> args) async {
       // from it would swap in a different one every time the two took turns.
       FlutterHookRunner: () => WatchosHookRunner(),
       ApplicationPackageFactory: () => WatchosApplicationPackageFactory(),
-      BuildTargets: () => const BuildTargetsImpl(),
+      BuildTargets: () => const WatchosBuildTargets(),
       Cache: () => WatchosFlutterCache(
         fileSystem: globals.fs,
         logger: globals.logger,

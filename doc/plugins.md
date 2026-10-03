@@ -9,10 +9,9 @@ the toolchain's first-party package (FFI, no method channels):
 - `WatchOSInfo` — watchOS version, device model, screen size/scale
 - `WatchHaptics` — Taptic Engine feedback
 - `WatchStatusBar` — show/hide the system clock (visible by default)
-- `WatchCrownScroll` / `WatchScrollPhysics` — native watch scroll feel (firm,
-  live edge bounce; no edge haptic, matching watchOS 26) for scrollables
-- `WatchCrownScrolling` — crown scroll options, same as native SwiftUI:
-  sensitivity (low/medium/high) and detent haptics on/off
+- `WatchCrownScroll` / `WatchScrollPhysics` — choose the list the Digital
+  Crown drives (every app scrolls with the crown natively without them), and
+  give the finger a native scroll view's feel
 - `WatchCrown` — Digital Crown as a raw rotation input for games and custom
   controls
 

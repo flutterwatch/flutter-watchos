@@ -153,7 +153,9 @@ void main() {
     });
   });
 
-  group('watchOS Digital Crown — engine-side scroll model', () {
+  group('watchOS Digital Crown — the raw crown through the engine', () {
+    // Scrolling is the native crown proxy's (watchos_crown_proxy_test.dart);
+    // the engine binding remains for the raw crown (WatchCrown) only.
     test('forwards raw deltas to the engine', () {
       expect(runner, contains('FlutterWatchOSCrownDelta'));
       expect(app, contains('runner.sendCrownDelta'));
@@ -164,10 +166,10 @@ void main() {
       expect(runner, contains('play(.click)'));
     });
 
-    test('hosts no scroll model (calibration lives in the engine)', () {
-      // The tanh saturation, tunables, pan/zoom synthesis, idle timer, and
-      // the plugin raw-mode dlsym all moved into the engine dylib so
-      // re-calibration reaches existing apps via engine updates.
+    test('the runner hosts no crown model (the engine routes raw deltas)', () {
+      // The engine resolves the plugin's raw-crown accumulator itself; the
+      // runner only forwards rotation. (The crown proxy reads the raw-mode
+      // switch to pick the crown's consumer: WatchCrownProxy.swift.)
       expect(runner, isNot(contains('tanh')));
       expect(runner, isNot(contains('crownPointsPerUnit')));
       expect(runner, isNot(contains('kPanZoom')));
@@ -175,10 +177,8 @@ void main() {
       expect(runner, isNot(contains('flutter_watchos_crown_push_delta')));
     });
 
-    test('Bridge.h declares no crown C prototypes (engine resolves the plugin)',
-        () {
-      expect(bridge,
-          isNot(contains('int32_t flutter_watchos_crown_mode(void)')));
+    test('Bridge.h declares no crown C prototypes (engine resolves the plugin)', () {
+      expect(bridge, isNot(contains('int32_t flutter_watchos_crown_mode(void)')));
     });
   });
 

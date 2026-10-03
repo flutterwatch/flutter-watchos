@@ -21,6 +21,7 @@ import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
@@ -149,6 +150,20 @@ class WatchosDartPluginRegistrantTarget extends Target {
     final FlutterProject project = FlutterProject.fromDirectory(environment.projectDir);
     writeWatchosDartPluginRegistrant(project);
   }
+}
+
+/// The build targets a resident session (`run`) rebuilds between reloads.
+///
+/// A hot reload or restart regenerates the plugin registrant through
+/// `BuildTargets.dartPluginRegistrantTarget`; the stock one would rewrite
+/// `dart_plugin_registrant.dart` with iOS registrations (or delete it) and so
+/// drop the watchOS plugins and the native crown runtime from the restarted
+/// app. This hands it the watchOS registrant instead.
+class WatchosBuildTargets extends BuildTargetsImpl {
+  const WatchosBuildTargets();
+
+  @override
+  Target get dartPluginRegistrantTarget => const WatchosDartPluginRegistrantTarget();
 }
 
 /// A [KernelSnapshot] subclass that swaps in our watchOS-aware registrant
@@ -1373,6 +1388,11 @@ class NativeWatchosBundle extends Target {
       globals.logger.printTrace(
         'Legacy watchOS project (Runner/FlutterRunner.swift present): '
         'skipping the FlutterWatchOS host module.',
+      );
+      globals.logger.printWarning(
+        'This app compiles its own watchOS runner (watchos/Runner/FlutterRunner.swift), '
+        'which predates native Digital Crown scrolling: its crown keeps the older scroll '
+        'model. Migrate the runner to the current template to get it.',
       );
       return null;
     }

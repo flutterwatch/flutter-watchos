@@ -945,6 +945,9 @@ final class FlutterRunner: ObservableObject {
     /// phase drifts against the panel's — judder even with the frame budget
     /// half empty.
     func notifyVsync() {
+        // The crown's position goes out first, so the frame this tick starts
+        // already shows it (see CrownProxyModel).
+        CrownProxyModel.shared.tick()
         FlutterWatchOSHostNotifyVsync()
     }
 

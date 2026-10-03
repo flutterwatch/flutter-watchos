@@ -24,12 +24,17 @@ public struct FlutterHostView<Splash: View>: View {
     @ObservedObject var platformViews = WatchPlatformViews.shared
     // And for the accessibility elements.
     @ObservedObject var accessibility = WatchAccessibility.shared
+    // Where the crown goes, and the shape of the native view that owns it
+    // (see WatchCrownProxy.swift).
+    @ObservedObject var crownModel = CrownProxyModel.shared
     // Always-On: true while the wrist is down and watchOS is showing the app
     // dimmed. Readable only here — it is a SwiftUI environment value, with no
     // WatchKit equivalent — so the host forwards it to Dart (WatchAlwaysOn).
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @State private var crownValue: Double = 0.0
+    // Crown focus: the engine binding's, or the native proxy's.
     @FocusState private var isFocused: Bool
+    @FocusState private var crownProxyFocused: Bool
     // Which text-field proxy (by semantics node id) currently holds focus.
     @FocusState private var focusedField: Int32?
     // Per-gesture cache of the frame drag's ownership decision (nil = no
@@ -108,25 +113,6 @@ public struct FlutterHostView<Splash: View>: View {
                         }
                     }
             )
-            .focusable()
-            .focused($isFocused)
-            .digitalCrownRotation(
-                $crownValue,
-                from: -10000.0,
-                through: 10000.0,
-                by: 0.05,
-                sensitivity: .high,
-                isContinuous: true,
-                // Must stay false with this fine `by:` step: the system crown
-                // haptic fires once per detent and, at by:0.05, floods the
-                // Taptic Engine and stutters the scroll on real hardware. The
-                // detent click is played by the runner instead (see
-                // FlutterWatchOSCrownSetTickCallback).
-                isHapticFeedbackEnabled: false
-            )
-            .onChange(of: crownValue) { oldValue, newValue in
-                runner.sendCrownDelta(newValue - oldValue)
-            }
             // Platform views on an engine that predates composited frames
             // (`FlutterRunner.compositesLayers` false): the engine publishes
             // each view's rect and the host overlays the native view itself,
@@ -231,6 +217,13 @@ public struct FlutterHostView<Splash: View>: View {
                     textInput.beginEditing(id)
                 } else {
                     textInput.endEditing()
+                    // The field took crown focus; give it back to whoever
+                    // owns the crown, or it stays dead after typing.
+                    switch crownModel.route {
+                    case .proxy: crownProxyFocused = true
+                    case .binding: isFocused = true
+                    case .none: break
+                    }
                 }
             }
         }
@@ -239,6 +232,36 @@ public struct FlutterHostView<Splash: View>: View {
         // surface is on screen; see EngineVsyncClock for why it looks like
         // nothing.
         .background { EngineVsyncClock() }
+        // The Digital Crown. Its consumer sits behind the frame: never drawn
+        // (the frame is opaque) and never hit tested, it only holds crown
+        // focus. Normally that is a native ScrollView shaped like the Flutter
+        // scrollable the crown drives, so watchOS scrolls it with its own
+        // acceleration, momentum, detent haptics, edge spring and indicator,
+        // and Flutter shows where it is (WatchCrownProxy.swift). For the raw
+        // crown it is the engine binding instead.
+        // Only one exists at a time: a second crown consumer next to the
+        // native view, even unfocused and silent, cost the native view its
+        // haptics on a Series 10.
+        .background {
+            switch crownModel.route {
+            case .proxy:
+                if let config = crownModel.config {
+                    VStack(spacing: 0) {
+                        CrownProxyScroll(config: config, model: crownModel,
+                                         focus: $crownProxyFocused)
+                            .frame(height: config.viewportPoints)
+                        Spacer(minLength: 0)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                }
+            case .binding:
+                CrownBinding(crownValue: $crownValue, focus: $isFocused, runner: runner)
+                    .allowsHitTesting(false)
+            case .none:
+                EmptyView()
+            }
+        }
         // Safe area. The Flutter surface is deliberately full-bleed (above),
         // but Dart still has to KNOW which edges the system occupies — the
         // clock at the top and the display's own curvature all round — or
@@ -323,9 +346,6 @@ public struct FlutterHostView<Splash: View>: View {
         }
         .onAppear {
             FlutterRunner.shared.start()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                isFocused = true
-            }
         }
     }
 
@@ -390,6 +410,149 @@ public struct FlutterHostView<Splash: View>: View {
             SecureField("", text: text)
         } else {
             TextField("", text: text)
+        }
+    }
+}
+
+/// The native view that owns the crown while the runtime drives a Flutter
+/// scrollable (WatchCrownRoute.proxy): as tall as the scrollable's range plus
+/// one screen, and following the scrollable when it moves by other means, so
+/// the crown always continues from where the content is.
+private struct CrownProxyScroll: View {
+    let config: CrownProxyModel.Config
+    /// Not observed: FlutterHostView passes a new config when it changes,
+    /// and the per-frame follow requests come through `follow`.
+    let model: CrownProxyModel
+    var focus: FocusState<Bool>.Binding
+    @ObservedObject private var follow = CrownProxyFollow.shared
+    @State private var position = ScrollPosition(y: 0)
+
+    /// Rows of one height that add up to the content height exactly, near
+    /// the scrollable's row pitch. A lazy stack sizes the rows it has not laid
+    /// out yet from the ones it has: a shorter last row left its estimate a
+    /// row too tall, and the crown came to rest past Flutter's end (watchOS
+    /// 26.5 Simulator: 1644 for a range of 1601).
+    private var rows: Int {
+        // Capped: a lazy stack handles many rows, not unboundedly many.
+        min(100_000, max(1, Int((config.contentPoints / config.rowPoints).rounded())))
+    }
+
+    private var rowHeight: CGFloat { config.contentPoints / Double(rows) }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            LazyVStack(spacing: 0) {
+                ForEach(0..<rows, id: \.self) { _ in
+                    Color.clear.frame(height: rowHeight)
+                }
+            }
+        }
+        .contentMargins(.vertical, 0, for: .scrollContent)
+        // The system crown scroll indicator, exact because the view mirrors
+        // the scrollable. The crown shows it by itself; a touch scroll
+        // reaches this view only through the follow, so it is flashed then.
+        // An app can hide it (`WatchCrownScroll(scrollIndicator: false)`).
+        .scrollIndicators(config.showsIndicator ? .automatic : .hidden)
+        .scrollIndicatorsFlash(trigger: follow.indicatorFlash)
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: Double.self, of: { geometry in
+            // The visible origin, so an inset applied once laid out is not a
+            // scroll.
+            Double(geometry.contentOffset.y + geometry.contentInsets.top)
+        }) { _, origin in
+            model.viewMoved(to: origin)
+            // The report goes out on the next display tick, and the display
+            // clock sleeps while Flutter has nothing to draw: wake it, or a
+            // crown turn on a still screen is never sent.
+            FlutterDisplayClock.shared.wake()
+        }
+        .onScrollPhaseChange { _, phase in
+            model.scrollIdle = phase == .idle
+            // Only the crown makes it interact: touches never reach it, and
+            // the follow is programmatic. From then on the crown leads, even
+            // over a Flutter fling that is still running.
+            if phase == .interacting, !model.crownActive {
+                model.crownActive = true
+                model.syncHold = 0
+            } else if phase == .idle {
+                model.crownActive = false
+            }
+            FlutterDisplayClock.shared.wake()
+        }
+        // A scroll view takes crown focus as it is. `.focusable()` must not
+        // be added: on a ScrollView it wraps the view in a focusable element
+        // that takes the crown and leaves the scroll still (watchOS 26.5
+        // Simulator).
+        .focused(focus)
+        .onAppear {
+            followFlutter()
+            focusSoon(focus)
+        }
+        .onChange(of: follow.request) { _, _ in followFlutter() }
+    }
+
+    /// Moves to where Flutter is. A stop moves even onto the position the
+    /// view already shows: that is what ends a glide still running.
+    ///
+    /// The move is made on the next main-queue turn, outside the view update
+    /// that delivers the request: made inside it, a ScrollView in the middle
+    /// of a crown glide keeps the new position but goes on gliding (watchOS
+    /// 26.5 Simulator).
+    private func followFlutter() {
+        let stop = model.syncStop
+        model.syncStop = false
+        let target = config.origin(atPixels: model.syncPixels)
+        guard stop || abs((model.origin ?? -1) - target) > 0.25 else { return }
+        model.syncHold = 3
+        DispatchQueue.main.async {
+            // The crown may have taken over since (turned during a Flutter
+            // fling); moving now would cancel its turn.
+            guard stop || !model.crownActive else { return }
+            position.scrollTo(y: target)
+        }
+    }
+}
+
+/// The crown binding into the engine (WatchCrownRoute.binding): the raw
+/// crown that `WatchCrown` reads.
+private struct CrownBinding: View {
+    @Binding var crownValue: Double
+    var focus: FocusState<Bool>.Binding
+    let runner: FlutterRunner
+
+    var body: some View {
+        Color.clear
+            .focusable()
+            .focused(focus)
+            .digitalCrownRotation(
+                $crownValue,
+                from: -10000.0,
+                through: 10000.0,
+                by: 0.05,
+                sensitivity: .high,
+                isContinuous: true,
+                // Must stay false with this fine `by:` step: the system crown
+                // haptic fires once per detent and, at by:0.05, floods the
+                // Taptic Engine and stutters the scroll on real hardware. The
+                // detent click is played by the runner instead (see
+                // FlutterWatchOSCrownSetTickCallback).
+                isHapticFeedbackEnabled: false
+            )
+            .onChange(of: crownValue) { oldValue, newValue in
+                runner.sendCrownDelta(newValue - oldValue)
+            }
+            .onAppear { focusSoon(focus) }
+    }
+}
+
+/// Gives crown focus to a view that has just appeared. Focus set in the same
+/// update as the view's insertion does not always take, so it is set again
+/// shortly after.
+private func focusSoon(_ focus: FocusState<Bool>.Binding) {
+    focus.wrappedValue = true
+    for delay in [0.05, 0.3] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            focus.wrappedValue = true
         }
     }
 }
@@ -670,6 +833,12 @@ private struct SystemTimeHidden: ViewModifier {
         #else
         content
         #endif
+    }
+}
+extension View {
+    /// SPIKE ONLY: apply `transform` when `condition` holds.
+    @ViewBuilder func when<T: View>(_ condition: Bool, _ transform: (Self) -> T) -> some View {
+        if condition { transform(self) } else { self }
     }
 }
 #endif  // !arch(arm64_32)
