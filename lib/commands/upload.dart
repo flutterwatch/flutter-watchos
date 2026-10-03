@@ -24,8 +24,11 @@ class WatchosUploadCommand extends FlutterCommand {
     argParser
       ..addOption(
         'ipa',
-        help: 'Path to the .ipa to upload. Defaults to the most recent one '
-            'under build/watchos/ipa/.',
+        help: 'Path to the .ipa to upload: an App Store export from Xcode '
+            "(the Organizer's Distribute App, or xcodebuild -exportArchive). "
+            'Without it, upload takes the newest .ipa under build/watchos/ipa/; '
+            'that folder is only where upload looks, and no flutter-watchos '
+            'command writes there.',
       )
       ..addOption('api-key-id', help: 'App Store Connect API key id.')
       ..addOption('api-issuer', help: 'App Store Connect API issuer id.')

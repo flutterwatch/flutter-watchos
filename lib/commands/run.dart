@@ -3,19 +3,37 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/commands/run.dart';
+import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/project.dart';
 
 import '../watchos_cache.dart';
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
+import 'port_help.dart';
 
-class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts {
+class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts, UnusedPortHelp {
   WatchosRunCommand({required super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {
+    await refuseFlavorForWatch(this);
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // super found the target devices; a watch that cannot run the mode stops
+    // here, before anything is built.
+    final List<Device> targets = devices ?? const <Device>[];
+    throwIfWatchCannotRunMode(
+      command: WatchosModeCommand.run,
+      mode: getBuildMode(),
+      devices: targets,
+    );
+    warnIfWatchIgnoresDefaultFlavor(
+      cliFlavor: stringArg('flavor'),
+      defaultFlavor: project.manifest.defaultFlavor,
+      devices: targets,
+    );
   }
 
   // Let the base RunCommand.runCommand() handle everything:

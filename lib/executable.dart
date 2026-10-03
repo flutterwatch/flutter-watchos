@@ -5,41 +5,47 @@
 
 import 'dart:io';
 
+import 'package:flutter_tools/executable.dart' show LoggerFactory;
 import 'package:flutter_tools/runner.dart' as runner;
 import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/config.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/os.dart' show findProjectRoot;
+// Prefixed: dart:io has a Platform too, which [rootPath] reads.
+import 'package:flutter_tools/src/base/platform.dart' as tools show Platform;
 import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/commands/analyze.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
-import 'package:flutter_tools/src/commands/channel.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/commands/daemon.dart';
-import 'package:flutter_tools/src/commands/debug_adapter.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
-import 'package:flutter_tools/src/commands/downgrade.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
-import 'package:flutter_tools/src/commands/install.dart';
 import 'package:flutter_tools/src/commands/logs.dart';
 import 'package:flutter_tools/src/commands/packages.dart';
 import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
-import 'package:flutter_tools/src/commands/update_packages.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/flutter_features.dart';
+import 'package:flutter_tools/src/flutter_features_config.dart';
+import 'package:flutter_tools/src/flutter_manifest.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
 import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
+import 'package:flutter_tools/src/project_validator.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/version.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
@@ -48,11 +54,15 @@ import 'build_targets/watchos_hooks.dart' show WatchosHookRunner;
 import 'commands/attach.dart';
 import 'commands/build.dart';
 import 'commands/build_registry.dart';
+import 'commands/channel.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
+import 'commands/debug_adapter.dart';
 import 'commands/devices.dart';
+import 'commands/downgrade.dart';
 import 'commands/drive.dart';
 import 'commands/host.dart';
+import 'commands/install.dart';
 import 'commands/login.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
@@ -85,6 +95,10 @@ Future<void> main(List<String> args) async {
       (args.length == 1 && verbose);
   final bool muteCommandLogging = (help || doctor) && !veryVerbose;
   final bool verboseHelp = help && verbose;
+  // As stock's main reads them, for the logger.
+  final bool prefixedErrors = args.contains('--prefixed-errors');
+  final bool daemon = args.contains('daemon');
+  final bool runMachine = args.contains('--machine');
 
   args = <String>[
     '--suppress-analytics', // Suppress flutter analytics by default.
@@ -101,95 +115,7 @@ Future<void> main(List<String> args) async {
 
   await runner.run(
     args,
-    () => <FlutterCommand>[
-      // Commands forwarded directly from flutter_tools — these have no
-      // watchOS-specific behaviour, so we register them as-is.
-      AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
-      ChannelCommand(verboseHelp: verboseHelp),
-      ConfigCommand(verboseHelp: verboseHelp),
-      DaemonCommand(hidden: !verboseHelp),
-      DebugAdapterCommand(verboseHelp: verboseHelp),
-      DoctorCommand(verbose: verbose),
-      DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
-      EmulatorsCommand(),
-      GenerateCommand(),
-      GenerateLocalizationsCommand(
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        artifacts: globals.artifacts!,
-        processManager: globals.processManager,
-      ),
-      InstallCommand(verboseHelp: verboseHelp),
-      LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
-      PackagesCommand(),
-      ScreenshotCommand(fs: globals.fs),
-      ShellCompletionCommand(),
-      SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
-      UpdatePackagesCommand(verboseHelp: verboseHelp),
-      // Commands extended for watchOS.
-      // `upgrade` is overridden so it upgrades the flutter-watchos toolchain to
-      // its latest release tag instead of moving the pinned Flutter SDK
-      // upstream (which stock UpgradeCommand would do, breaking the
-      // engine-artifact pin).
-      WatchosUpgradeCommand(verboseHelp: verboseHelp),
-      WatchosAttachCommand(
-        verboseHelp: verboseHelp,
-        stdio: globals.stdio,
-        logger: globals.logger,
-        terminal: globals.terminal,
-        signals: globals.signals,
-        platform: globals.platform,
-        processInfo: globals.processInfo,
-        fileSystem: globals.fs,
-      ),
-      WatchosBuildCommand(
-        artifacts: globals.artifacts!,
-        cache: globals.cache,
-        fileSystem: globals.fs,
-        flutterVersion: globals.flutterVersion,
-        buildSystem: globals.buildSystem,
-        osUtils: globals.os,
-        logger: globals.logger,
-        androidSdk: globals.androidSdk,
-        config: globals.config,
-        platform: globals.platform,
-        processUtils: globals.processUtils,
-        processManager: globals.processManager,
-        fileSystemUtils: globals.fsUtils,
-        templateRenderer: globals.templateRenderer,
-        terminal: globals.terminal,
-        plistParser: globals.plistParser,
-        xcode: globals.xcode,
-        verboseHelp: verboseHelp,
-      ),
-      WatchosCleanCommand(verbose: verbose),
-      WatchosCreateCommand(verboseHelp: verboseHelp),
-      WatchosDevicesCommand(verboseHelp: verboseHelp),
-      WatchosDriveCommand(
-        verboseHelp: verboseHelp,
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        platform: globals.platform,
-        signals: globals.signals,
-        terminal: globals.terminal,
-        outputPreferences: globals.outputPreferences,
-      ),
-      WatchosHostCommand(),
-      WatchosBuildRegistryCommand(),
-      WatchosLoginCommand(),
-      WatchosLogoutCommand(),
-      WatchosPluginCommand(verboseHelp: verboseHelp),
-      WatchosPrecacheCommand(
-        verboseHelp: verboseHelp,
-        cache: globals.cache,
-        logger: globals.logger,
-        platform: globals.platform,
-        featureFlags: featureFlags,
-      ),
-      WatchosRunCommand(verboseHelp: verboseHelp),
-      WatchosTestCommand(verboseHelp: verboseHelp),
-      WatchosUploadCommand(),
-    ],
+    () => generateWatchosCommands(verboseHelp: verboseHelp, verbose: verbose),
     verbose: verbose,
     verboseHelp: verboseHelp,
     muteCommandLogging: muteCommandLogging,
@@ -223,6 +149,21 @@ Future<void> main(List<String> args) async {
         processManager: globals.processManager,
       ),
       TemplateRenderer: () => const MustacheTemplateRenderer(),
+      // Stock's flags, as stock's context builds them, with custom devices on
+      // unless configured off: see [createWatchosFeatureFlags].
+      FeatureFlags: () => createWatchosFeatureFlags(
+        flutterVersion: globals.flutterVersion,
+        globalConfig: globals.config,
+        platform: globals.platform,
+        projectManifest: FlutterManifest.createFromPath(
+          globals.fs.path.join(
+            findProjectRoot(globals.fs) ?? globals.fs.currentDirectory.path,
+            'pubspec.yaml',
+          ),
+          fileSystem: globals.fs,
+          logger: globals.logger,
+        ),
+      ),
       Artifacts: () => WatchosArtifacts(
         fileSystem: globals.fs,
         cache: globals.cache,
@@ -256,29 +197,170 @@ Future<void> main(List<String> args) async {
         watchosWorkflow: watchosWorkflow!,
       ),
       WatchosValidator: () => WatchosValidator(processManager: globals.processManager),
-      // Always wrap the logger with WatchosCategoryRewritingLogger so the
-      // device list shows `(watch)` instead of `(mobile)` for watchOS devices.
-      // The wrapper is a no-op on every other line. In verbose mode,
-      // VerboseLogger sits inside ours so timestamps still apply.
-      Logger: () => WatchosCategoryRewritingLogger(
-        verbose && !muteCommandLogging
-            ? VerboseLogger(
-                StdoutLogger(
-                  stdio: globals.stdio,
-                  terminal: globals.terminal,
-                  outputPreferences: globals.outputPreferences,
-                ),
-              )
-            : StdoutLogger(
-                stdio: globals.stdio,
-                terminal: globals.terminal,
-                outputPreferences: globals.outputPreferences,
-              ),
+      // Stock's logger, as stock's main builds it. For people it is wrapped so
+      // the device list shows `(watch)` and the usage hint names
+      // flutter-watchos; for daemon and --machine it is stock's alone.
+      Logger: () => createWatchosLogger(
+        LoggerFactory(
+          outputPreferences: globals.outputPreferences,
+          terminal: globals.terminal,
+          stdio: globals.stdio,
+        ),
+        daemon: daemon,
+        machine: runMachine,
+        verbose: verbose && !muteCommandLogging,
+        prefixedErrors: prefixedErrors,
+        windows: globals.platform.isWindows,
       ),
     },
     shutdownHooks: globals.shutdownHooks,
   );
 }
+
+/// Stock's [FlutterFeatureFlags], with custom devices on unless configured
+/// off.
+///
+/// An IDE asks `daemon.getSupportedPlatforms` whether custom devices are
+/// supported before it offers a device outside Flutter's own platforms, such
+/// as a watch. Stock turns the feature on only through `flutter config
+/// --enable-custom-devices`, which writes the settings file that stock Flutter
+/// shares. Here it is on when nothing configures it, and nothing is written:
+/// the pubspec, `flutter config` and `FLUTTER_CUSTOM_DEVICES` still decide, in
+/// stock's order. Every other feature is stock's. With the feature on, stock's
+/// custom-device discovery also lists the devices configured for stock
+/// Flutter, if there are any.
+///
+/// The arguments are the ones stock's context builds its flags from.
+FeatureFlags createWatchosFeatureFlags({
+  required FlutterVersion flutterVersion,
+  required Config globalConfig,
+  required tools.Platform platform,
+  required FlutterManifest? projectManifest,
+}) => FlutterFeatureFlags(
+  flutterVersion: flutterVersion,
+  featuresConfig: _WatchosFeaturesConfig(
+    FlutterFeaturesConfig(
+      globalConfig: globalConfig,
+      platform: platform,
+      projectManifest: projectManifest,
+    ),
+  ),
+  platform: platform,
+);
+
+/// Stock's feature configuration, which says "on" for custom devices when it
+/// has no value of its own.
+class _WatchosFeaturesConfig implements FlutterFeaturesConfig {
+  const _WatchosFeaturesConfig(this._stock);
+
+  final FlutterFeaturesConfig _stock;
+
+  @override
+  bool? isEnabled(Feature feature) =>
+      _stock.isEnabled(feature) ?? (feature == flutterCustomDevicesFeature ? true : null);
+}
+
+/// The commands flutter-watchos registers.
+///
+/// A function, like stock `generateCommands`, so a test can pin the list. It
+/// reads the commands' dependencies from `globals`, so it runs inside the
+/// tool's context.
+///
+/// Some stock commands stay out. `custom-devices`, `ide-config` and the one
+/// that shows widgets in a browser have no use on a watch. `update-packages`
+/// (alias `upgrade-packages`) is a tool for the Flutter repository itself, and
+/// it can rewrite the pinned SDK's pubspecs. Typing one gives the usage error.
+List<FlutterCommand> generateWatchosCommands({required bool verboseHelp, required bool verbose}) =>
+    <FlutterCommand>[
+      // Commands forwarded directly from flutter_tools — these have no
+      // watchOS-specific behaviour, so we register them as-is.
+      AnalyzeCommand(
+        verboseHelp: verboseHelp,
+        fileSystem: globals.fs,
+        platform: globals.platform,
+        processManager: globals.processManager,
+        logger: globals.logger,
+        terminal: globals.terminal,
+        artifacts: globals.artifacts!,
+        allProjectValidators: <ProjectValidator>[
+          GeneralInfoProjectValidator(),
+          VariableDumpMachineProjectValidator(
+            logger: globals.logger,
+            fileSystem: globals.fs,
+            platform: globals.platform,
+            git: globals.git,
+          ),
+        ],
+        suppressAnalytics: !globals.analytics.okToSend,
+      ),
+      AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
+      ConfigCommand(verboseHelp: verboseHelp),
+      DaemonCommand(hidden: !verboseHelp),
+      WatchosDebugAdapterCommand(verboseHelp: verboseHelp),
+      DoctorCommand(verbose: verbose),
+      EmulatorsCommand(),
+      GenerateCommand(),
+      GenerateLocalizationsCommand(
+        fileSystem: globals.fs,
+        logger: globals.logger,
+        artifacts: globals.artifacts!,
+        processManager: globals.processManager,
+      ),
+      WatchosInstallCommand(verboseHelp: verboseHelp),
+      LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
+      PackagesCommand(),
+      ScreenshotCommand(fs: globals.fs),
+      ShellCompletionCommand(),
+      SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
+      // Commands extended for watchOS.
+      // `upgrade` is overridden so it upgrades the flutter-watchos toolchain to
+      // its latest release tag instead of moving the pinned Flutter SDK
+      // upstream (which stock UpgradeCommand would do, breaking the
+      // engine-artifact pin).
+      WatchosUpgradeCommand(verboseHelp: verboseHelp),
+      // `channel` shows the pin and `downgrade` refuses: the stock commands
+      // move the pinned SDK, which the next run would reset.
+      WatchosChannelCommand(),
+      WatchosDowngradeCommand(),
+      WatchosAttachCommand(
+        verboseHelp: verboseHelp,
+        stdio: globals.stdio,
+        logger: globals.logger,
+        terminal: globals.terminal,
+        signals: globals.signals,
+        platform: globals.platform,
+        processInfo: globals.processInfo,
+        fileSystem: globals.fs,
+      ),
+      WatchosBuildCommand(logger: globals.logger, verboseHelp: verboseHelp),
+      WatchosCleanCommand(verbose: verbose),
+      WatchosCreateCommand(verboseHelp: verboseHelp),
+      WatchosDevicesCommand(verboseHelp: verboseHelp),
+      WatchosDriveCommand(
+        verboseHelp: verboseHelp,
+        fileSystem: globals.fs,
+        logger: globals.logger,
+        platform: globals.platform,
+        signals: globals.signals,
+        terminal: globals.terminal,
+        outputPreferences: globals.outputPreferences,
+      ),
+      WatchosHostCommand(),
+      WatchosBuildRegistryCommand(),
+      WatchosLoginCommand(),
+      WatchosLogoutCommand(),
+      WatchosPluginCommand(verboseHelp: verboseHelp),
+      WatchosPrecacheCommand(
+        verboseHelp: verboseHelp,
+        cache: globals.cache,
+        logger: globals.logger,
+        platform: globals.platform,
+        featureFlags: featureFlags,
+      ),
+      WatchosRunCommand(verboseHelp: verboseHelp),
+      WatchosTestCommand(verboseHelp: verboseHelp),
+      WatchosUploadCommand(),
+    ];
 
 /// See: [Cache.defaultFlutterRoot] in `cache.dart`
 String get rootPath {
