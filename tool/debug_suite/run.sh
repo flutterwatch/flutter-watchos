@@ -8,11 +8,12 @@
 #
 # Creates an app from fixture_main.dart.tmpl and runs the debugging checks
 # against it on one watch Simulator: run with r, R and q, vmcheck through the
-# printed VM Service URI, DevTools over HTTP, attach, the log matrix in the run
-# console and in logs, --start-paused, --machine, the mode refusal, screenshot,
-# test, drive and --trace-startup. Each check writes one PASS, FAIL or SKIP
-# line; verdict.dart compares them with expectations.txt, where a check that
-# a known limitation makes fail is a strict expected failure.
+# printed VM Service URI, DevTools over HTTP, attach and a reload after it, the
+# log matrix in the run console and in logs, --start-paused, --machine, the
+# mode refusal, screenshot, test, drive and --trace-startup. Each check writes
+# one PASS, FAIL or SKIP line; verdict.dart compares them with
+# expectations.txt, where a check that a known limitation makes fail is a
+# strict expected failure.
 #
 # Usage:
 #   tool/debug_suite/run.sh <simulator-udid>
@@ -211,6 +212,17 @@ wait_for() {
   return 1
 }
 
+# wait_for_new <file> <lines> <extended-regex> <seconds>: as wait_for, but
+# only in what the file holds after its first <lines> lines.
+wait_for_new() {
+  local i
+  for ((i = 0; i < $4; i++)); do
+    tail -n +"$(($2 + 1))" "$1" 2>/dev/null | grep -qE "$3" && return 0
+    sleep 1
+  done
+  return 1
+}
+
 # wait_exit <pid> <seconds>: the pid's exit code, or 124 after the timeout.
 wait_exit() {
   local i
@@ -312,7 +324,7 @@ EOF
   >>"$WORK/create.log" 2>&1 || die "pub add integration_test failed (see create.log)"
 BREAKPOINT_LINE="$(grep -n 'SUITE_BREAKPOINT' "$APP/lib/main.dart" | cut -d: -f1)"
 
-# --- run: URLs, log matrix, vmcheck, DevTools, attach, r, R, q ----------------
+# --- run: URLs, log matrix, vmcheck, DevTools, r, R, attach, q ----------------
 
 note "run -d $UDID"
 pty_start run "$CLI" run -d "$UDID"
@@ -348,18 +360,6 @@ if wait_for "$WORK/run.log" "$VM_URL_RE" 600; then
   vmcheck "$VM_URL" "package:$APP_NAME/main.dart" "$BREAKPOINT_LINE" >"$WORK/vmcheck.txt" 2>&1
   grep -E '^(PASS|FAIL) ' "$WORK/vmcheck.txt" | tee -a "$RESULTS"
 
-  note "attach --debug-url"
-  pty_start attach "$CLI" attach -d "$UDID" --debug-url "$VM_URL"
-  ATTACH_PID=$LAST_PID
-  if wait_for "$WORK/attach.log" 'Flutter run key commands|is available at' 180; then
-    keys attach d
-    wait_exit "$ATTACH_PID" 30
-    check attach.debug_url "connected, d exits $?" true
-  else
-    result FAIL attach.debug_url "no connection in 180 s"
-    kill "$ATTACH_PID" 2>/dev/null
-  fi
-
   note "hot reload"
   sed -i '' 's/SUITE_TEXT_A/SUITE_TEXT_B/' "$APP/lib/main.dart"
   keys run r
@@ -379,6 +379,34 @@ if wait_for "$WORK/run.log" "$VM_URL_RE" 600; then
   else
     result FAIL run.hot_restart "no restart in 60 s"
   fi
+
+  # attach comes after r and R: once an attach to the app that run drives is
+  # detached with d, that run session can no longer reload or restart.
+  note "attach --debug-url"
+  pty_start attach "$CLI" attach -d "$UDID" --debug-url "$VM_URL"
+  ATTACH_PID=$LAST_PID
+  if wait_for "$WORK/attach.log" 'Flutter run key commands|is available at' 180; then
+    keys attach d
+    wait_exit "$ATTACH_PID" 30
+    check attach.debug_url "connected, d exits $?" true
+  else
+    result FAIL attach.debug_url "no connection in 180 s"
+    kill "$ATTACH_PID" 2>/dev/null
+  fi
+
+  note "hot reload after attach and d"
+  seen="$(wc -l <"$WORK/run.log" | tr -d ' ')"
+  sed -i '' 's/SUITE_TEXT_A/SUITE_TEXT_C/' "$APP/lib/main.dart"
+  keys run r
+  if wait_for_new "$WORK/run.log" "$seen" 'Reloaded|rejected|Lost connection' 30 &&
+    ! tail -n +"$((seen + 1))" "$WORK/run.log" | grep -qE 'rejected|Lost connection' &&
+    vmcheck "$VM_URL" --dump-app 2>&1 | grep -q SUITE_TEXT_C; then
+    result PASS run.reload_after_detach "the edited Text is in debugDumpApp"
+  else
+    why="$(tail -n +"$((seen + 1))" "$WORK/run.log" | grep -m 1 -E 'rejected|Lost connection' | tr -d '\r')"
+    result FAIL run.reload_after_detach "${why:-no reload in 30 s}"
+  fi
+  sed -i '' 's/SUITE_TEXT_C/SUITE_TEXT_A/' "$APP/lib/main.dart"
 
   keys run q
   wait_exit "$RUN_PID" 60

@@ -217,6 +217,7 @@ PASS vm.new_check ok
       'mode-stack-trace',
       'empty-screenshot',
       'integration-test-warning',
+      'reload-after-detach',
     };
     final String text = File('tool/debug_suite/expectations.txt').readAsStringSync();
     final Map<String, Expectation> shipped = parseExpectations(text);
