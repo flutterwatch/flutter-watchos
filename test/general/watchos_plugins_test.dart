@@ -44,9 +44,10 @@ const Map<String, bool> _pluginsReadmeTable = <String, bool>{
   'video_player': true,
   'audioplayers': true,
   'in_app_purchase': true,
-  // Not until its package moves to games_services' 5.x interface.
+  // Not until its package works with games_services' latest major, 5.x.
   'games_services': false,
-  // Not until their versions are settled.
+  // Published, but not yet run end to end against a Firebase project and on
+  // a physical watch.
   'firebase_core': false,
   'firebase_auth': false,
   'firebase_storage': false,

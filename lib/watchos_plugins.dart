@@ -56,11 +56,15 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
 /// It lists exactly the rows of the plugins repository's README table whose
 /// package has a plain version on pub.dev and a README snippet that resolves
 /// with the upstream plugin's latest major, so
-/// [recommendWatchosPluginsToInstall] can suggest them. Not yet listed:
-/// `games_services`, until its package moves to the upstream's 5.x interface,
-/// and the four Firebase packages, until their versions are settled. Never add
-/// a name that isn't actually published — recommending a non-existent package
-/// is worse than staying silent.
+/// [recommendWatchosPluginsToInstall] can suggest them: the fifteen below.
+///
+/// Two kinds of rows are left out on purpose. `games_services_watchos` works
+/// with games_services 4.x, not with its latest major, 5.x. The four Firebase
+/// packages (`firebase_core`, `firebase_auth`, `firebase_messaging` and
+/// `firebase_storage`) are published, but have not yet been run end to end
+/// against a Firebase project and on a physical watch, so the tool does not
+/// suggest them. Never add a name that isn't actually published —
+/// recommending a non-existent package is worse than staying silent.
 const Map<String, List<String>> _kKnownWatchosPlugins = <String, List<String>>{
   'audioplayers': <String>[],
   'battery_plus': <String>[],
