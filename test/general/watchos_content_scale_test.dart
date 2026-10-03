@@ -53,6 +53,24 @@ void main() {
       );
     });
 
+    test('has its own doc comment, apart from WatchDisplayCorner', () {
+      // Each enum's comment is the block between the blank line above it and
+      // its declaration; the two blocks once ran together, which left
+      // WatchContentScale with none.
+      String docAbove(String declaration) {
+        final int at = runner.indexOf('\n$declaration');
+        expect(at, greaterThan(-1));
+        return runner.substring(runner.lastIndexOf('\n\n', at), at).trimLeft();
+      }
+
+      final String scaleDoc = docAbove('enum WatchContentScale');
+      expect(scaleDoc, startsWith('/// Content scale:'));
+      expect(scaleDoc, contains('<key>FlutterWatchOSContentScale</key>'));
+      final String cornerDoc = docAbove('enum WatchDisplayCorner');
+      expect(cornerDoc, startsWith("/// The display's rounded-corner radius"));
+      expect(cornerDoc, isNot(contains('FlutterWatchOSContentScale')));
+    });
+
     test('both overlay mirrors convert engine rects to display points', () {
       // Text-input proxies AND platform-view slots place in SwiftUI points;
       // the single conversion point is each mirror's reload().
