@@ -1099,6 +1099,7 @@ class WatchosDevice extends Device {
     );
     if (launchResult.exitCode != 0) {
       await discovery?.cancel();
+      await _stopLaunchLogStream();
       logger.printError('simctl launch failed: ${launchResult.stderr}');
       return LaunchResult.failed();
     }
@@ -1137,7 +1138,19 @@ class WatchosDevice extends Device {
         false => 'the app is no longer running (pid $pid): it may have crashed at startup',
       }}. Run with -v to see the log stream.',
     );
+    await _stopLaunchLogStream();
     return LaunchResult.failed();
+  }
+
+  /// Ends startApp's hold on the Simulator log stream and stops the reader,
+  /// after a launch that failed. Nothing else would: no app is running for
+  /// [stopApp] to stop, so the `log stream` process would outlive the tool.
+  /// A later launch gets a new reader.
+  Future<void> _stopLaunchLogStream() async {
+    await _launchHold?.cancel();
+    _launchHold = null;
+    _logReader?.dispose();
+    _logReader = null;
   }
 
   /// How long a debug Simulator launch waits for the app's VM Service line

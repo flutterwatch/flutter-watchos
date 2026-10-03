@@ -337,6 +337,32 @@ void main() {
   );
 
   testUsingContext(
+    'a launch failure is reported, and stops the log stream',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        _run(_launchCommand, exitCode: 1, stderr: 'The request to open the app failed.'),
+      ]);
+
+      final List<LaunchResult> results = start();
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+
+      expect(results.single.started, isFalse);
+      expect(logger.errorText, contains('simctl launch failed: The request to open the app'));
+      expect(logProcess.killed, isTrue);
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
+    },
+  );
+
+  testUsingContext(
     'a log stream that is not ready after 10 s still leads to a launch',
     () async {
       final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
@@ -385,6 +411,8 @@ void main() {
       expect(logger.errorText, contains('no Dart VM Service address within 60 seconds'));
       expect(logger.errorText, contains('The Simulator log stream was live before the launch'));
       expect(logger.errorText, contains('the app is still running (pid 4242)'));
+      // The failed launch stops its log stream, which would outlive the tool.
+      expect(logProcess.killed, isTrue);
       expect(processManager, hasNoRemainingExpectations);
     },
     overrides: <Type, Generator>{
@@ -445,28 +473,23 @@ void main() {
 
   // drive tries three launches (stock drive_service.dart). Each one fails
   // cleanly, so drive ends with its own message, not a null-check error on a
-  // started launch that has no VM Service.
+  // started launch that has no VM Service. Each failed launch stops its log
+  // stream, and the next one starts its own.
   testUsingContext(
     'drive against launches that never print the VM Service fails to start',
     () async {
-      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      final List<_LogStreamProcess> logProcesses = time.run(
+        (_) => <_LogStreamProcess>[_LogStreamProcess(), _LogStreamProcess(), _LogStreamProcess()],
+      );
       FakeCommand launch() =>
           const FakeCommand(command: _launchCommand, stdout: '$_bundleId: 4242\n');
       FakeCommand ps() => _run(<String>['ps', '-p', '4242', '-o', 'pid=']);
-      List<FakeCommand> again() => <FakeCommand>[
-        _run(<String>['xcrun', 'simctl', 'boot', _simId]),
-        _run(<String>['open', '-a', _deviceHub]),
-        _run(<String>['xcrun', 'simctl', 'install', _simId, _appPath]),
-        _run(<String>['xcrun', 'simctl', 'terminate', _simId, _bundleId]),
-        launch(),
-        ps(),
-      ];
       processManager.addCommands(<FakeCommand>[
-        ...upToTheLogStream(logProcess),
-        launch(),
-        ps(),
-        ...again(),
-        ...again(),
+        for (final _LogStreamProcess logProcess in logProcesses) ...<FakeCommand>[
+          ...upToTheLogStream(logProcess),
+          launch(),
+          ps(),
+        ],
       ]);
       final driver = FlutterDriverService(
         applicationPackageFactory: _Packages(app()),
@@ -488,9 +511,9 @@ void main() {
             )
             .then<void>((_) {}, onError: (Object e) => error = e);
       });
-      await _advance(time, Duration.zero);
-      time.run((_) => logProcess.emit(_preamble));
-      for (var i = 0; i < 3; i++) {
+      for (final logProcess in logProcesses) {
+        await _advance(time, Duration.zero);
+        time.run((_) => logProcess.emit(_preamble));
         await _advance(time, const Duration(seconds: 61));
       }
 
@@ -502,6 +525,7 @@ void main() {
           contains('Application failed to start'),
         ),
       );
+      expect(logProcesses.every((_LogStreamProcess logProcess) => logProcess.killed), isTrue);
       expect(processManager, hasNoRemainingExpectations);
     },
     overrides: <Type, Generator>{
