@@ -16,12 +16,42 @@ import 'package:flutter_watchos/watchos_plugins.dart'
         auditPluginsWithoutWatchosSupport,
         copyWatchosCrownRuntime,
         ensureReadyForWatchosTooling,
+        knownWatchosPluginNames,
         recommendWatchosPluginsToInstall,
         watchosDartPluginRegistrantSource;
 
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/host_sources.dart';
+
+/// The table in the plugins repository's README.md ("List of plugins"), row
+/// by row: each upstream plugin with a `<name>_watchos` package, and whether
+/// the CLI recommends that package yet. Keep it in step with the README when
+/// a row is added or its package's state changes.
+const Map<String, bool> _pluginsReadmeTable = <String, bool>{
+  'path_provider': true,
+  'shared_preferences': true,
+  'package_info_plus': true,
+  'device_info_plus': true,
+  'url_launcher': true,
+  'battery_plus': true,
+  'connectivity_plus': true,
+  'flutter_secure_storage': true,
+  'network_info_plus': true,
+  'sensors_plus': true,
+  'local_auth': true,
+  'geolocator': true,
+  'video_player': true,
+  'audioplayers': true,
+  'in_app_purchase': true,
+  // Not until its package moves to games_services' 5.x interface.
+  'games_services': false,
+  // Not until their versions are settled.
+  'firebase_core': false,
+  'firebase_auth': false,
+  'firebase_storage': false,
+  'firebase_messaging': false,
+};
 
 void main() {
   late MemoryFileSystem fileSystem;
@@ -161,22 +191,52 @@ void main() {
     });
   });
 
+  // The CLI names the watchOS package a plugin needs, and how to add it.
   group('recommendWatchosPluginsToInstall', () {
-    // The curated `_kKnownWatchosPlugins` map is currently empty (no
-    // flutterwatch.dev-published plugins yet), so no input produces a
-    // recommendation. These tests lock that contract; update them when the
-    // curated list gains entries.
     testWithoutContext('returns no messages for an empty dep graph', () {
       expect(recommendWatchosPluginsToInstall(allPluginNames: const <String>[]), isEmpty);
     });
 
-    testWithoutContext('stays silent for uncurated plugins', () {
+    testWithoutContext('stays silent for plugins with no listed watchOS package', () {
       expect(
         recommendWatchosPluginsToInstall(
-          allPluginNames: const <String>['some_plugin', 'url_launcher'],
+          allPluginNames: const <String>['some_plugin', 'games_services', 'firebase_core'],
         ),
         isEmpty,
       );
+    });
+
+    testWithoutContext('names the watchOS package and the command that adds it', () {
+      final List<String> messages = recommendWatchosPluginsToInstall(
+        allPluginNames: const <String>['shared_preferences', 'some_plugin'],
+      );
+      expect(messages, hasLength(1));
+      expect(messages.single, contains('shared_preferences_watchos'));
+      expect(messages.single, contains('\n  flutter-watchos pub add shared_preferences_watchos'));
+      expect(messages.single, isNot(contains('#')));
+    });
+
+    testWithoutContext('stays silent once the watchOS package is in the graph', () {
+      expect(
+        recommendWatchosPluginsToInstall(
+          allPluginNames: const <String>['shared_preferences', 'shared_preferences_watchos'],
+        ),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('lists exactly the rows of the plugins README table it may list', () {
+      expect(knownWatchosPluginNames, <String>{
+        for (final MapEntry<String, bool> row in _pluginsReadmeTable.entries)
+          if (row.value) row.key,
+      });
+      for (final String name in knownWatchosPluginNames) {
+        expect(
+          recommendWatchosPluginsToInstall(allPluginNames: <String>[name]).single,
+          contains('flutter-watchos pub add ${name}_watchos'),
+          reason: name,
+        );
+      }
     });
   });
 
@@ -184,12 +244,12 @@ void main() {
     testWithoutContext('lists a plugin with native platforms but no watchos', () {
       final List<String> lines = auditPluginsWithoutWatchosSupport(
         pluginPlatforms: <String, List<String>>{
-          'sensors_plus': <String>['ios', 'android', 'web'],
+          'camera': <String>['ios', 'android', 'web'],
         },
       );
       expect(lines, isNotEmpty);
       expect(lines.first, contains('no watchOS implementation'));
-      expect(lines.join('\n'), contains('sensors_plus (android, ios, web)'));
+      expect(lines.join('\n'), contains('camera (android, ios, web)'));
       expect(lines.join('\n'), contains('FlutterWatchosPlatform.isWatch'));
     });
 
@@ -210,16 +270,16 @@ void main() {
       // which the user never chose directly.
       final List<String> lines = auditPluginsWithoutWatchosSupport(
         pluginPlatforms: <String, List<String>>{
-          'path_provider': <String>['ios', 'android'],
-          'path_provider_android': <String>['android'],
-          'path_provider_foundation': <String>['ios', 'macos'],
-          'path_provider_platform_interface': <String>[],
+          'image_picker': <String>['ios', 'android'],
+          'image_picker_android': <String>['android'],
+          'image_picker_foundation': <String>['ios', 'macos'],
+          'image_picker_platform_interface': <String>[],
         },
       );
       final String joined = lines.join('\n');
-      expect(joined, contains('- path_provider (android, ios)'));
-      expect(joined, isNot(contains('path_provider_android')));
-      expect(joined, isNot(contains('path_provider_foundation')));
+      expect(joined, contains('- image_picker (android, ios)'));
+      expect(joined, isNot(contains('image_picker_android')));
+      expect(joined, isNot(contains('image_picker_foundation')));
       expect(joined, isNot(contains('platform_interface')));
     });
 
@@ -245,6 +305,17 @@ void main() {
     testWithoutContext('returns nothing when every plugin is covered', () {
       expect(
         auditPluginsWithoutWatchosSupport(pluginPlatforms: const <String, List<String>>{}),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext('leaves a plugin with a listed watchOS package to the recommendation', () {
+      expect(
+        auditPluginsWithoutWatchosSupport(
+          pluginPlatforms: <String, List<String>>{
+            'shared_preferences': <String>['android', 'ios'],
+          },
+        ),
         isEmpty,
       );
     });
@@ -564,4 +635,169 @@ flutter:
     });
   });
 
+  // `flutter-watchos test` in a plugin package writes nothing into it; its
+  // watchos/ holds the plugin's own native sources.
+  group('ensureReadyForWatchosTooling in a plugin package', () {
+    List<String> filesUnder(Directory dir) => <String>[
+      for (final FileSystemEntity entity in dir.listSync(recursive: true))
+        if (entity is File) fileSystem.path.relative(entity.path, from: dir.path),
+    ]..sort();
+
+    Directory projectWith(String pubspec) {
+      final Directory projectDir = fileSystem.directory('/gadget_watchos')..createSync();
+      projectDir.childFile('pubspec.yaml').writeAsStringSync(pubspec);
+      projectDir
+          .childDirectory('watchos')
+          .childDirectory('Classes')
+          .childFile('gadget_watchos_ffi.m')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('// the C source of the plugin\n');
+      return projectDir;
+    }
+
+    testUsingContext(
+      'writes nothing when the pubspec has a flutter.plugin block',
+      () async {
+        final Directory projectDir = projectWith('''
+name: gadget_watchos
+flutter:
+  plugin:
+    implements: gadget
+    platforms:
+      watchos:
+        ffiPlugin: true
+        dartPluginClass: GadgetWatchos
+''');
+        final List<String> before = filesUnder(projectDir);
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(filesUnder(projectDir), before);
+        expect(projectDir.childDirectory('watchos').childDirectory('Flutter').existsSync(), isFalse);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'still writes the app wiring for an app with the same layout',
+      () async {
+        final Directory projectDir = projectWith('name: gadget_app\n');
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(
+          projectDir
+              .childDirectory('watchos')
+              .childDirectory('Flutter')
+              .childFile('GeneratedPluginRegistrant.swift')
+              .existsSync(),
+          isTrue,
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  // Through the tooling step itself: one warning, with the command, and no
+  // second line for the same plugin.
+  group('ensureReadyForWatchosTooling plugin warnings', () {
+    Directory appUsing(Map<String, String> pluginPubspecs) {
+      final Directory projectDir = fileSystem.directory('/app')..createSync();
+      projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
+      projectDir.childFile('pubspec.yaml').writeAsStringSync(
+        'name: app\ndependencies:\n'
+        '${pluginPubspecs.keys.map((String name) => '  $name: any\n').join()}',
+      );
+      for (final MapEntry<String, String> plugin in pluginPubspecs.entries) {
+        fileSystem.file('/pubcache/${plugin.key}/pubspec.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(plugin.value);
+      }
+      projectDir.childDirectory('.dart_tool').childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              for (final String name in pluginPubspecs.keys)
+                <String, String>{'name': name, 'rootUri': 'file:///pubcache/$name'},
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            for (final String name in pluginPubspecs.keys) <String, String>{'name': name},
+          ],
+        }),
+      );
+      return projectDir;
+    }
+
+    const sharedPreferences = '''
+name: shared_preferences
+flutter:
+  plugin:
+    platforms:
+      android:
+        default_package: shared_preferences_android
+      ios:
+        default_package: shared_preferences_foundation
+''';
+
+    testUsingContext(
+      'names the missing watchOS package once, with the command that adds it',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'shared_preferences': sharedPreferences,
+        });
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        final String warnings = testLogger.warningText;
+        expect(
+          'flutter-watchos pub add shared_preferences_watchos'.allMatches(warnings),
+          hasLength(1),
+        );
+        expect(warnings, isNot(contains('no watchOS implementation')));
+        expect(warnings, isNot(contains('- shared_preferences (')));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'prints nothing once the watchOS package is there',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'shared_preferences': sharedPreferences,
+          'shared_preferences_watchos': '''
+name: shared_preferences_watchos
+flutter:
+  plugin:
+    implements: shared_preferences
+    platforms:
+      watchos:
+        ffiPlugin: true
+        dartPluginClass: SharedPreferencesWatchos
+''',
+        });
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(testLogger.warningText, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
 }

@@ -71,8 +71,10 @@ class ReportEmitter {
           'platform interface; resolve each C symbol via '
           '`DynamicLibrary.process()` and override the interface methods.')
       ..writeln('- `pubspec.yaml` — declares `ffiPlugin: true` and lists your '
-          'exported symbols under `ffiSymbols` (the CLI force-references each '
-          'so it survives the static link).')
+          "exported symbols under `ffiSymbols`. The CLI links the plugin's "
+          'archive with `-force_load`, which keeps every exported function in '
+          'the watch binary; the list documents the symbols and is checked for '
+          'valid C names.')
       ..writeln();
 
     b

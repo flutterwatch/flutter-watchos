@@ -8,6 +8,7 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:yaml/yaml.dart';
 
 import 'watchos_cache.dart' show watchosToolRootDirectory;
@@ -52,11 +53,37 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
 /// might already have. Empty list means the canonical `<name>_watchos` is the
 /// only acceptable fix.
 ///
-/// Currently empty: the `flutterwatch.dev` publisher has no packages yet. Add
-/// entries as it gains them so [recommendWatchosPluginsToInstall] can suggest
-/// them. Never add a name that isn't actually published — recommending a
-/// non-existent package is worse than staying silent.
-const Map<String, List<String>> _kKnownWatchosPlugins = <String, List<String>>{};
+/// It lists exactly the rows of the plugins repository's README table whose
+/// package has a plain version on pub.dev and a README snippet that resolves
+/// with the upstream plugin's latest major, so
+/// [recommendWatchosPluginsToInstall] can suggest them. Not yet listed:
+/// `games_services`, until its package moves to the upstream's 5.x interface,
+/// and the four Firebase packages, until their versions are settled. Never add
+/// a name that isn't actually published — recommending a non-existent package
+/// is worse than staying silent.
+const Map<String, List<String>> _kKnownWatchosPlugins = <String, List<String>>{
+  'audioplayers': <String>[],
+  'battery_plus': <String>[],
+  'connectivity_plus': <String>[],
+  'device_info_plus': <String>[],
+  'flutter_secure_storage': <String>[],
+  'geolocator': <String>[],
+  'in_app_purchase': <String>[],
+  'local_auth': <String>[],
+  'network_info_plus': <String>[],
+  'package_info_plus': <String>[],
+  'path_provider': <String>[],
+  'sensors_plus': <String>[],
+  'shared_preferences': <String>[],
+  'url_launcher': <String>[],
+  'video_player': <String>[],
+};
+
+/// The user-facing plugins that [recommendWatchosPluginsToInstall] knows a
+/// published `<name>_watchos` package for, so a test can tie the list to the
+/// plugins repository's README table.
+@visibleForTesting
+Set<String> get knownWatchosPluginNames => _kKnownWatchosPlugins.keys.toSet();
 
 /// One entry surfaced by [_walkPluginDependencies].
 class _DependencyPluginYaml {
@@ -254,7 +281,7 @@ List<String> _parseFfiSymbols(String pluginName, Object? raw) {
 
 /// Discovers the watchOS plugins in [project] that ship a Swift Package
 /// (`<plugin>/watchos/Package.swift`) and returns them as [WatchosSpmPlugin]s
-/// for the generated SPM umbrella.
+/// for the watch build, which compiles them into the plugin archive.
 List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
   final spmPlugins = <WatchosSpmPlugin>[];
   for (final WatchosPlugin plugin in _discoverWatchosPlugins(project)) {
@@ -363,8 +390,8 @@ Set<String>? _directDependencyNames(FlutterProject project) {
 
 /// Builds the developer-facing warning lines for any plugin in the project's
 /// dep graph that has a FlutterWatch-published watchOS implementation the user
-/// hasn't added yet. Public so tests can drive it without faking a project
-/// tree.
+/// hasn't added yet, each with the `flutter-watchos pub add` command that adds
+/// it. Public so tests can drive it without faking a project tree.
 List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPluginNames}) {
   final Set<String> depGraph = allPluginNames.toSet();
   final messages = <String>[];
@@ -378,17 +405,23 @@ List<String> recommendWatchosPluginsToInstall({required Iterable<String> allPlug
     if (satisfied) {
       continue;
     }
+    // No version: `pub add` takes the latest.
+    final addCommand = 'flutter-watchos pub add $canonical';
     if (alternatives.isEmpty) {
       messages.add(
-        '$canonical is available on pub.dev under the flutterwatch.dev '
-        'verified publisher. Did you forget to add it to pubspec.yaml?',
+        '$name has a watchOS implementation, $canonical, on pub.dev from the '
+        'flutterwatch.dev verified publisher. Without it, calls to $name fail '
+        'on the watch. Add it with:\n'
+        '  $addCommand',
       );
     } else {
       final options = <String>[canonical, ...alternatives];
       final String last = options.removeLast();
       messages.add(
-        '[${options.join(', ')} or $last] is available on pub.dev. '
-        'Did you forget to add one to pubspec.yaml?',
+        '$name has watchOS implementations on pub.dev: ${options.join(', ')} or '
+        '$last. Without one, calls to $name fail on the watch. Add one, for '
+        'example:\n'
+        '  $addCommand',
       );
     }
   }
@@ -426,6 +459,9 @@ const Set<String> _kWatchSupportedFrameworkPlugins = <String>{'integration_test'
 /// own Android helper packages (`jni`, `jni_flutter`) — are pulled in by a
 /// package the user chose, not called directly, so warning about each of them
 /// individually is noise. When null, every plugin is audited (no scoping).
+///
+/// A plugin with a known `<name>_watchos` package is left to
+/// [recommendWatchosPluginsToInstall], so no plugin is named twice.
 List<String> auditPluginsWithoutWatchosSupport({
   required Map<String, List<String>> pluginPlatforms,
   Set<String>? directDependencies,
@@ -442,6 +478,11 @@ List<String> auditPluginsWithoutWatchosSupport({
       continue;
     }
     if (_kWatchSupportedFrameworkPlugins.contains(name)) {
+      continue;
+    }
+    // A known plugin is either satisfied, or already named, with the command
+    // that adds its watchOS package, by [recommendWatchosPluginsToInstall].
+    if (_kKnownWatchosPlugins.containsKey(name)) {
       continue;
     }
     // Only warn about plugins the developer added directly and can act on.
@@ -483,9 +524,24 @@ List<String> auditPluginsWithoutWatchosSupport({
   ];
 }
 
+/// Brings a watchOS app's generated plugin wiring up to date before a
+/// `build`, `run`, `drive`, `attach` or `test`: the host mode, the plugin
+/// warnings, `.flutter-plugins-dependencies`, `.flutter-plugins`, the Swift
+/// registrant under `watchos/Flutter/` and the Dart plugin registrant.
+///
+/// It does nothing for a project without a `watchos/` folder, or for a plugin
+/// package (a pubspec with a `flutter.plugin` block): a plugin's `watchos/`
+/// holds its own native sources, and `flutter-watchos test` run in the plugin
+/// must not write the app wiring into it.
 Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   final Directory watchosDir = project.directory.childDirectory('watchos');
   if (!watchosDir.existsSync()) {
+    return;
+  }
+  if (project.manifest.isPlugin) {
+    globals.logger.printTrace(
+      '${project.directory.path} is a plugin package; no watchOS app wiring is written into it.',
+    );
     return;
   }
 

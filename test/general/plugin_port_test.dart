@@ -201,6 +201,19 @@ flutter:
       expect(outputDir.childFile('.gitignore').existsSync(), isTrue);
     });
 
+    // The app wiring flutter-watchos generates under an app's watchos/Flutter/
+    // never belongs in a plugin's repository.
+    testWithoutContext('the .gitignore ignores watchos/Flutter/', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory outputDir = fs.directory('/out/gadget_watchos');
+
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'Test')
+          .scaffold(source: source, outputDirectory: outputDir);
+
+      expect(outputDir.childFile('.gitignore').readAsLinesSync(), contains('watchos/Flutter/'));
+    });
+
     testWithoutContext('--dry-run does not write any files', () {
       final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
