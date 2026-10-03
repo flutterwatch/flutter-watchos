@@ -18,9 +18,12 @@ const String _crownScrollMarker = 'flutter_watchos.crownScroll';
 /// a native scroll view does, without this widget: a hidden native scroll
 /// view owns the crown, so watchOS itself supplies the acceleration, the
 /// momentum, the detent haptics, the spring at either end and the crown
-/// scroll indicator, and the content follows it exactly. The crown drives
-/// the vertical scrollable that fills most of the screen in the frontmost
-/// route, among those actually drawn (not a hidden tab, not under a dialog).
+/// scroll indicator, and the content follows it exactly. Among the vertical
+/// scrollables actually drawn (not in a hidden tab, not under a dialog), the
+/// crown drives the frontmost one that covers at least 40% of the screen, or
+/// the largest when none does. An app that still compiles its own watchOS
+/// runner keeps the older crown until the runner moves to the current
+/// template.
 ///
 /// Use this widget for the cases that rule does not decide the way an app
 /// wants:

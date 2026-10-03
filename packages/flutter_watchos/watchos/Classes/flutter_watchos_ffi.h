@@ -108,16 +108,18 @@ FLUTTER_WATCHOS_EXPORT void flutter_watchos_set_clock_band_height(
 FLUTTER_WATCHOS_EXPORT double flutter_watchos_clock_band_height(void);
 
 // --- Raw Digital Crown bridge ---------------------------------------------
-// By default the watch host forwards Digital Crown rotation to Flutter as
-// trackpad scroll. An app that wants the crown as a direct input (a game, a
-// value picker, a custom gauge) switches to "raw" mode via WatchCrown: the host
-// then stops scrolling and pushes each rotation sample here, and Dart drains it.
+// By default the Digital Crown scrolls the app through the watch host's hidden
+// native scroll view, which the crown runtime mirrors onto a Flutter
+// scrollable. An app that wants the crown as a direct input (a game, a value
+// picker, a custom gauge) switches to "raw" mode via WatchCrown: the host then
+// stops scrolling and pushes each rotation sample here, and Dart drains it.
 //
 // `mode`/`push` are called from the watch host (Swift, main thread); `set_mode`/
 // `consume` are called from Dart (FFI/UI thread). A lock guards the shared state.
 
 /// Crown routing mode: 0 = scroll (default), 1 = raw/exclusive. Read by the
-/// watch host on each crown sample to decide whether to scroll or push.
+/// watch host once per display refresh to decide whether the crown scrolls or
+/// is pushed here.
 FLUTTER_WATCHOS_EXPORT int32_t flutter_watchos_crown_mode(void);
 
 /// Sets the crown routing mode (0 = scroll, 1 = raw). Called from Dart;

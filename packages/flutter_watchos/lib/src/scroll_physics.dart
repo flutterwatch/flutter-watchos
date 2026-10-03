@@ -27,9 +27,8 @@ import 'package:flutter/widgets.dart';
 ///    the finger lifts. A flick made during a fling starts at the finger's
 ///    own velocity: nothing carries over, unlike iOS.
 ///
-/// The Digital Crown does not go through these physics when the content is
-/// in a [WatchCrownScroll]: the native scroll view that owns the crown moves
-/// it, edges included.
+/// The Digital Crown never goes through these physics: the native scroll
+/// view that owns the crown moves the content, edges included.
 ///
 /// Applied automatically by [WatchCrownScroll]; for app-wide use install
 /// [WatchScrollBehavior] or pass the physics explicitly:

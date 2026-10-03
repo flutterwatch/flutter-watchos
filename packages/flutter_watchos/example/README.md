@@ -8,8 +8,8 @@ flutter-watchos run
 ```
 
 The home screen is itself a `WatchCrownScroll` list, so scrolling it with the
-Digital Crown or a finger already demonstrates the native scroll feel. Below is what each
-part shows and the API behind it.
+Digital Crown or a finger already demonstrates the native scroll feel. Below
+is what each part shows and the API behind it.
 
 ## Platform detection & device info
 

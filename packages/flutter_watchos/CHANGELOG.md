@@ -1,14 +1,17 @@
 ## 0.1.0
 
 The Digital Crown now scrolls the way it scrolls a native watchOS scroll
-view, in every app, and `WatchScrollPhysics` moves like a native scroll view
-under the finger, as measured on a watch. The crown API changes with it:
+view, and `WatchScrollPhysics` moves like a native scroll view under the
+finger, as measured on a watch. The crown API changes with it:
 
 * **The crown needs no code.** An app built with flutter-watchos 0.1.0
   scrolls with a hidden native scroll view behind the Flutter content, so
   watchOS supplies the acceleration, the momentum, the detent haptics, the
-  spring at either end and the crown scroll indicator. The crown drives the
-  vertical scrollable that fills most of the screen in the frontmost route.
+  spring at either end and the crown scroll indicator. Among the vertical
+  scrollables on screen, the crown drives the frontmost one that covers at
+  least 40% of the screen, or the largest when none does. An app that still
+  compiles its own watchOS runner keeps the older crown until the runner
+  moves to the current template.
 * **`WatchCrownScroll`** now chooses that scrollable, for a screen with more
   than one, and still gives its subtree `WatchScrollPhysics`. `enabled: false`
   keeps the crown off the scrollables under it, and `scrollIndicator: false`
@@ -41,18 +44,18 @@ package gives the clock's band to content that has to start below it:
   down to the bottom edge, as in a native watchOS list. The crown screen,
   which does not scroll, keeps its `SafeArea`.
 
-The example and the API docs changed too:
+The API docs changed too:
 
-* **Example:** the home list no longer sits inside a `SafeArea`. It covers
-  the whole screen and adds the safe-area insets to its padding, so its rows
-  scroll under the clock and down to the bottom edge, as in a native watchOS
-  list. The crown screen, which does not scroll, keeps its `SafeArea`.
 * **Docs:** every public member now has API documentation, the Web side of
   `WatchOSNativeBindings` included.
 
 An app on the last published build removes its `WatchCrownScrolling` calls
-and any `WatchScrollPhysics` arguments. An app on an older build also checks
-two things:
+and any `WatchScrollPhysics` arguments. Its layout follows the new safe area
+on its next build: content that has to start below the clock takes its top
+from `WatchStatusBar.heightOf`, or the app keeps the earlier insets by setting
+`FlutterWatchOSSafeArea` to `platform` in `watchos/Runner/Info.plist` (see
+[doc/layout.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md)).
+An app on an older build also checks two things:
 
 * **Web only:** `extension FlutterWatchosPlatformExt on Platform` exists only
   where `dart:io` does, so Web code cannot use it. Code that also builds for
@@ -74,11 +77,12 @@ What the package gives a Flutter app on Apple Watch:
   machine id, Simulator flag, screen size and scale).
 * `WatchHaptics`: Taptic Engine feedback through
   `WKInterfaceDevice.playHaptic`.
-* `WatchStatusBar`: shows or hides the clock watchOS draws over every app.
-* `WatchCrownScroll`, `WatchScrollPhysics` and `WatchScrollBehavior`: the
-  native watch scroll feel, a firm, shallow edge bounce with no haptic at
-  the list edges. `WatchCrownScrolling` sets the crown's scroll sensitivity
-  and turns its detent clicks on or off.
+* `WatchStatusBar`: shows or hides the clock watchOS draws over every app,
+  and `heightOf` gives the height of the band the clock sits in.
+* `WatchCrownScroll`, `WatchScrollPhysics` and `WatchScrollBehavior`: choose
+  the scrollable the Digital Crown drives, keep the crown off a list or hide
+  its scroll indicator, and give finger scrolling the native watchOS feel.
+  The crown itself scrolls natively with no code.
 * `WatchCrown`: raw Digital Crown rotation, as a stream or per frame with
   `drain()`, for games and custom controls.
 * `WatchPlatformView`: a native SwiftUI view at its place in the Flutter

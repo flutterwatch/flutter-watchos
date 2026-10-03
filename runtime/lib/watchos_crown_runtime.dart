@@ -17,9 +17,10 @@
 // position. When the content moves by other means (a finger, the app), the
 // runtime tells the host, so the crown always continues from there.
 //
-// The scrollable is the one a native watch app would give the crown: the
-// vertical scrollable that fills most of the screen in the frontmost route,
-// unless an app marks another with `WatchCrownScroll` (package:flutter_watchos).
+// The scrollable is the one a native watch app would give the crown: among
+// the vertical scrollables on screen, the frontmost that covers at least 40% of
+// the screen, else the largest. Scrollables an app marks with
+// `WatchCrownScroll` (package:flutter_watchos) are tried first.
 //
 // For a scrollable with the platform's default physics, the runtime also
 // gives a released finger the native edge: the spring a native scroll view
