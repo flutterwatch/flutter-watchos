@@ -147,11 +147,13 @@ a hidden native scroll view behind the Flutter content, shaped like the list
 the crown drives, so watchOS supplies the acceleration, the momentum after a
 flick, the detent haptics, the spring at either end and the crown scroll
 indicator, and the list shows exactly where that view is. Among the vertical
-scrollables actually on screen (not in a hidden tab, not under a dialog), the
-crown drives the frontmost one that covers at least 40% of the screen, or the
-largest when none does. An app that still compiles its own watchOS runner
-(`watchos/Runner/FlutterRunner.swift`) keeps the older crown until the runner
-moves to the current template; its build says so.
+scrollables actually on screen (not in a hidden tab, not under a dialog) that
+have something to scroll, the crown drives the frontmost one that covers at
+least 40% of the screen, or the largest when none does. A `NestedScrollView`
+scrolls as one, its header first, and a page view or a wheel settles on whole
+pages or items, as their native counterparts do. An app that still compiles
+its own watchOS runner (`watchos/Runner/FlutterRunner.swift`) keeps the older
+crown until the runner moves to the current template; its build says so.
 
 `WatchCrownScroll` settles the cases that rule does not decide your way:
 

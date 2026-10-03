@@ -8,8 +8,10 @@ finger, as measured on a watch. The crown API changes with it:
   scrolls with a hidden native scroll view behind the Flutter content, so
   watchOS supplies the acceleration, the momentum, the detent haptics, the
   spring at either end and the crown scroll indicator. Among the vertical
-  scrollables on screen, the crown drives the frontmost one that covers at
-  least 40% of the screen, or the largest when none does. An app that still
+  scrollables on screen that have something to scroll, the crown drives the
+  frontmost one that covers at least 40% of the screen, or the largest when
+  none does; a `NestedScrollView` scrolls as one, and a page view or a wheel
+  settles on whole pages or items. An app that still
   compiles its own watchOS runner keeps the older crown until the runner
   moves to the current template.
 * **`WatchCrownScroll`** now chooses that scrollable, for a screen with more

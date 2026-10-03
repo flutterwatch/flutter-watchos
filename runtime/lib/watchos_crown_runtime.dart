@@ -22,7 +22,9 @@
 // the screen, else the largest. Scrollables an app marks with
 // `WatchCrownScroll` (package:flutter_watchos) are tried first, and ones with
 // something to scroll before ones without. A NestedScrollView is driven as
-// one scrollable, through its own drag, so its header collapses first.
+// one scrollable, through its own drag, so its header collapses first, and a
+// page view or a wheel tells the host it snaps, so the native view settles
+// on whole pages or items.
 //
 // For a scrollable with the platform's default physics, the runtime also
 // gives a released finger the native edge: the spring a native scroll view

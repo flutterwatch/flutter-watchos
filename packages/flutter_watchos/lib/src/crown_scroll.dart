@@ -19,10 +19,12 @@ const String _crownScrollMarker = 'flutter_watchos.crownScroll';
 /// view owns the crown, so watchOS itself supplies the acceleration, the
 /// momentum, the detent haptics, the spring at either end and the crown
 /// scroll indicator, and the content follows it exactly. Among the vertical
-/// scrollables actually drawn (not in a hidden tab, not under a dialog), the
-/// crown drives the frontmost one that covers at least 40% of the screen, or
-/// the largest when none does. An app that still compiles its own watchOS
-/// runner keeps the older crown until the runner moves to the current
+/// scrollables actually drawn (not in a hidden tab, not under a dialog) that
+/// have something to scroll, the crown drives the frontmost one that covers
+/// at least 40% of the screen, or the largest when none does. A
+/// `NestedScrollView` scrolls as one, its header first; a page view or a
+/// wheel settles on whole pages or items. An app that still compiles its own
+/// watchOS runner keeps the older crown until the runner moves to the current
 /// template.
 ///
 /// Use this widget for the cases that rule does not decide the way an app
