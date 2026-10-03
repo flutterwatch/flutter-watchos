@@ -26,12 +26,21 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 ## 1. Install the CLI
 
 Clone the repository and put its `bin/` on your `PATH`. The `export` line
-lasts for this shell; add it to `~/.zshrc` to make it permanent.
+lasts for this shell:
 
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
 export PATH="$PWD/bin:$PATH"
+```
+
+To make it permanent, run this in the same directory. It adds a line with the
+checkout's full path to `~/.zshrc`, so every new terminal finds this
+`flutter-watchos` first. (A line with `$PWD` in `~/.zshrc` would name whatever
+directory a new terminal starts in.)
+
+```sh
+echo "export PATH=\"$(pwd)/bin:\$PATH\"" >> ~/.zshrc
 ```
 
 The first run bootstraps everything (downloads the pinned Flutter SDK and
