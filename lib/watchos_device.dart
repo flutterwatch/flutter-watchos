@@ -1063,11 +1063,13 @@ class WatchosDevice extends Device {
     }
 
     // Listen for the VM Service line before the launch, as stock does, so a
-    // line printed while simctl is still returning is not missed.
+    // line printed while simctl is still returning is not missed. The URI is
+    // used as the app prints it: with ipv6 set, discovery would turn its
+    // 127.0.0.1 into ::1, where the app, which binds IPv4, does not listen.
     final ProtocolDiscovery? discovery = debuggingOptions.debuggingEnabled
         ? ProtocolDiscovery.vmService(
             logReader,
-            ipv6: debuggingOptions.ipv6,
+            ipv6: false,
             hostPort: launchOptions.discoveryHostPort,
             devicePort: launchOptions.discoveryDevicePort,
             logger: logger,

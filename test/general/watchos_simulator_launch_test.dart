@@ -239,6 +239,39 @@ void main() {
     },
   );
 
+  // The app binds its VM Service on 127.0.0.1. With --ipv6, discovery used to
+  // hand on [::1], where nothing listens.
+  testUsingContext(
+    'with --ipv6 the VM Service URI keeps the address the app printed',
+    () async {
+      final _LogStreamProcess logProcess = time.run((_) => _LogStreamProcess());
+      processManager.addCommands(<FakeCommand>[
+        ...upToTheLogStream(logProcess),
+        _run(
+          _launchCommand,
+          onRun: (_) =>
+              Timer(const Duration(milliseconds: 100), () => logProcess.emit(_vmServiceLine)),
+        ),
+      ]);
+
+      final List<LaunchResult> results = start(
+        null,
+        DebuggingOptions.enabled(BuildInfo.debug, ipv6: true),
+      );
+      await _advance(time, Duration.zero);
+      time.run((_) => logProcess.emit(_preamble));
+      await _advance(time, const Duration(seconds: 1));
+
+      expect(results.single.vmServiceUri, Uri.parse('http://127.0.0.1:50123/abc=/'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+      Xcode: () => _FakeXcode(_deviceHub),
+    },
+  );
+
   // Each of the six switches reaches the app once, through the variable
   // simctl hands to the launched app.
   testUsingContext(
