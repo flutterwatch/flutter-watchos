@@ -7,8 +7,7 @@
 // is told, and what a change of extent in the middle of a turn does.
 //
 // A case that works with a caveat says so where it asserts today's
-// behaviour (CAVEAT). A case that is broken today asserts what it should do,
-// in a skipped group whose reason starts with BROKEN.
+// behaviour (CAVEAT).
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -703,12 +702,12 @@ void main() {
         ),
       );
       expectPicked(tester, grid);
-      // 15 rows of 104 with 14 gaps of 8. CAVEAT: the row pitch is the
-      // tile's height (104), not tile plus spacing (112).
+      // 15 rows of 104 with 14 gaps of 8: the row pitch is tile plus
+      // spacing (112), so native detents land on the grid rows.
       const double max = 15 * 104 + 14 * 8 - kHeight;
       expect(
         host.description,
-        describes(viewport: kHeight, max: max, row: 104),
+        describes(viewport: kHeight, max: max, row: 112),
       );
       final ScrollPosition position = positionIn(tester, grid);
       await turnFollowed(tester, position, <double>[112, 112, 112]);
@@ -742,44 +741,76 @@ void main() {
   }
 
   group('6. NestedScrollView', () {
-    testWidgets('today: the runtime keeps out of it, nothing is held', (
+    testWidgets('picked as one scrollable, header and body ranges added', (
       WidgetTester tester,
     ) async {
       await start(tester, nestedScrollView());
-      // Its positions are not ScrollPositionWithSingleContext.
-      expectNothingPicked();
-      await turn(tester, <double>[50, 50]);
+      expect(runtime.scrollable, isNotNull);
+      final ScrollPosition outer = positionIn(tester, const Key('nested'));
+      final ScrollPosition inner = positionIn(tester, const Key('body'));
+      expect(
+        host.description,
+        describes(
+          viewport: kHeight,
+          max: outer.maxScrollExtent + inner.maxScrollExtent,
+          row: 44,
+        ),
+      );
+    }, variant: ios);
+
+    testWidgets('the crown moves header and body as a finger drag does', (
+      WidgetTester tester,
+    ) async {
+      // A finger's drag of 100 is the reference.
+      await tester.pumpWidget(nestedScrollView());
+      await tester.drag(
+        find.byKey(const Key('body')),
+        const Offset(0, -100),
+        touchSlopY: 0,
+      );
+      await tester.pumpAndSettle();
+      final double fingerOuter = positionIn(tester, const Key('nested')).pixels;
+      final double fingerInner = positionIn(tester, const Key('body')).pixels;
+      expect(fingerOuter + fingerInner, 100);
+
+      await tester.pumpWidget(const SizedBox());
+      await start(tester, nestedScrollView());
+      final ScrollPosition outer = positionIn(tester, const Key('nested'));
+      final ScrollPosition inner = positionIn(tester, const Key('body'));
+      host.report(2);
+      await more(tester, <double>[50, 50]);
+      expect(outer.pixels, fingerOuter);
+      expect(inner.pixels, fingerInner);
       await rest(tester);
-      expect(positionIn(tester, const Key('nested')).pixels, 0);
-      expect(positionIn(tester, const Key('body')).pixels, 0);
+      expect(outer.pixels, fingerOuter);
+      expect(inner.pixels, fingerInner);
+      // The native view is on the content: header and body together.
+      expect(host.pixels, 100);
+    }, variant: ios);
+
+    testWidgets('a finger takes over from the crown', (
+      WidgetTester tester,
+    ) async {
+      await start(tester, nestedScrollView());
+      final ScrollPosition outer = positionIn(tester, const Key('nested'));
+      final ScrollPosition inner = positionIn(tester, const Key('body'));
+      host.report(2);
+      await more(tester, <double>[60, 60]);
+      final TestGesture finger = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('body'))),
+      );
+      await tester.pump(kFrame);
+      // The native view stops where the content is.
+      expect(host.synced.where(((double, bool) s) => s.$2), isNotEmpty);
+      expect(host.pixels, outer.pixels + inner.pixels);
+      // The rest of the native glide moves nothing.
+      final double held = outer.pixels + inner.pixels;
+      await more(tester, <double>[30]);
+      expect(outer.pixels + inner.pixels, held);
+      await finger.up();
+      await tester.pumpAndSettle();
     }, variant: ios);
   });
-
-  group(
-    '6. NestedScrollView',
-    () {
-      testWidgets('the crown collapses the header, then scrolls the body', (
-        WidgetTester tester,
-      ) async {
-        await start(tester, nestedScrollView());
-        expect(runtime.scrollable, isNotNull);
-        expect(host.description, isNotNull);
-        final ScrollPosition outer = positionIn(tester, const Key('nested'));
-        final ScrollPosition inner = positionIn(tester, const Key('body'));
-        host.report(2);
-        await more(tester, <double>[50, 50]);
-        await rest(tester);
-        // The header collapses by 44 (100 to the toolbar's 56); the body
-        // takes the rest of the turn.
-        expect(outer.pixels, 100 - kToolbarHeight);
-        expect(inner.pixels, 100 - (100 - kToolbarHeight));
-      }, variant: ios);
-    },
-    skip:
-        'BROKEN: _visibleArea rejects every position that is not a '
-        'ScrollPositionWithSingleContext, and both of a NestedScrollView\'s '
-        'positions are _NestedScrollPosition: the crown drives nothing',
-  );
 
   // ---------------------------------------------------------------------
   group('7. ListWheelScrollView', () {
@@ -1030,38 +1061,30 @@ void main() {
     }, variant: ios);
   });
 
-  group(
-    '10. a horizontal ListView inside a vertical ListView',
-    () {
-      testWidgets('a carousel first in a CustomScrollView: rows of the list', (
-        WidgetTester tester,
-      ) async {
-        const Key outer = Key('outer');
-        await start(
-          tester,
-          MaterialApp(
-            home: CustomScrollView(
-              key: outer,
-              slivers: <Widget>[
-                SliverToBoxAdapter(child: carousel()),
-                SliverList.list(children: rows(30)),
-              ],
-            ),
+  group('10. a horizontal ListView inside a vertical ListView', () {
+    testWidgets('a carousel first in a CustomScrollView: rows of the list', (
+      WidgetTester tester,
+    ) async {
+      const Key outer = Key('outer');
+      await start(
+        tester,
+        MaterialApp(
+          home: CustomScrollView(
+            key: outer,
+            slivers: <Widget>[
+              SliverToBoxAdapter(child: carousel()),
+              SliverList.list(children: rows(30)),
+            ],
           ),
-        );
-        expectPicked(tester, outer);
-        expect(
-          host.description,
-          describes(viewport: kHeight, max: 100 + 30 * 44 - kHeight, row: 44),
-        );
-      }, variant: ios);
-    },
-    skip:
-        'BROKEN: _rowExtent takes the first RenderSliverMultiBoxAdaptor '
-        'anywhere under the scrollable, here the horizontal carousel inside '
-        'a SliverToBoxAdapter: the row pitch is its tiles\' height (100), '
-        'not the vertical list\'s 44 (detent haptics only)',
-  );
+        ),
+      );
+      expectPicked(tester, outer);
+      expect(
+        host.description,
+        describes(viewport: kHeight, max: 100 + 30 * 44 - kHeight, row: 44),
+      );
+    }, variant: ios);
+  });
 
   // ---------------------------------------------------------------------
   /// A chat: a reversed list of [count] messages, the newest at the bottom.
@@ -1120,61 +1143,43 @@ void main() {
     }, variant: ios);
   });
 
-  group(
-    '11. reverse: true ListView (chat)',
-    () {
-      testWidgets('older messages arriving under a turn do not jump', (
-        WidgetTester tester,
-      ) async {
-        int count = 40;
-        late StateSetter setCount;
-        await start(tester, chat(() => count, (StateSetter s) => setCount = s));
-        final ScrollPosition position = positionIn(tester, const Key('chat'));
-        await turnFollowed(tester, position, <double>[
-          -100,
-          -50,
-        ], reversed: true);
-        setCount(() => count = 50);
-        await tester.pump(kFrame);
-        // The turn goes on from where the content is.
-        await more(tester, <double>[-10]);
-        expect(position.pixels, 160);
-        await rest(tester);
-        expect(position.pixels, 160);
-      }, variant: ios);
+  group('11. reverse: true ListView (chat)', () {
+    testWidgets('older messages arriving under a turn do not jump', (
+      WidgetTester tester,
+    ) async {
+      int count = 40;
+      late StateSetter setCount;
+      await start(tester, chat(() => count, (StateSetter s) => setCount = s));
+      final ScrollPosition position = positionIn(tester, const Key('chat'));
+      await turnFollowed(tester, position, <double>[-100, -50], reversed: true);
+      setCount(() => count = 50);
+      await tester.pump(kFrame);
+      // The turn goes on from where the content is.
+      await more(tester, <double>[-10]);
+      expect(position.pixels, 160);
+      await rest(tester);
+      expect(position.pixels, 160);
+    }, variant: ios);
 
-      testWidgets('older messages loaded at rest mid-list do not jump at '
-          'the next turn', (WidgetTester tester) async {
-        int count = 40;
-        late StateSetter setCount;
-        await start(tester, chat(() => count, (StateSetter s) => setCount = s));
-        final ScrollPosition position = positionIn(tester, const Key('chat'));
-        await turnFollowed(tester, position, <double>[
-          -100,
-          -50,
-        ], reversed: true);
-        await rest(tester);
-        // Nothing laid out changes, so Flutter does not lay the list out
-        // for the new count: its extent, and the native view, stay as they
-        // were until something scrolls it.
-        setCount(() => count = 50);
-        await tester.pump(kFrame);
-        expect(position.maxScrollExtent, 40 * 44 - kHeight);
-        // The next turn's first move lays it out, so max grows mid-turn.
-        await turnFollowed(tester, position, <double>[
-          -10,
-          -10,
-        ], reversed: true);
-        expect(position.pixels, 170);
-      }, variant: ios);
-    },
-    skip:
-        'BROKEN: a reversed list is mirrored through min + max of the '
-        'current description; when max grows mid-turn (older messages '
-        'loaded, or laid out for the first time by the turn) the native '
-        'view keeps its offset, so the content jumps by the growth (to 600, '
-        'not 160)',
-  );
+    testWidgets('older messages loaded at rest mid-list do not jump at '
+        'the next turn', (WidgetTester tester) async {
+      int count = 40;
+      late StateSetter setCount;
+      await start(tester, chat(() => count, (StateSetter s) => setCount = s));
+      final ScrollPosition position = positionIn(tester, const Key('chat'));
+      await turnFollowed(tester, position, <double>[-100, -50], reversed: true);
+      await rest(tester);
+      // Nothing laid out changes, so Flutter does not lay the list out
+      // for the new count: its extent, and the native view, stay as they
+      // were until something scrolls it.
+      setCount(() => count = 50);
+      await tester.pump(kFrame);
+      expect(position.maxScrollExtent, 40 * 44 - kHeight);
+      // The next turn's first move lays it out, so max grows mid-turn.
+      await turnFollowed(tester, position, <double>[-10, -10], reversed: true);
+      expect(position.pixels, 170);
+    }, variant: ios);
+  });
 
   // ---------------------------------------------------------------------
   Widget nestedShrinkWrap({required bool neverScrollable}) {
@@ -1216,26 +1221,18 @@ void main() {
     }, variant: ios);
   });
 
-  group(
-    '12. a shrinkWrap ListView inside a SingleChildScrollView',
-    () {
-      testWidgets('inner default physics: the outer is still driven', (
-        WidgetTester tester,
-      ) async {
-        await start(tester, nestedShrinkWrap(neverScrollable: false));
-        expectPicked(tester, const Key('outer'));
-        final ScrollPosition outer = positionIn(tester, const Key('outer'));
-        await turnFollowed(tester, outer, <double>[100, 100]);
-        await rest(tester);
-        expect(outer.pixels, 200);
-      }, variant: ios);
-    },
-    skip:
-        'BROKEN: the inner list (AlwaysScrollableScrollPhysics, range 0) '
-        'is the frontmost scrollable covering 40%, so it takes the crown: a '
-        'turn only stretches it and the page never moves (a finger has the '
-        'same Flutter gotcha)',
-  );
+  group('12. a shrinkWrap ListView inside a SingleChildScrollView', () {
+    testWidgets('inner default physics: the outer is still driven', (
+      WidgetTester tester,
+    ) async {
+      await start(tester, nestedShrinkWrap(neverScrollable: false));
+      expectPicked(tester, const Key('outer'));
+      final ScrollPosition outer = positionIn(tester, const Key('outer'));
+      await turnFollowed(tester, outer, <double>[100, 100]);
+      await rest(tester);
+      expect(outer.pixels, 200);
+    }, variant: ios);
+  });
 
   // ---------------------------------------------------------------------
   group('13. RefreshIndicator over a ListView', () {
@@ -1351,14 +1348,15 @@ void main() {
             ),
           );
           expectPicked(tester, list);
-          // The native indicator stays on.
+          // The app shows its own scrollbar: watchOS's indicator stays off,
+          // so there is one, not two.
           expect(
             host.description,
             describes(
               viewport: kHeight,
               max: 40 * 44 - kHeight,
               row: 44,
-              indicator: true,
+              indicator: false,
             ),
           );
           final Finder scrollbar = find.byType(CupertinoScrollbar);
@@ -1366,8 +1364,8 @@ void main() {
           final ScrollPosition position = positionIn(tester, list);
           await turnFollowed(tester, position, <double>[50, 50]);
           await tester.pump(const Duration(milliseconds: 300));
-          // CAVEAT: two scroll indicators while the crown turns, watchOS's
-          // and Flutter's.
+          // The app's own thumb shows while the crown turns, as under a
+          // finger.
           expect(scrollbar, paints..rrect());
           await rest(tester);
           expect(position.pixels, 100);
@@ -1568,40 +1566,32 @@ void main() {
       expect(position.pixels, -210);
     }, variant: ios);
 
-    group(
-      'under a turn',
-      () {
-        testWidgets('load earlier above: the turn goes on without a jump', (
-          WidgetTester tester,
-        ) async {
-          int before = 10;
-          await start(
-            tester,
-            StatefulBuilder(
-              builder: (BuildContext context, StateSetter setState) {
-                return earlier(() => before, () {
-                  if (before < 20) {
-                    setState(() => before = 20);
-                  }
-                });
-              },
-            ),
-          );
-          final ScrollPosition position = positionIn(tester, const Key('view'));
-          await turnFollowed(tester, position, <double>[-200, -150]);
-          expect(host.description!.minExtent, -880);
-          await more(tester, <double>[-10]);
-          expect(position.pixels, -360);
-          await rest(tester);
-          expect(position.pixels, -360);
-        }, variant: ios);
-      },
-      skip:
-          'BROKEN: when minScrollExtent moves under a turn, the native view '
-          'keeps its offset from its top, so its reports (min + offset) '
-          'jump by the change and the content with them; the runtime '
-          'resyncs only at rest',
-    );
+    group('under a turn', () {
+      testWidgets('load earlier above: the turn goes on without a jump', (
+        WidgetTester tester,
+      ) async {
+        int before = 10;
+        await start(
+          tester,
+          StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              return earlier(() => before, () {
+                if (before < 20) {
+                  setState(() => before = 20);
+                }
+              });
+            },
+          ),
+        );
+        final ScrollPosition position = positionIn(tester, const Key('view'));
+        await turnFollowed(tester, position, <double>[-200, -150]);
+        expect(host.description!.minExtent, -880);
+        await more(tester, <double>[-10]);
+        expect(position.pixels, -360);
+        await rest(tester);
+        expect(position.pixels, -360);
+      }, variant: ios);
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -1897,21 +1887,19 @@ void main() {
       expect(page.pixels, from + 20);
     }, variant: ios);
 
-    testWidgets('a tall multi-line field takes the crown from the page', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('a tall multi-line field nobody types in leaves the page '
+        'the crown', (WidgetTester tester) async {
       await start(tester, form(maxLines: 7, fieldFirst: true));
       final ScrollPosition field = positionIn(tester, const Key('field'));
       expect(field.maxScrollExtent, greaterThan(0));
-      // CAVEAT: the field covers 40% of the screen and comes after the
-      // page: it is the frontmost candidate, so the crown scrolls the text
-      // and the page cannot move until a finger moves it.
-      expectPicked(tester, const Key('field'));
+      // The field covers 40% of the screen and comes after the page, but its
+      // own scrollable is only preferred while it has focus.
+      expectPicked(tester, const Key('page'));
       final ScrollPosition page = positionIn(tester, const Key('page'));
-      await turn(tester, <double>[30, 300]);
+      await turn(tester, <double>[30]);
       await rest(tester);
-      expect(page.pixels, 0);
-      expect(field.pixels, field.maxScrollExtent);
+      expect(page.pixels, 30);
+      expect(field.pixels, 0);
     }, variant: ios);
   });
 }

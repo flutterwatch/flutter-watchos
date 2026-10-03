@@ -110,6 +110,7 @@ public struct FlutterHostView<Splash: View>: View {
                         if dragDistance < 8 {
                             focusedField = nil
                             textInput.endEditing()
+                            restoreCrownFocus()
                         }
                     }
             )
@@ -157,6 +158,7 @@ public struct FlutterHostView<Splash: View>: View {
                         .onSubmit {
                             textInput.submitEditing()
                             focusedField = nil
+                            restoreCrownFocus()
                         }
                         // Make the proxy effectively invisible while keeping it
                         // tappable AND keyboard-raising. watchOS will NOT present the
@@ -404,6 +406,17 @@ public struct FlutterHostView<Splash: View>: View {
 
     /// The native input control for a field — SecureField (masked) when obscured,
     /// otherwise a plain TextField — bound to that field's engine-owned state.
+    /// Gives the crown back to whoever owns it once the keyboard is gone:
+    /// the focus change that would do it (`onChange(of: focusedField)`)
+    /// never fires on watchOS, so Done and a tap outside call this.
+    private func restoreCrownFocus() {
+        switch crownModel.route {
+        case .proxy: focusSoon($crownProxyFocused)
+        case .binding: focusSoon($isFocused)
+        case .none: break
+        }
+    }
+
     @ViewBuilder
     private func proxy(isObscured: Bool, text: Binding<String>) -> some View {
         if isObscured {
@@ -454,6 +467,9 @@ private struct CrownProxyScroll: View {
         // An app can hide it (`WatchCrownScroll(scrollIndicator: false)`).
         .scrollIndicators(config.showsIndicator ? .automatic : .hidden)
         .scrollIndicatorsFlash(trigger: follow.indicatorFlash)
+        // A page view or a wheel comes to rest on whole pages or items, as a
+        // native paged scroll view or picker does with the crown.
+        .scrollTargetBehavior(CrownSnapBehavior(pitch: config.snaps ? config.rowPoints : 0))
         .scrollPosition($position)
         .onScrollGeometryChange(for: Double.self, of: { geometry in
             // The visible origin, so an inset applied once laid out is not a
@@ -548,6 +564,19 @@ private struct CrownBinding: View {
 /// Gives crown focus to a view that has just appeared. Focus set in the same
 /// update as the view's insertion does not always take, so it is set again
 /// shortly after.
+/// Rests the hidden view on whole rows of `pitch` points when the scrollable
+/// snaps (a page view, a wheel); a pitch of 0 leaves the crown's target alone.
+private struct CrownSnapBehavior: ScrollTargetBehavior {
+    let pitch: CGFloat
+
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard pitch > 0 else { return }
+        let end = max(0, context.contentSize.height - context.containerSize.height)
+        let row = (target.rect.origin.y / pitch).rounded() * pitch
+        target.rect.origin.y = min(max(0, row), end)
+    }
+}
+
 private func focusSoon(_ focus: FocusState<Bool>.Binding) {
     focus.wrappedValue = true
     for delay in [0.05, 0.3] {

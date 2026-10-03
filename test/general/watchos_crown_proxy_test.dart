@@ -110,6 +110,19 @@ void main() {
       expect(code(scroll), isNot(contains('.scrollIndicators(.hidden)')));
     });
 
+    test('rests on whole pages or items when the scrollable snaps', () {
+      // A page view or a wheel: the native view settles on rows of its pitch,
+      // as a native paged scroll view or picker does with the crown.
+      expect(
+        scroll,
+        contains('.scrollTargetBehavior(CrownSnapBehavior(pitch: config.snaps ? config.rowPoints : 0))'),
+      );
+      final String snap = swiftType(view, 'private struct CrownSnapBehavior');
+      expect(snap, contains('ScrollTargetBehavior'));
+      expect(snap, contains('guard pitch > 0 else { return }'));
+      expect(snap, contains('.rounded() * pitch'));
+    });
+
     test('anchors a turn where the last follow landed', () {
       expect(scroll, contains('model.viewMoved(to: origin)'));
       expect(proxy, contains('if syncHold > 0 && !crownActive {'));
@@ -151,6 +164,17 @@ void main() {
     test('gives crown focus back after the keyboard', () {
       final int field = view.indexOf('textInput.endEditing()');
       expect(view.indexOf('case .proxy: crownProxyFocused = true', field), greaterThan(field));
+      // The focus change above never fires on watchOS: Done and a tap
+      // outside give the focus back themselves.
+      final int submit = view.indexOf('textInput.submitEditing()');
+      expect(view.indexOf('restoreCrownFocus()', submit), greaterThan(submit));
+      expect(
+        RegExp(r'textInput\.endEditing\(\)\s*restoreCrownFocus\(\)').hasMatch(view),
+        isTrue,
+      );
+      final String restore = view.substring(view.indexOf('private func restoreCrownFocus()'));
+      expect(restore, contains(r'case .proxy: focusSoon($crownProxyFocused)'));
+      expect(restore, contains(r'case .binding: focusSoon($isFocused)'));
     });
   });
 
@@ -220,8 +244,9 @@ void main() {
     });
 
     test('the runtime and the host agree on the description', () {
-      expect(runtime, contains('Void Function(Int32, Double, Double, Double, Double, Int32)'));
-      expect(proxy, contains('_ maxExtent: Double, _ rowExtent: Double, _ indicator: Int32'));
+      expect(runtime, contains('Void Function(Int32, Double, Double, Double, Double, Int32, Int32)'));
+      expect(proxy, contains('_ maxExtent: Double, _ rowExtent: Double, _ indicator: Int32,'));
+      expect(proxy, contains('_ snaps: Int32'));
     });
 
     test("the mark's options are the ones the runtime reads", () {

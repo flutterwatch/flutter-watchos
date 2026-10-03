@@ -55,6 +55,7 @@ final class CrownProxyBridge: @unchecked Sendable {
         var maxExtent: Double
         var rowExtent: Double
         var showsIndicator: Bool
+        var snaps: Bool
     }
 
     private let lock = NSLock()
@@ -116,11 +117,14 @@ final class CrownProxyBridge: @unchecked Sendable {
 
 /// Describes the scrollable the crown should drive, in its logical pixels;
 /// `active` 0 withdraws it. `indicator` 0 hides watchOS's scroll indicator
-/// (`WatchCrownScroll(scrollIndicator: false)`).
+/// (`WatchCrownScroll(scrollIndicator: false)`). `snaps` 1: the scrollable
+/// rests on whole rows of `rowExtent` (a page view, a wheel), so the native
+/// view settles on them too.
 @_cdecl("FlutterWatchOSCrownProxyConfigure")
 public func FlutterWatchOSCrownProxyConfigure(
     _ active: Int32, _ viewport: Double, _ minExtent: Double,
-    _ maxExtent: Double, _ rowExtent: Double, _ indicator: Int32
+    _ maxExtent: Double, _ rowExtent: Double, _ indicator: Int32,
+    _ snaps: Int32
 ) {
     // A scrollable without finite extents (an endless list) is described by
     // the runtime as a finite window; anything else here is not a shape a
@@ -130,7 +134,7 @@ public func FlutterWatchOSCrownProxyConfigure(
         active != 0 && finite && viewport > 0 && maxExtent >= minExtent
             ? .init(viewport: viewport, minExtent: minExtent,
                     maxExtent: maxExtent, rowExtent: rowExtent,
-                    showsIndicator: indicator != 0)
+                    showsIndicator: indicator != 0, snaps: snaps != 0)
             : nil)
     FlutterDisplayClock.shared.wake()
 }
@@ -188,6 +192,8 @@ final class CrownProxyModel: ObservableObject {
         var rowExtent: Double
         var scale: Double
         var showsIndicator: Bool
+        /// The scrollable rests on whole rows (a page view, a wheel).
+        var snaps: Bool
 
         /// The scroll range plus one screen, in points.
         var contentPoints: Double { max(viewport, maxExtent - minExtent + viewport) * scale }
@@ -250,7 +256,7 @@ final class CrownProxyModel: ObservableObject {
                 Config(viewport: $0.viewport, minExtent: $0.minExtent,
                        maxExtent: $0.maxExtent, rowExtent: $0.rowExtent > 1 ? $0.rowExtent : 44,
                        scale: WatchContentScale.value,
-                       showsIndicator: $0.showsIndicator)
+                       showsIndicator: $0.showsIndicator, snaps: $0.snaps)
             }
             if next != config {
                 if next == nil || config == nil { origin = nil; lastTickOrigin = nil }

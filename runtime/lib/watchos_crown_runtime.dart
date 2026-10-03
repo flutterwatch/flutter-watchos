@@ -20,7 +20,9 @@
 // The scrollable is the one a native watch app would give the crown: among
 // the vertical scrollables on screen, the frontmost that covers at least 40% of
 // the screen, else the largest. Scrollables an app marks with
-// `WatchCrownScroll` (package:flutter_watchos) are tried first.
+// `WatchCrownScroll` (package:flutter_watchos) are tried first, and ones with
+// something to scroll before ones without. A NestedScrollView is driven as
+// one scrollable, through its own drag, so its header collapses first.
 //
 // For a scrollable with the platform's default physics, the runtime also
 // gives a released finger the native edge: the spring a native scroll view
@@ -29,6 +31,7 @@
 import 'dart:async';
 import 'dart:ffi' hide Size;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -113,6 +116,7 @@ class CrownDescription {
     required this.maxExtent,
     required this.rowExtent,
     this.indicator = true,
+    this.snaps = false,
   });
 
   /// The viewport's main-axis extent.
@@ -130,6 +134,10 @@ class CrownDescription {
   /// Whether watchOS shows its scroll indicator for it.
   final bool indicator;
 
+  /// Whether the scrollable comes to rest on whole rows of [rowExtent] (a
+  /// page view, a wheel), so the native view snaps to them as it settles.
+  final bool snaps;
+
   @override
   bool operator ==(Object other) =>
       other is CrownDescription &&
@@ -137,11 +145,12 @@ class CrownDescription {
       other.minExtent == minExtent &&
       other.maxExtent == maxExtent &&
       other.rowExtent == rowExtent &&
-      other.indicator == indicator;
+      other.indicator == indicator &&
+      other.snaps == snaps;
 
   @override
   int get hashCode =>
-      Object.hash(viewport, minExtent, maxExtent, rowExtent, indicator);
+      Object.hash(viewport, minExtent, maxExtent, rowExtent, indicator, snaps);
 }
 
 typedef _ListenerNative = Void Function(Double pixels, Int32 phase);
@@ -152,8 +161,8 @@ class FfiCrownHost implements CrownHost {
   FfiCrownHost._(DynamicLibrary lib)
     : _configure = lib
           .lookupFunction<
-            Void Function(Int32, Double, Double, Double, Double, Int32),
-            void Function(int, double, double, double, double, int)
+            Void Function(Int32, Double, Double, Double, Double, Int32, Int32),
+            void Function(int, double, double, double, double, int, int)
           >('FlutterWatchOSCrownProxyConfigure'),
       _sync = lib
           .lookupFunction<
@@ -176,7 +185,7 @@ class FfiCrownHost implements CrownHost {
     }
   }
 
-  final void Function(int, double, double, double, double, int) _configure;
+  final void Function(int, double, double, double, double, int, int) _configure;
   final void Function(double, int) _sync;
   final void Function(Pointer<NativeFunction<_ListenerNative>>) _setListener;
   NativeCallable<_ListenerNative>? _callable;
@@ -184,7 +193,7 @@ class FfiCrownHost implements CrownHost {
   @override
   void configure(CrownDescription? description) {
     if (description == null) {
-      _configure(0, 0, 0, 0, 0, 1);
+      _configure(0, 0, 0, 0, 0, 1, 0);
     } else {
       _configure(
         1,
@@ -193,6 +202,7 @@ class FfiCrownHost implements CrownHost {
         description.maxExtent,
         description.rowExtent,
         description.indicator ? 1 : 0,
+        description.snaps ? 1 : 0,
       );
     }
   }
@@ -307,6 +317,30 @@ class CrownRuntime {
   CrownDescription? _described;
 
   _CrownDriveActivity? _activity;
+
+  /// The NestedScrollView whose outer scrollable [_scrollable] is: its header
+  /// and body scroll as one, through its own drag (its positions are not
+  /// single-context ones that can be set directly).
+  NestedScrollViewState? _nested;
+
+  /// The NestedScrollView's body positions, listened to beside the outer one.
+  ScrollController? _nestedInner;
+
+  /// The drag a crown turn feeds a NestedScrollView.
+  Drag? _nestedDrag;
+
+  /// The report the NestedScrollView's drag last took.
+  double? _nestedLast;
+
+  /// Whether the crown is moving the content now.
+  bool get _driving => _activity != null || _nestedDrag != null;
+
+  /// What the host's reports are corrected by while the scrollable's extent
+  /// changes in the middle of a turn: the native view keeps its offset from
+  /// the top of its content, so a new minimum (rows loaded above) or, for a
+  /// reversed list, a new maximum would otherwise shift every later report.
+  /// Back to zero whenever the native view is put on the content.
+  double _shift = 0;
 
   /// The crown was driving when something else took the position over (a
   /// finger, or the app). The native view may still glide; its reports are
@@ -436,7 +470,7 @@ class CrownRuntime {
       // crown turn on a scrollable still on screen. Also on the last frame of
       // a burst (a page or dialog transition just ended), so the crown never
       // waits a scan interval to leave a list that a new route covers.
-      if (_activity == null &&
+      if (!_driving &&
           (_scanSoon ||
               _frame % scanInterval == 0 ||
               !(_binding?.hasScheduledFrame ?? true))) {
@@ -495,9 +529,11 @@ class CrownRuntime {
               _Candidate(
                 state,
                 marked: mark != null,
-                indicator: mark?.indicator ?? true,
+                indicator:
+                    (mark?.indicator ?? true) && !_hasOwnScrollbar(state),
                 area: area,
                 overlays: List<Element>.of(overlays),
+                preferred: _scrolls(state) && !_isIdleTextField(state),
               ),
             );
           }
@@ -528,8 +564,17 @@ class CrownRuntime {
     return _pick(marked.isNotEmpty ? marked : candidates);
   }
 
-  /// The frontmost that fills at least 40% of the screen, else the largest.
+  /// Among the candidates with something to scroll (and not a text field
+  /// nobody is typing in), else among all: the frontmost that fills at least
+  /// 40% of the screen, else the largest.
   _Candidate? _pick(List<_Candidate> candidates) {
+    final List<_Candidate> preferred = candidates
+        .where((_Candidate candidate) => candidate.preferred)
+        .toList();
+    return _pickAmong(preferred.isNotEmpty ? preferred : candidates);
+  }
+
+  _Candidate? _pickAmong(List<_Candidate> candidates) {
     if (candidates.isEmpty) {
       return null;
     }
@@ -562,13 +607,15 @@ class CrownRuntime {
       return 0;
     }
     final ScrollPosition position = state.position;
-    // A position the runtime cannot drive (a NestedScrollView's) would hold
+    // A NestedScrollView is driven through its outer scrollable; any other
+    // position the runtime cannot set (its body's, another kind) would hold
     // the crown and do nothing with it.
-    if (position is! ScrollPositionWithSingleContext ||
+    final bool nested = _nestedOf(state) != null;
+    if ((position is! ScrollPositionWithSingleContext && !nested) ||
         !position.hasContentDimensions ||
         !position.hasViewportDimension ||
         !position.hasPixels ||
-        !position.physics.shouldAcceptUserOffset(position)) {
+        (!nested && !position.physics.shouldAcceptUserOffset(position))) {
       return 0;
     }
     final RenderObject? box = state.context.findRenderObject();
@@ -615,6 +662,86 @@ class CrownRuntime {
     return shown.width * shown.height;
   }
 
+  /// The NestedScrollView whose outer scrollable [state] is, if it is one.
+  static NestedScrollViewState? _nestedOf(ScrollableState state) {
+    if (state.position is ScrollPositionWithSingleContext) {
+      return null;
+    }
+    final NestedScrollViewState? nested = state.context
+        .findAncestorStateOfType<NestedScrollViewState>();
+    if (nested == null) {
+      return null;
+    }
+    try {
+      return identical(nested.outerController.position, state.position)
+          ? nested
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether [state] has a range to scroll (an endless one counts).
+  static bool _scrolls(ScrollableState state) {
+    final NestedScrollViewState? nested = _nestedOf(state);
+    if (nested != null) {
+      final ScrollPosition? inner = _nestedBody(nested);
+      final ScrollPosition outer = state.position;
+      return outer.maxScrollExtent > outer.minScrollExtent ||
+          (inner != null &&
+              inner.hasContentDimensions &&
+              inner.maxScrollExtent > inner.minScrollExtent);
+    }
+    final ScrollPosition position = state.position;
+    return position.maxScrollExtent > position.minScrollExtent ||
+        !position.maxScrollExtent.isFinite;
+  }
+
+  /// Whether [state] is a text field's own scrollable while nobody types in
+  /// it: the page around it should take the crown first.
+  static bool _isIdleTextField(ScrollableState state) {
+    final EditableTextState? field = state.context
+        .findAncestorStateOfType<EditableTextState>();
+    return field != null && !field.widget.focusNode.hasFocus;
+  }
+
+  /// Whether the app wraps [state] in a scrollbar of its own (a Flutter
+  /// Scrollbar or CupertinoScrollbar): watchOS's indicator would be a second.
+  static bool _hasOwnScrollbar(ScrollableState state) {
+    bool found = false;
+    state.context.visitAncestorElements((Element element) {
+      if (element is StatefulElement) {
+        if (element.state is RawScrollbarState) {
+          found = true;
+          return false;
+        }
+        if (element.state is ScrollableState) {
+          return false;
+        }
+      }
+      return true;
+    });
+    return found;
+  }
+
+  /// The NestedScrollView body's position the crown moves: the one on screen
+  /// (a TabBarView body keeps others alive), else the first.
+  static ScrollPosition? _nestedBody(NestedScrollViewState nested) {
+    final Iterable<ScrollPosition> positions = nested.innerController.positions;
+    ScrollPosition? first;
+    for (final ScrollPosition position in positions) {
+      first ??= position;
+      final RenderObject? box = position.context.notificationContext
+          ?.findRenderObject();
+      final RenderObject? viewport = box == null ? null : _viewportOf(box);
+      // ignore: invalid_use_of_protected_member
+      if (viewport != null && (viewport.layer?.attached ?? false)) {
+        return position;
+      }
+    }
+    return first;
+  }
+
   /// Whether watchOS shows its scroll indicator for the scrollable driven
   /// now (`WatchCrownScroll(scrollIndicator: false)` hides it).
   bool _indicator = true;
@@ -651,17 +778,32 @@ class CrownRuntime {
     final ScrollPosition? old = _position;
     final bool wasDriving = _activity != null;
     _activity = null;
+    final Drag? nestedDrag = _nestedDrag;
+    _nestedDrag = null;
     if (old != null) {
       // The old scrollable may be gone already, its position disposed.
       try {
         old.removeListener(_onPosition);
+        _nestedInner?.removeListener(_onPosition);
         if (wasDriving && old is ScrollPositionWithSingleContext) {
           old.goIdle();
+        }
+        if (nestedDrag != null) {
+          _endingDrive = true;
+          try {
+            nestedDrag.end(DragEndDetails(primaryVelocity: 0));
+          } finally {
+            _endingDrive = false;
+          }
         }
       } catch (_) {
         // Nothing left to release.
       }
     }
+    _nested = null;
+    _nestedInner = null;
+    _nestedLast = null;
+    _shift = 0;
     _yielded = false;
     _takeoverOffset = 0;
     _native = null;
@@ -676,9 +818,26 @@ class CrownRuntime {
       return;
     }
     _position!.addListener(_onPosition);
+    final NestedScrollViewState? nested = _nestedOf(next);
+    if (nested != null) {
+      _nested = nested;
+      _nestedInner = nested.innerController..addListener(_onPosition);
+    }
     _describe();
     // Stop whatever the native view was doing for the previous scrollable.
-    _sync(_position!.pixels, stop: true);
+    _sync(_contentPixels(), stop: true);
+  }
+
+  /// Where the content is, in the host's terms before mirroring: the
+  /// position's pixels, or a NestedScrollView's header and body together.
+  double _contentPixels() {
+    final ScrollPosition position = _position!;
+    final NestedScrollViewState? nested = _nested;
+    if (nested == null) {
+      return position.pixels;
+    }
+    final ScrollPosition? body = _nestedBody(nested);
+    return position.pixels + (body != null && body.hasPixels ? body.pixels : 0);
   }
 
   /// How far an endless scrollable's window reaches either side of where it
@@ -712,44 +871,116 @@ class CrownRuntime {
         (_activity == null && (position.pixels - anchor).abs() > _window / 2)) {
       _windowAnchor = position.pixels;
     }
-    final double minExtent = position.minScrollExtent.isFinite
+    double minExtent = position.minScrollExtent.isFinite
         ? position.minScrollExtent
         : _windowAnchor! - _window;
-    final double maxExtent = position.maxScrollExtent.isFinite
+    double maxExtent = position.maxScrollExtent.isFinite
         ? position.maxScrollExtent
         : _windowAnchor! + _window;
+    final NestedScrollViewState? nested = _nested;
+    // A NestedScrollView's rows are its body's.
+    ScrollableState rows = scrollable;
+    if (nested != null) {
+      // Header and body scroll as one: their ranges add up.
+      final ScrollPosition? body = _nestedBody(nested);
+      if (body != null && body.hasContentDimensions) {
+        minExtent += body.minScrollExtent;
+        maxExtent += body.maxScrollExtent;
+      }
+      final ScrollContext? bodyContext = body?.context;
+      if (bodyContext is ScrollableState) {
+        rows = bodyContext;
+      }
+    }
+    final double? snapPitch = _snapPitch(position);
     final CrownDescription? described = _described;
     if (described != null &&
         described.viewport == position.viewportDimension &&
         described.minExtent == minExtent &&
         described.maxExtent == maxExtent &&
-        described.indicator == _indicator) {
+        described.indicator == _indicator &&
+        described.snaps == (snapPitch != null)) {
       return;
     }
     final CrownDescription next = CrownDescription(
       viewport: position.viewportDimension,
       minExtent: minExtent,
       maxExtent: maxExtent,
-      rowExtent: _rowExtent(scrollable) ?? described?.rowExtent ?? 44,
+      rowExtent: snapPitch ?? _rowExtent(rows) ?? described?.rowExtent ?? 44,
       indicator: _indicator,
+      snaps: snapPitch != null,
     );
+    if (described != null && _driving) {
+      // The extent changed under a turn. The native view keeps its offset
+      // from the top of its content, so its next reports would land the
+      // change away from the content: count it into the shift until rest.
+      _shift += _reversed
+          ? described.maxExtent - maxExtent
+          : described.minExtent - minExtent;
+    }
     _described = next;
     _host.configure(next);
     if (described != null &&
-        _activity == null &&
+        !_driving &&
         (_reversed || described.minExtent != minExtent)) {
       // The host's coordinates moved under the content (a reversed list's
       // end, or an endless list's window): put the native view back on it.
-      _sync(position.pixels);
+      _sync(_contentPixels());
     }
+  }
+
+  /// The pitch a scrollable comes to rest on, when its physics snap: a page
+  /// view's page, a wheel's item. Null for free scrolling.
+  static double? _snapPitch(ScrollPosition position) {
+    for (
+      ScrollPhysics? layer = position.physics;
+      layer != null;
+      layer = layer.parent
+    ) {
+      if (layer is PageScrollPhysics) {
+        return position is PageMetrics
+            ? position.viewportDimension *
+                  (position as PageMetrics).viewportFraction
+            : position.viewportDimension;
+      }
+      if (layer is FixedExtentScrollPhysics && position is FixedExtentMetrics) {
+        final double? extent = _wheelExtentOf(position);
+        if (extent != null) {
+          return extent;
+        }
+      }
+    }
+    return null;
+  }
+
+  static double? _wheelExtentOf(ScrollPosition position) {
+    final RenderObject? box = position.context.notificationContext
+        ?.findRenderObject();
+    RenderListWheelViewport? wheel;
+    void visit(RenderObject child) {
+      if (wheel != null) {
+        return;
+      }
+      if (child is RenderListWheelViewport) {
+        wheel = child;
+        return;
+      }
+      child.visitChildren(visit);
+    }
+
+    if (box is RenderListWheelViewport) {
+      return box.itemExtent;
+    }
+    box?.visitChildren(visit);
+    return wheel?.itemExtent;
   }
 
   /// A reversed scrollable (a chat list) grows upwards; the native view
   /// always grows downwards, so its coordinates are mirrored.
   bool get _reversed => _scrollable?.axisDirection == AxisDirection.up;
 
-  /// The scrollable's pixels in the host's coordinates, and back (the same
-  /// mirror both ways).
+  /// The scrollable's pixels in the host's coordinates (mirrored for a
+  /// reversed list).
   double _toHost(double pixels) {
     final CrownDescription? described = _described;
     if (described == null || !_reversed) {
@@ -758,27 +989,44 @@ class CrownRuntime {
     return described.minExtent + described.maxExtent - pixels;
   }
 
+  /// A host report in the scrollable's pixels: the mirror back, and the shift
+  /// an extent change in the middle of the turn left.
+  double _fromHost(double report) => _toHost(report) + _shift;
+
   /// The scrollable's row pitch: exact for a fixed-extent list, else the
-  /// median height of the children laid out now.
+  /// median distance from one laid-out row to the next. Only the
+  /// scrollable's own rows count: not those of a scrollable nested in it (a
+  /// carousel), nor of a sliver laid out on the other axis.
   static double? _rowExtent(ScrollableState scrollable) {
+    final RenderObject? root = scrollable.context.findRenderObject();
+    if (root == null) {
+      return null;
+    }
+    final RenderObject? own = _viewportOf(root);
     RenderSliverMultiBoxAdaptor? list;
     double? wheelExtent;
     void visit(RenderObject child) {
-      if (list != null) {
-        return;
-      }
-      if (child is RenderSliverMultiBoxAdaptor) {
-        list = child;
+      if (list != null || wheelExtent != null) {
         return;
       }
       if (child is RenderListWheelViewport) {
         wheelExtent = child.itemExtent;
         return;
       }
+      if (child is RenderAbstractViewport && !identical(child, own)) {
+        return;
+      }
+      if (child is RenderSliver && child.constraints.axis != Axis.vertical) {
+        return;
+      }
+      if (child is RenderSliverMultiBoxAdaptor) {
+        list = child;
+        return;
+      }
       child.visitChildren(visit);
     }
 
-    scrollable.context.findRenderObject()?.visitChildren(visit);
+    root.visitChildren(visit);
     if (wheelExtent != null) {
       return wheelExtent;
     }
@@ -790,34 +1038,50 @@ class CrownRuntime {
         found.itemExtent != null) {
       return found.itemExtent;
     }
+    // The pitch, from one row's start to the next (spacing and separators
+    // included), else the row height.
+    final List<double> pitches = <double>[];
     final List<double> heights = <double>[];
+    double? previous;
     for (
       RenderBox? child = found.firstChild;
       child != null;
       child = found.childAfter(child)
     ) {
+      final ParentData? data = child.parentData;
+      final double? offset = data is SliverMultiBoxAdaptorParentData
+          ? data.layoutOffset
+          : null;
+      if (offset != null && previous != null && offset > previous) {
+        pitches.add(offset - previous);
+      }
+      previous = offset;
       if (child.hasSize && child.size.height > 0) {
         heights.add(child.size.height);
       }
     }
-    if (heights.isEmpty) {
+    final List<double> source = pitches.isNotEmpty ? pitches : heights;
+    if (source.isEmpty) {
       return null;
     }
-    heights.sort();
-    return heights[heights.length ~/ 2];
+    source.sort();
+    return source[source.length ~/ 2];
   }
 
   /// The content moved. Unless the crown moved it, the host follows.
   void _onPosition() {
     final ScrollPosition? position = _position;
-    if (_activity != null || position == null || !position.hasPixels) {
+    if (_driving || position == null || !position.hasPixels) {
       return;
     }
-    _sync(position.pixels);
+    _sync(_contentPixels());
   }
 
   void _sync(double pixels, {bool stop = false}) {
     _native = pixels;
+    _nestedLast = pixels;
+    // The native view lands on the content: nothing left to correct.
+    _shift = 0;
     _host.sync(_toHost(pixels), stop: stop);
   }
 
@@ -842,11 +1106,15 @@ class CrownRuntime {
         return;
       }
     }
+    if (_nested != null) {
+      _onNestedPosition(hostPixels, phase);
+      return;
+    }
     final ScrollPosition? position = _position;
     if (position is! ScrollPositionWithSingleContext || !position.hasPixels) {
       return;
     }
-    final double pixels = _toHost(hostPixels);
+    final double pixels = _fromHost(hostPixels);
     if (phase == 2) {
       // A new turn: whatever the native view did before is over.
       _native = pixels;
@@ -897,9 +1165,10 @@ class CrownRuntime {
       _takeoverOffset = 0;
       _native = pixels;
       position.setPixels(pixels + offset);
-      if (offset != 0) {
-        // A short turn ended before the takeover blended out: the native view
-        // comes to the content, not the other way round.
+      if (offset != 0 || _shift != 0) {
+        // A short turn ended before the takeover blended out, or the extent
+        // changed under the turn: the native view comes to the content, not
+        // the other way round.
         _sync(position.pixels);
       }
       // The native view settles on its own, edge spring included, so at rest
@@ -914,6 +1183,73 @@ class CrownRuntime {
         _endingDrive = false;
       }
     }
+  }
+
+  /// A host report for a NestedScrollView: each move goes into a drag of its
+  /// own, which collapses the header before the body scrolls, as a finger's
+  /// drag does; the rest ends the drag, which lets the header snap.
+  void _onNestedPosition(double pixels, int phase) {
+    final ScrollPosition? outer = _position;
+    if (outer == null || !outer.hasPixels) {
+      return;
+    }
+    if (phase == 2) {
+      _nestedLast = pixels;
+      _yielded = false;
+      return;
+    }
+    if (phase == 1) {
+      final double last = _nestedLast ?? pixels;
+      _nestedLast = pixels;
+      if (_yielded || (_nestedDrag == null && _fingerDown(outer))) {
+        return;
+      }
+      final double delta = pixels - last;
+      if (delta == 0) {
+        return;
+      }
+      final Drag drag = _nestedDrag ??= outer.drag(
+        DragStartDetails(),
+        _onNestedDragEnded,
+      );
+      drag.update(
+        DragUpdateDetails(
+          globalPosition: Offset.zero,
+          delta: Offset(0, -delta),
+          primaryDelta: -delta,
+        ),
+      );
+      return;
+    }
+    if (_yielded) {
+      _yielded = false;
+      _sync(_contentPixels());
+      return;
+    }
+    final Drag? drag = _nestedDrag;
+    _nestedDrag = null;
+    if (drag != null) {
+      _endingDrive = true;
+      try {
+        drag.end(DragEndDetails(primaryVelocity: 0));
+      } finally {
+        _endingDrive = false;
+      }
+    }
+    // The body clamps at its ends where the native view stretched: the
+    // native view comes to the content.
+    _sync(_contentPixels());
+  }
+
+  /// The NestedScrollView's crown drag ended without the runtime ending it:
+  /// a finger (or the app) took the content over.
+  void _onNestedDragEnded() {
+    if (_endingDrive || _nestedDrag == null) {
+      return;
+    }
+    _nestedDrag = null;
+    _yielded = true;
+    _sync(_contentPixels(), stop: true);
   }
 
   /// Whether a finger is on the content (holding or dragging it).
@@ -1014,6 +1350,7 @@ class _Candidate {
     required this.indicator,
     required this.area,
     required this.overlays,
+    required this.preferred,
   });
 
   final ScrollableState state;
@@ -1021,6 +1358,9 @@ class _Candidate {
   final bool indicator;
   final double area;
   final List<Element> overlays;
+
+  /// Has something to scroll and is not an idle text field's own scrollable.
+  final bool preferred;
 }
 
 /// Holds a position while the native view drives it: the position follows
