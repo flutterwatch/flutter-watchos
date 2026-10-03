@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:fake_async/fake_async.dart';
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -80,7 +81,16 @@ void main() {
 
       await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: _Recorder().post);
       expect(logger.statusText, contains('nothing is added to your app'));
-      expect(logger.statusText, contains('flutter-watchos build-registry --disable'));
+      // Each way to turn it off is a bare command on its own line, ready to
+      // paste: no "(or ...)" beside it, and no variable assignment without
+      // `export`, which a shell would keep to itself.
+      final List<String> lines = logger.statusText.split('\n');
+      expect(
+        lines.where((String line) => line.startsWith('  flutter-watchos ') || line.startsWith('  export ')),
+        <String>['  flutter-watchos build-registry --disable', '  export FLUTTER_WATCHOS_BUILD_REGISTRY=0'],
+      );
+      expect(logger.statusText, isNot(contains('(or')));
+      expect(lines.where((String line) => line.trimLeft().startsWith('$kBuildRegistryEnv=')), isEmpty);
       // Printed in the app's directory, which has no doc/ folder.
       expect(
         logger.statusText,
@@ -140,24 +150,30 @@ void main() {
       expect(logger.traceText, contains('HTTP 403'));
     });
 
-    testWithoutContext('never throws and never hangs: offline, timeouts and bad URLs all end quietly', () async {
+    testWithoutContext('never throws and never hangs: offline, timeouts and bad URLs all end quietly', () {
       final FakePlatform platform = _platform();
       signIn(platform);
 
-      Future<int> offline(Uri _, String _, Map<String, Object?> _) => throw const io.SocketException('no route to host');
-      expect(
-        await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: offline),
-        BuildRegistration.notAccepted,
-      );
+      // Fake time: the bound is proved to the millisecond without waiting for it.
+      FakeAsync().run((FakeAsync time) {
+        Future<int> offline(Uri _, String _, Map<String, Object?> _) => throw const io.SocketException('no route to host');
+        BuildRegistration? offlineResult;
+        unawaited(registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: offline)
+            .then((BuildRegistration result) => offlineResult = result));
+        time.flushMicrotasks();
+        expect(offlineResult, BuildRegistration.notAccepted);
 
-      // A server that never answers must not hold the build: the call is bounded.
-      Future<int> never(Uri _, String _, Map<String, Object?> _) => Completer<int>().future;
-      final stopwatch = Stopwatch()..start();
-      expect(
-        await registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: never),
-        BuildRegistration.notAccepted,
-      );
-      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 8)));
+        // A server that never answers must not hold the build: the call gives up at 5 s.
+        Future<int> never(Uri _, String _, Map<String, Object?> _) => Completer<int>().future;
+        BuildRegistration? neverResult;
+        unawaited(registerReleaseBuild(fileSystem: fs, platform: platform, logger: logger, build: _build, post: never)
+            .then((BuildRegistration result) => neverResult = result));
+        time.elapse(const Duration(seconds: 5) - const Duration(milliseconds: 1));
+        expect(neverResult, isNull, reason: 'still waiting just before the bound');
+        time.elapse(const Duration(milliseconds: 1));
+        expect(neverResult, BuildRegistration.notAccepted);
+        expect(time.pendingTimers, isEmpty);
+      });
       expect(logger.statusText, isEmpty);
       expect(logger.errorText, isEmpty);
     });

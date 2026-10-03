@@ -1,0 +1,57 @@
+name: Engine pin
+
+# When a push to main or a release tag changes bin/internal/engine.version,
+# check that the artifact service serves the new engine's Simulator zip with
+# no account. That zip is the first download of every new user, so a pin the
+# service cannot serve yet breaks every fresh install.
+#
+# This is the one CI check that calls the production service, so it never
+# runs on a pull request. It sends one anonymous HEAD, which downloads
+# nothing and leaves no row in the service's download log.
+on:
+  push:
+    branches: [main]
+    tags: ['v*-watchos.*']
+
+permissions:
+  contents: read
+
+jobs:
+  engine-pin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pin before this push is read from git history.
+          fetch-depth: 0
+
+      - name: Check the Simulator zip of a changed engine pin
+        env:
+          API: https://api.flutterwatch.dev
+          BEFORE: ${{ github.event.before }}
+        run: |
+          pin_file=bin/internal/engine.version
+          new="$(tr -d '[:space:]' < "$pin_file")"
+          # A branch push compares with the commit the branch was at before
+          # the push; a tag, or a branch git does not know yet, with the
+          # parent commit.
+          if [ "$GITHUB_REF_TYPE" = branch ] && git cat-file -e "${BEFORE}^{commit}" 2> /dev/null; then
+            base="$BEFORE"
+          else
+            base=HEAD^
+          fi
+          old="$(git show "$base:$pin_file" 2> /dev/null | tr -d '[:space:]' || true)"
+          if [ "$new" = "$old" ]; then
+            echo "Engine pin unchanged ($new): nothing to check."
+            exit 0
+          fi
+          url="$API/v1/artifacts/$new/watchos_debug_sim_arm64.zip"
+          # -q first, so no curl config file can add a token.
+          code="$(curl -q --silent --show-error --head --output /dev/null \
+            --write-out '%{http_code}' --max-time 30 --retry 2 "$url")" || code=000
+          echo "Engine pin ${old:-(none)} -> $new: HEAD $url answered $code."
+          if [ "$code" != 200 ]; then
+            echo "The artifact service does not serve $new to a new user yet."
+            exit 1
+          fi

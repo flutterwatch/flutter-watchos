@@ -208,13 +208,17 @@ Future<BuildRegistration> registerReleaseBuild({
   logger.printStatus('Registered this release build of ${build.bundleId}$version with flutterwatch.dev.');
 
   // Say once, in full, what that line means and how to stop it. After that the
-  // one line above is reminder enough.
+  // one line above is reminder enough. Each command stands alone on its line,
+  // with what it does on the line before, so it can be pasted as it is.
   if (_readSettings(fileSystem, platform)['build_registry_notice_shown'] != true) {
     logger.printStatus(
       '  That sent the bundle id, app version, engine id and build mode to your\n'
       '  flutterwatch.dev account — nothing else, and nothing is added to your app.\n'
-      '  It lists the app under "My apps" in your console. To turn it off:\n'
-      '    flutter-watchos build-registry --disable      (or $kBuildRegistryEnv=0 on CI)\n'
+      '  It lists the app under "My apps" in your console.\n'
+      '  To turn it off on this machine:\n'
+      '  flutter-watchos build-registry --disable\n'
+      '  To turn it off in one shell, or in a CI job:\n'
+      '  export $kBuildRegistryEnv=0\n'
       '  Details: $kBuildRegistryDocUrl',
     );
     try {
