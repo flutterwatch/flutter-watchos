@@ -53,8 +53,8 @@ class WatchosDeviceManager extends FlutterDeviceManager {
 /// Discovers watchOS devices and simulators via `xcrun simctl` / `devicectl`.
 ///
 /// Like stock, it lists booted Simulators only. The exception is a shut-down
-/// Simulator whose UDID is exactly the one `-d` names (spec 0005 M098), so
-/// `run -d <UDID>` can boot it.
+/// Simulator whose UDID is exactly the one `-d` names, so `run -d <UDID>` can
+/// boot it.
 class WatchosDeviceDiscovery extends PollingDeviceDiscovery {
   /// Creates the discoverer. [requestedDeviceId] returns the `-d` value, if
   /// any, each time the devices are polled.

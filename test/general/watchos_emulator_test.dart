@@ -100,7 +100,7 @@ void main() {
     });
 
     // `devices` stays booted-only, as stock; `-d <exact UDID>` also finds a
-    // shut-down watch Simulator, so run can boot it (spec 0005 criterion 23).
+    // shut-down watch Simulator, so run can boot it.
     const shutDownJson = '''
 {"devices":{"com.apple.CoreSimulator.SimRuntime.watchOS-26-5":[
   {"udid":"AAAA-BBBB-CCCC","name":"Apple Watch Series 11 (46mm)","state":"Shutdown","isAvailable":true},
@@ -179,7 +179,7 @@ void main() {
     });
 
     // Xcode 27 lists this capability for a connected watch that can take
-    // screenshots (spec 0005 criterion 27).
+    // screenshots.
     testWithoutContext('reads the capture-screenshot capability', () {
       const json = '''
 {"result":{"devices":[{

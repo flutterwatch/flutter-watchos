@@ -26,8 +26,7 @@ import '../src/fake_process_manager.dart';
 import '../src/test_flutter_command_runner.dart';
 
 // `logs` on a watch: a Simulator streams through stock's command, and a
-// physical watch is refused with guidance before anything runs (spec 0005
-// criteria 18-19).
+// physical watch is refused with guidance before anything runs.
 
 class _FakeProcessSignal extends Fake implements ProcessSignal {
   final _controller = StreamController<ProcessSignal>();

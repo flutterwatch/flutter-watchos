@@ -128,7 +128,7 @@ List<String> appLaunchArguments({
 }
 
 /// Whether [argument], from stock `getIOSLaunchArguments`, never reaches a
-/// watch app (spec 0005 D8).
+/// watch app.
 ///
 /// - `--enable-checked-mode` and `--verify-entry-points`: no watch launch ever
 ///   passed them, and entry-point checks could stop code that works today.
@@ -220,10 +220,10 @@ class SimulatorLaunchOptions {
   /// The argv is stock `getIOSLaunchArguments` for a Simulator, without the
   /// flags [isFilteredLaunchArgument] names. On a Simulator the app and the
   /// tool share one host, so `--device-vmservice-port Q` binds the VM to Q,
-  /// and wins over a host port P that would bind it too (spec 0005 D9): the
-  /// argv then carries `--vm-service-port=Q` once, and [warning] says that P
-  /// is ignored. Stock passes no device port to a Simulator app, and then
-  /// waits for a port the VM never uses.
+  /// and wins over a host port P that would bind it too: the argv then
+  /// carries `--vm-service-port=Q` once, and [warning] says that P is
+  /// ignored. Stock passes no device port to a Simulator app, and then waits
+  /// for a port the VM never uses.
   factory SimulatorLaunchOptions(
     DebuggingOptions options, {
     String? route,
@@ -538,13 +538,12 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
   /// and without stock's three UIScene clauses, which a watch app never logs,
   /// plus the `[flutter:` clause.
   ///
-  /// Measured on 2026-09-29 (spec 0005, F4): Dart output reaches the unified
-  /// log through the embedder's `NSLog("[flutter:<tag>] …")` in the `Runner`
-  /// process, and engine lines such as `Unhandled Exception` come untagged
-  /// from `Flutter.framework/Flutter`, which the sender clause keeps. The
-  /// sender of the host module's own `NSLog` lines (app code, in
-  /// `Runner.debug.dylib` in a debug build) has not been measured, and no
-  /// clause names it yet.
+  /// Measured on 2026-09-29: Dart output reaches the unified log through the
+  /// embedder's `NSLog("[flutter:<tag>] …")` in the `Runner` process, and
+  /// engine lines such as `Unhandled Exception` come untagged from
+  /// `Flutter.framework/Flutter`, which the sender clause keeps. The sender of
+  /// the host module's own `NSLog` lines (app code, in `Runner.debug.dylib`
+  /// in a debug build) has not been measured, and no clause names it yet.
   @visibleForTesting
   static const predicate =
       'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND '

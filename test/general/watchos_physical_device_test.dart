@@ -395,8 +395,7 @@ void main() {
     );
 
     // Stock's options for a physical device reach the app, minus the filtered
-    // flags, with one VM Service host and one port: the relay's (spec 0005
-    // criterion 12).
+    // flags, with one VM Service host and one port: the relay's.
     testUsingContext(
       'a profile launch forwards stock options once, with the relay port',
       () async {
@@ -543,8 +542,7 @@ void main() {
   });
 
   // A release launch passes none of stock's options and no VM Service flag:
-  // after the bundle id, only the log-to-file switch when it is asked for
-  // (spec 0005 criterion 12).
+  // after the bundle id, only the log-to-file switch when it is asked for.
   group('release launch on a physical watch', () {
     late MemoryFileSystem fileSystem;
     late FakeProcessManager processManager;

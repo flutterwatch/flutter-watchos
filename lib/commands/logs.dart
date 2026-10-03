@@ -15,8 +15,7 @@ import 'launch_checks.dart';
 /// On a watch Simulator it streams the app's unified-log lines, as stock does
 /// for an iOS Simulator. A physical watch has no log stream to attach to: its
 /// output reaches this Mac only through the console of the launch that `run`
-/// opens, so `logs -d <watch>` exits non-zero and says where to look instead
-/// (spec 0005 D7 (a)).
+/// opens, so `logs -d <watch>` exits non-zero and says where to look instead.
 class WatchosLogsCommand extends LogsCommand {
   /// Creates the command. [sigint] and [sigterm] end the stream, as in stock.
   WatchosLogsCommand({required super.sigint, required super.sigterm});

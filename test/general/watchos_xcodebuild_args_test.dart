@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Pins the `xcodebuild` command line of the watch app build (spec 0002,
-// criterion 24). The architecture rule is the part that matters most: a
-// device build must leave `ARCHS` to Xcode's Standard Architectures, which
-// build the arm64_32 slice the App Store requires below watchOS 27.0, while
-// the Simulator is arm64-only.
+// Pins the `xcodebuild` command line of the watch app build. The
+// architecture rule is the part that matters most: a device build must leave
+// `ARCHS` to Xcode's Standard Architectures, which build the arm64_32 slice
+// the App Store requires below watchOS 27.0, while the Simulator is
+// arm64-only.
 
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_watchos/build_targets/application.dart';

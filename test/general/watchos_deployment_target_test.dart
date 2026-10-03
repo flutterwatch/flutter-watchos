@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// The watchOS deployment target (spec 0002, criteria 6b, 11, 14, 16 and 17):
-// the named supported minimum, template default and required Xcode, the
-// template and example project literals they must match, the MinimumOSVersion
-// stamped into the staged frameworks, the project's own target as Xcode
-// resolves it per configuration, the `-target` of every compile the CLI runs
-// itself, and the build's stop on an Xcode older than the required one.
+// The watchOS deployment target: the named supported minimum, template
+// default and required Xcode, the template and example project literals they
+// must match, the MinimumOSVersion stamped into the staged frameworks, the
+// project's own target as Xcode resolves it per configuration, the `-target`
+// of every compile the CLI runs itself, and the build's stop on an Xcode
+// older than the required one.
 
 import 'dart:convert';
 import 'dart:io' as io;
@@ -229,7 +229,7 @@ void main() {
       });
 
       // The HostApp container is an iOS target with its own minimum. It is
-      // deliberately not tied to the watch's default (spec 0002, P1-E).
+      // deliberately not tied to the watch's default.
       test('the HostApp container keeps IPHONEOS_DEPLOYMENT_TARGET = 26.0', () {
         final Map<String, String> hostApp = _targetBuildSettings(pbxproj, 'HostApp');
         expect(hostApp.keys, unorderedEquals(<String>['Debug', 'Release']));
@@ -401,9 +401,9 @@ void main() {
     );
   });
 
-  // Plugin sources compile at the app's own target (spec 0002, P1-B (a)), on
-  // both paths the CLI runs itself: clang for C and Objective-C, swiftc for
-  // SwiftUI platform views.
+  // Plugin sources compile at the app's own target, on both paths the CLI
+  // runs itself: clang for C and Objective-C, swiftc for SwiftUI platform
+  // views.
   group('plugin sources compile at the project target', () {
     late MemoryFileSystem fileSystem;
     late FakeProcessManager processManager;
@@ -550,9 +550,9 @@ flutter:
     }
   });
 
-  // Spec 0002, criterion 16: the target Xcode builds App.swift with, per
-  // configuration, in Xcode's order. The fixtures start from the template as
-  // `create` renders it, plus the xcconfigs a build leaves behind.
+  // The target Xcode builds App.swift with, per configuration, in Xcode's
+  // order. The fixtures start from the template as `create` renders it, plus
+  // the xcconfigs a build leaves behind.
   group('resolveWatchosDeploymentTarget', () {
     late MemoryFileSystem fileSystem;
 
@@ -880,8 +880,8 @@ flutter:
     });
   });
 
-  // Spec 0002, criteria 6b and 16: the host module follows the configuration
-  // being built, and leaves out arm64_32 from 27.0.
+  // The host module follows the configuration being built, and leaves out
+  // arm64_32 from 27.0.
   group('host module per configuration', () {
     late MemoryFileSystem fileSystem;
     late FakeProcessManager processManager;
@@ -1054,9 +1054,8 @@ flutter:
     );
   });
 
-  // Spec 0002, criterion 14: a known Xcode older than 26.0 stops the build
-  // before anything native is compiled; 26.0 or later, or an unknown version,
-  // goes on.
+  // A known Xcode older than 26.0 stops the build before anything native is
+  // compiled; 26.0 or later, or an unknown version, goes on.
   group('the build on an old Xcode', () {
     Xcode xcode(Version? version) => Xcode.test(
       processManager: FakeProcessManager.any(),

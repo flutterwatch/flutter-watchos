@@ -3,10 +3,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
-# The Xcode and watchOS matrix of spec 0002 (criterion 26): the end-to-end
-# checks the unit suite cannot make, run with this machine's Xcode.
+# The Xcode and watchOS matrix: the end-to-end checks the unit suite cannot
+# make, run with this machine's Xcode.
 #
-# Steps (criteria of spec 0002):
+# Steps:
 #   2    create, then build watchos --simulator.
 #   3    run at target 26.0 on the older and the newer watchOS Simulator
 #        runtime: the VM Service line, `renderer = metal (Impeller)`, the first
@@ -45,7 +45,7 @@
 #     --plugins DIR      a plugins checkout; its HEAD is cloned into the work dir
 #     --out DIR          logs and summary.txt (default: a new temporary dir)
 #     --min-gib N        GiB that must be available before each heavy step
-#                        (default 20; spec 0002 asks for at least 15)
+#                        (default 20)
 #     --old-runtime V    the older watchOS Simulator runtime (default 26.5)
 #     --new-runtime V    the newer watchOS Simulator runtime (default 27.0)
 #     --lock DIR         take this lock directory (mkdir, retried every 60 s)
@@ -254,7 +254,7 @@ if [ -n "$LOCK" ]; then
   HELD_LOCK="$LOCK"
 fi
 
-# --- The toolchain, recorded first (spec 0002, criterion 13 asks for it). ---
+# --- The toolchain, recorded first: every result depends on it. ------------
 
 {
   echo "date: $(date '+%Y-%m-%d %H:%M:%S %z')"
@@ -492,7 +492,7 @@ PY
 }
 
 # device_build STEP TARGET MODE: unsigned `build watchos --MODE` at TARGET
-# and the checks of criteria 5 (26.0) or 6 and 6b (27.0).
+# and the checks of step 5 (26.0) or steps 6 and 6b (27.0).
 device_build() {
   local step="$1" target="$2" mode="$3"
   local label xcconfig log xlog app runner archs arch minos app_min fw_min framework problems=""
@@ -589,7 +589,7 @@ direct_path_packages() {
   done
 }
 
-# plugin_device_build STEP PACKAGE TARGET: criterion 10.
+# plugin_device_build STEP PACKAGE TARGET: one step 10 build.
 plugin_device_build() {
   local step="$1" package="$2" target="$3" example label xcconfig xlog warnings unexpected
   example="$WORK/plugins/packages/$package/example"
@@ -625,7 +625,7 @@ plugin_device_build() {
   heavy_end "$step"
 }
 
-# plugin_simulator_build STEP PACKAGE TARGET: one criterion 17 build.
+# plugin_simulator_build STEP PACKAGE TARGET: one step 17 build.
 plugin_simulator_build() {
   local step="$1" package="$2" target="$3" example label
   example="$WORK/plugins/packages/$package/example"
@@ -725,7 +725,7 @@ if wants 10 || wants 17; then
     fi
     if wants 17; then
       packages="$(direct_path_packages)"
-      say "direct-path examples: $(echo "$packages" | wc -w | tr -d ' ') (spec 0002 counts 17 at plugins 10591ec)"
+      say "direct-path examples: $(echo "$packages" | wc -w | tr -d ' ') (17 at plugins commit 10591ec)"
       for target in 26.0 27.0; do
         for package in $packages; do
           plugin_simulator_build "17 $target ${package%_watchos}" "$package" "$target"

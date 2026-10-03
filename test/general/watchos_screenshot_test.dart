@@ -20,8 +20,8 @@ import '../src/fake_process_manager.dart';
 import '../src/test_flutter_command_runner.dart';
 
 // Screenshots of a watch: `screenshot -d` and the `s` key call
-// supportsScreenshot and takeScreenshot (spec 0008 criterion 3 for the
-// Simulator, spec 0005 criterion 27 for a physical watch).
+// supportsScreenshot and takeScreenshot, which go through simctl on the
+// Simulator and devicectl on a physical watch.
 
 void main() {
   late FakeProcessManager processManager;

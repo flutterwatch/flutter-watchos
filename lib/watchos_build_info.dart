@@ -33,8 +33,7 @@ const Version kWatchosTemplateDeploymentTarget = Version.withText(26, 0, 0, '26.
 /// later, which comes with Xcode 26. `doctor` reports an older Xcode as an
 /// error, and a build stops on one before it compiles anything native, like
 /// stock `xcodeRequiredVersion`. Xcode 26.0 itself is not on offer anywhere
-/// for a test; the lowest 26.x tested is recorded with spec 0002's
-/// criterion 13.
+/// for a test: the oldest Xcode 26 that CI runs is 26.0.1.
 const Version kWatchosXcodeRequiredVersion = Version.withText(26, 0, 0, '26.0');
 
 /// How `doctor` and the build name an Xcode [version]: `Xcode 26.0`, or

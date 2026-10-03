@@ -261,7 +261,7 @@ void main() {
     // links no engine at all, so a host source that reaches the engine must
     // be compiled out of that slice whole. The only other way to stay in it
     // is to be a listed exception that names nothing of the engine outside
-    // its comments (spec 0002, criterion 23).
+    // its comments.
     final List<String> hostFunctions = _declaredHostFunctions(
       readHostSource('flutter_watchos_host.h'),
     );
@@ -306,8 +306,8 @@ void main() {
       expect(hostFunctions, isNot(contains('FlutterWatchOSHostSetLayersCallback')));
     });
 
-    // The mutations of criterion 23, applied to the real sources: each one
-    // must be reported.
+    // Breaks of that rule, applied to the real sources: each one must be
+    // reported.
     test('reports WatchAccessibility.swift without its guard', () {
       final String source = readHostSource('WatchAccessibility.swift');
       expect(source, contains('import FlutterWatchOSHostC'));
@@ -392,9 +392,9 @@ void main() {
   });
 
   group('host API comments', () {
-    // Spec 0007, criterion 27: the host module is the Swift API every app
-    // compiles against, and its C header is the contract with the engine, so
-    // both carry their documentation in the source.
+    // The host module is the Swift API every app compiles against, and its C
+    // header is the contract with the engine, so both carry their
+    // documentation in the source.
     test('every public or open Swift declaration has a doc comment', () {
       final documented = <String>[];
       final undocumented = <String>[];
@@ -423,7 +423,7 @@ void main() {
           }
         }
       }
-      // 24 when the spec was written; more is fine, fewer means the scan
+      // 24 when this test was written; more is fine, fewer means the scan
       // stopped finding them.
       expect(documented.length, greaterThanOrEqualTo(24));
       expect(undocumented, isEmpty);

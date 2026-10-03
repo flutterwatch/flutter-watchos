@@ -270,8 +270,7 @@ void main() {
     });
   });
 
-  // Spec 0002, criteria 1, 12 and 15: the Xcode and SDK floors, and which
-  // Simulator runtime doctor names.
+  // The Xcode and SDK floors, and which Simulator runtime doctor names.
   group('WatchosValidator watchOS 26 floor', () {
     Future<ValidationResult> validate({Xcode? xcode, FakeCommand? sdk, FakeCommand? runtimes}) {
       processManager.addCommands(<FakeCommand>[

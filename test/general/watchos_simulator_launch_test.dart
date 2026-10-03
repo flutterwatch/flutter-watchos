@@ -330,7 +330,7 @@ void main() {
   );
 
   // Stock waits for the VM Service line with no limit; a watch Simulator
-  // launch fails after 60 s and says what it saw (spec 0005 criterion 11).
+  // launch fails after 60 s and says what it saw.
   testUsingContext(
     'with no VM Service line after 60 s the launch fails and names what it saw',
     () async {
@@ -756,7 +756,7 @@ void main() {
   );
 
   // The window that shows the Simulator: the selected Xcode's viewer, or one
-  // hint; the launch goes on either way (spec 0002 criterion 18).
+  // hint; the launch goes on either way.
   group('Simulator window', () {
     const developer = '/Applications/Xcode.app/Contents/Developer';
     const simulatorApp = '$developer/Applications/Simulator.app';
