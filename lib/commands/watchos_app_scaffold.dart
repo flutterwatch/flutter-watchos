@@ -11,6 +11,11 @@ import 'package:flutter_tools/src/base/file_system.dart';
 ///
 /// The caller renders `watchos/` on top of this. Nothing here references any
 /// other platform, so the result is watchOS-only by construction.
+///
+/// `flutter-watchos create` does not use it: a watch-only create renders stock
+/// `flutter create`'s own app template (see `WatchosCreateCommand`). The
+/// plugin porter uses it to fill in a ported example's `analysis_options.yaml`,
+/// `.gitignore` and `README.md` around the files it writes itself.
 class WatchosAppScaffold {
   WatchosAppScaffold(this._fs);
 

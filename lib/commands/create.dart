@@ -3,13 +3,20 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/utils.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
+import 'package:flutter_tools/src/convert.dart';
+import 'package:flutter_tools/src/dart/pub.dart';
+import 'package:flutter_tools/src/flutter_project_metadata.dart' show FlutterTemplateType;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
+import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:yaml/yaml.dart';
 
 import '../watchos_host_mode.dart';
-import 'watchos_app_scaffold.dart';
 import 'watchos_runner.dart';
 
 /// Why `flutter-watchos create` rejects [templateType], or null when the
@@ -104,13 +111,14 @@ class WatchosCreateCommand extends CreateCommand {
       throwToolExit(templateError);
     }
 
-    // watchOS-only app: build the shared scaffold + watchos/ ourselves. We do
-    // NOT delegate to upstream `flutter create` (it can't target watchos and
-    // would force an unwanted iOS/Android app), so nothing is generated then
-    // stripped — the project is watchOS-only by construction.
+    // watchOS-only app: stock `flutter create`'s app, then watchos/. Upstream
+    // `flutter create` cannot target watchos and would add an iOS or Android
+    // app, so its own app template is rendered here with every platform off:
+    // nothing is generated then stripped, and the app is the one stock create
+    // writes, unmodified.
     if (boolArg('watchos-only')) {
       globals.logger.printStatus('Generating watchOS-only project...');
-      WatchosAppScaffold(globals.fs).write(projectDirPath, name);
+      await _generateStockApp(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);
       await _adoptHostMode(projectDirPath);
       globals.logger.printStatus(
@@ -181,6 +189,61 @@ class WatchosCreateCommand extends CreateCommand {
   /// org and (for on-device signing) a development team the way
   /// `flutter create` does. Delegates the template work to the shared
   /// [renderWatchosRunner] so the plugin porter can reuse it.
+  /// Writes the app stock `flutter create` writes, from the pinned SDK's own
+  /// `app` template with no platform folders: `lib/main.dart`, the widget
+  /// test, `pubspec.yaml`, `analysis_options.yaml`, `README.md` and the rest,
+  /// exactly as stock writes them. Like stock, it honours `--empty`,
+  /// `--description`, `--org` and `--overwrite`, pins the SDK's own versions
+  /// in `pubspec.lock`, and runs `pub get` unless `--no-pub`.
+  Future<void> _generateStockApp(String projectDirPath, String name) async {
+    final bool empty = boolArg('empty');
+    final Directory directory = globals.fs.directory(projectDirPath);
+    final Map<String, Object?> templateContext = createTemplateContext(
+      organization: await getOrganization(),
+      projectName: name,
+      titleCaseProjectName: snakeCaseToTitleCase(name),
+      projectDescription: stringArg('description'),
+      flutterRoot: flutterRoot,
+      withEmptyMain: empty,
+      dartSdkVersionBounds: '^${globals.cache.dartSdkBuild}',
+    );
+    await generateApp(
+      <String>['app', if (!empty) 'app_test_widget'],
+      directory,
+      templateContext,
+      overwrite: boolArg('overwrite'),
+      printStatusWhenWriting: false,
+      projectType: FlutterTemplateType.app,
+    );
+    _writeSdkPubspecLock(directory);
+    if (shouldCallPubGet) {
+      await pub.get(
+        context: PubContext.create,
+        project: FlutterProject.fromDirectory(directory),
+        offline: offline,
+        outputMode: PubOutputMode.summaryOnly,
+      );
+    }
+  }
+
+  /// Seeds `pubspec.lock` with the versions the Flutter SDK is tested with,
+  /// as stock `flutter create` does (its `_generatePubspecLock` is private),
+  /// so a broken release of one of those packages cannot break `create`.
+  void _writeSdkPubspecLock(Directory directory) {
+    final FileSystem fs = directory.fileSystem;
+    final sdkLock =
+        loadYaml(fs.file(fs.path.join(Cache.flutterRoot!, 'pubspec.lock')).readAsStringSync())
+            as YamlMap;
+    final sdkPackages = sdkLock['packages'] as YamlMap;
+    final packages = <String, Object?>{
+      for (final String package in gatherSdkPackageDependencies(directory))
+        package: sdkPackages[package],
+    };
+    directory
+        .childFile('pubspec.lock')
+        .writeAsStringSync(const JsonEncoder.withIndent('  ').convert({'packages': packages}));
+  }
+
   Future<void> _renderWatchosRunner(String projectDirPath, String name) async {
     final String organization = await getOrganization();
     final String? developmentTeam = await getCodeSigningIdentityDevelopmentTeam(
