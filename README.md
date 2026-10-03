@@ -19,7 +19,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
-export PATH="$PATH:$PWD/bin"
+export PATH="$PWD/bin:$PATH"
 flutter-watchos login      # your flutterwatch.dev account — optional for the Simulator
 flutter-watchos precache   # download the watchOS engine
 flutter-watchos doctor

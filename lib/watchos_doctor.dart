@@ -56,10 +56,26 @@ class WatchosDoctorValidatorsProvider implements DoctorValidatorsProvider {
 /// This drops exactly those messages (and the "if those were intentional"
 /// line that follows them), says the SDK is pinned instead, and leaves
 /// anything else the stock validator finds as it is.
+///
+/// In place of stock's PATH check it makes the one that matters here: that
+/// the `flutter-watchos` on PATH is this checkout's. When an older checkout
+/// is ahead of this one on PATH, `flutter-watchos` runs that one, and nothing
+/// else would say so.
 class PinnedFlutterValidator extends DoctorValidator {
-  PinnedFlutterValidator(this._inner) : super(_inner.title);
+  /// Wraps stock's Flutter validator. [operatingSystemUtils] finds
+  /// `flutter-watchos` on PATH and [fileSystem] follows links; both default
+  /// to the globals.
+  PinnedFlutterValidator(
+    this._inner, {
+    OperatingSystemUtils? operatingSystemUtils,
+    FileSystem? fileSystem,
+  }) : _operatingSystemUtils = operatingSystemUtils,
+       _fileSystem = fileSystem,
+       super(_inner.title);
 
   final DoctorValidator _inner;
+  final OperatingSystemUtils? _operatingSystemUtils;
+  final FileSystem? _fileSystem;
 
   static const _pinned = 'pinned by flutter-watchos';
 
@@ -98,13 +114,63 @@ class PinnedFlutterValidator extends DoctorValidator {
     if (!nothingLeftToWarnAbout && intentionalFooter != null) {
       messages.add(intentionalFooter);
     }
-    return ValidationResult(
-      result.type == ValidationType.partial && nothingLeftToWarnAbout
-          ? ValidationType.success
-          : result.type,
-      messages,
-      statusInfo: _pinnedStatusInfo(result.statusInfo),
+    ValidationType type = result.type == ValidationType.partial && nothingLeftToWarnAbout
+        ? ValidationType.success
+        : result.type;
+
+    // Where stock puts its own PATH warning: right after the version line, or
+    // first when there is none.
+    final ValidationMessage? otherCheckout = _otherCheckoutOnPath();
+    if (otherCheckout != null) {
+      final int versionLine = messages.indexWhere(
+        (ValidationMessage message) => message.message.startsWith('Flutter version '),
+      );
+      messages.insert(versionLine + 1, otherCheckout);
+      if (type == ValidationType.success) {
+        type = ValidationType.partial;
+      }
+    }
+    return ValidationResult(type, messages, statusInfo: _pinnedStatusInfo(result.statusInfo));
+  }
+
+  /// A warning when the `flutter-watchos` on PATH, links followed, is not
+  /// this checkout's `bin/flutter-watchos`; null when it is, or when there is
+  /// none on PATH (running `bin/flutter-watchos` by its path uses the
+  /// checkout it names).
+  ///
+  /// It mirrors stock's check for `flutter`, with an exact comparison instead
+  /// of "inside the checkout", which a clone inside another clone passes.
+  /// Stock's footer about git does not apply to it.
+  ValidationMessage? _otherCheckoutOnPath() {
+    final FileSystem fs = _fileSystem ?? globals.fs;
+    final File? onPath = (_operatingSystemUtils ?? globals.os).which('flutter-watchos');
+    if (onPath == null) {
+      return null;
+    }
+    final String checkout = _resolved(watchosToolRootDirectory(fs));
+    final String found = _resolved(onPath);
+    if (fs.path.equals(found, fs.path.join(checkout, 'bin', 'flutter-watchos'))) {
+      return null;
+    }
+    return ValidationMessage.hint(
+      'Warning: `flutter-watchos` on your path resolves to $found, not to the '
+      'flutter-watchos checkout running now at $checkout, so typing '
+      '`flutter-watchos` runs another checkout. Consider adding '
+      '${fs.path.join(checkout, 'bin')} to the front of your path.',
+      piiStrippedMessage:
+          'Warning: `flutter-watchos` on your path resolves to another '
+          'flutter-watchos checkout.',
     );
+  }
+
+  /// The path of [entity] with its links followed, or as it is when they
+  /// cannot be (a dangling link).
+  static String _resolved(FileSystemEntity entity) {
+    try {
+      return entity.resolveSymbolicLinksSync();
+    } on FileSystemException {
+      return entity.fileSystem.path.normalize(entity.absolute.path);
+    }
   }
 
   /// "Flutter version 3.47.4 on channel [user-branch] at /x/flutter" plus the

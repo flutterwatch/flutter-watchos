@@ -27,7 +27,7 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
-export PATH="$PATH:$PWD/bin"     # add to ~/.zshrc to make it permanent
+export PATH="$PWD/bin:$PATH"     # add to ~/.zshrc to make it permanent
 ```
 
 The first run bootstraps everything (downloads the pinned Flutter SDK and

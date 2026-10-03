@@ -557,6 +557,20 @@ void main() {
         'recommended to use "git" directly to perform update checks and upgrades.';
     const statusInfo = 'Channel [user-branch], 3.47.4, on macOS 26.0 25A354 darwin-arm64, locale en-US';
 
+    // The checkout the tests run from is /cli (Cache.flutterRoot is /cli/flutter).
+    MemoryFileSystem checkoutFs() =>
+        MemoryFileSystem.test()..file('/cli/bin/flutter-watchos').createSync(recursive: true);
+
+    // [onPath] is what `which flutter-watchos` finds; null finds nothing.
+    PinnedFlutterValidator pinned(ValidationResult stock, {FileSystem? fileSystem, String? onPath}) {
+      final FileSystem fs = fileSystem ?? checkoutFs();
+      return PinnedFlutterValidator(
+        _FakeValidator(stock),
+        operatingSystemUtils: _FakeWhich(fs, onPath),
+        fileSystem: fs,
+      );
+    }
+
     ValidationResult stock(List<ValidationMessage> extra, {String status = statusInfo}) =>
         ValidationResult(ValidationType.partial, <ValidationMessage>[
           const ValidationMessage.hint(versionOnUnknownChannel),
@@ -569,7 +583,7 @@ void main() {
         ], statusInfo: status);
 
     testWithoutContext('a fresh install is [✓], and says the SDK is pinned', () async {
-      final ValidationResult result = await PinnedFlutterValidator(_FakeValidator(stock(const <ValidationMessage>[]))).validate();
+      final ValidationResult result = await pinned(stock(const <ValidationMessage>[])).validate();
 
       expect(result.type, ValidationType.success);
       expect(result.statusInfo, '3.47.4, pinned by flutter-watchos, on macOS 26.0 25A354 darwin-arm64, locale en-US');
@@ -586,8 +600,8 @@ void main() {
       const nonStandardRemote =
           'Upstream repository https://example.com/flutter.git is not a standard remote.\n'
           'Set environment variable "FLUTTER_GIT_URL" to https://example.com/flutter.git to dismiss this error.';
-      final ValidationResult result = await PinnedFlutterValidator(
-        _FakeValidator(stock(const <ValidationMessage>[ValidationMessage.hint(nonStandardRemote)])),
+      final ValidationResult result = await pinned(
+        stock(const <ValidationMessage>[ValidationMessage.hint(nonStandardRemote)]),
       ).validate();
 
       expect(result.type, ValidationType.partial);
@@ -604,11 +618,171 @@ void main() {
         ],
         statusInfo: 'Channel stable, 3.47.4, on macOS 26.0 25A354 darwin-arm64, locale en-US',
       );
-      final ValidationResult wrapped = await PinnedFlutterValidator(_FakeValidator(result)).validate();
+      final ValidationResult wrapped = await pinned(result).validate();
 
       expect(wrapped.type, ValidationType.success);
       expect(wrapped.statusInfo, result.statusInfo);
       expect(_texts(wrapped), _texts(result));
+    });
+
+    // Stock's own check for `flutter` on PATH is dropped above; this is the
+    // one that matters here: an older checkout ahead of this one on PATH runs
+    // instead of it.
+    group('flutter-watchos on PATH', () {
+      const oldCheckout = '/Users/me/sdk/flutter-watchos/bin/flutter-watchos';
+      const otherCheckoutWarning =
+          'Warning: `flutter-watchos` on your path resolves to $oldCheckout, not to the '
+          'flutter-watchos checkout running now at /cli, so typing `flutter-watchos` runs another '
+          'checkout. Consider adding /cli/bin to the front of your path.';
+
+      testWithoutContext('another checkout is [!], named next to this one', () async {
+        final MemoryFileSystem fs = checkoutFs()..file(oldCheckout).createSync(recursive: true);
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: oldCheckout,
+        ).validate();
+
+        expect(result.type, ValidationType.partial);
+        expect(result.statusInfo, startsWith('3.47.4, pinned by flutter-watchos'));
+        expect(_texts(result).take(2), <String>[
+          'Flutter version 3.47.4 at /cli/flutter, pinned by flutter-watchos',
+          otherCheckoutWarning,
+        ]);
+        expect(result.messages[1].type, ValidationMessageType.hint);
+        // Stock's footer is about the SDK's git setup, not about PATH.
+        expect(_texts(result), isNot(contains(intentional)));
+      });
+
+      testWithoutContext('the warning follows the version line wherever it is', () async {
+        final MemoryFileSystem fs = checkoutFs()..file(oldCheckout).createSync(recursive: true);
+        const before = ValidationMessage.hint('A message stock put before the version line');
+        final ValidationResult moved = await pinned(
+          ValidationResult(ValidationType.partial, <ValidationMessage>[
+            before,
+            ...stock(const <ValidationMessage>[]).messages,
+          ], statusInfo: statusInfo),
+          fileSystem: fs,
+          onPath: oldCheckout,
+        ).validate();
+        final ValidationResult noVersionLine = await pinned(
+          ValidationResult(ValidationType.partial, const <ValidationMessage>[
+            ValidationMessage.error('Unable to determine the Flutter version'),
+          ], statusInfo: statusInfo),
+          fileSystem: fs,
+          onPath: oldCheckout,
+        ).validate();
+
+        expect(_texts(moved).take(3), <String>[
+          before.message,
+          'Flutter version 3.47.4 at /cli/flutter, pinned by flutter-watchos',
+          otherCheckoutWarning,
+        ]);
+        expect(_texts(noVersionLine).first, otherCheckoutWarning);
+      });
+
+      testWithoutContext('a link to another checkout is named by its target', () async {
+        final MemoryFileSystem fs = checkoutFs()..file(oldCheckout).createSync(recursive: true);
+        fs.link('/usr/local/bin/flutter-watchos').createSync(oldCheckout, recursive: true);
+
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: '/usr/local/bin/flutter-watchos',
+        ).validate();
+
+        expect(result.type, ValidationType.partial);
+        expect(_texts(result)[1], otherCheckoutWarning);
+      });
+
+      testWithoutContext('this checkout adds nothing, found directly or through a link', () async {
+        final MemoryFileSystem fs = checkoutFs();
+        fs.link('/usr/local/bin/flutter-watchos').createSync('/cli/bin/flutter-watchos', recursive: true);
+
+        for (final onPath in <String>['/cli/bin/flutter-watchos', '/usr/local/bin/flutter-watchos']) {
+          final ValidationResult result = await pinned(
+            stock(const <ValidationMessage>[]),
+            fileSystem: fs,
+            onPath: onPath,
+          ).validate();
+
+          expect(result.type, ValidationType.success, reason: onPath);
+          expect(_texts(result).join('\n'), isNot(contains('your path')), reason: onPath);
+        }
+      });
+
+      testWithoutContext('a checkout run through a link is compared by its real path', () async {
+        final MemoryFileSystem fs = checkoutFs();
+        fs.link('/home/u/fw').createSync('/cli', recursive: true);
+        Cache.flutterRoot = '/home/u/fw/flutter';
+
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: '/cli/bin/flutter-watchos',
+        ).validate();
+
+        expect(result.type, ValidationType.success);
+      });
+
+      testWithoutContext('a clone inside this checkout is another checkout', () async {
+        const nested = '/cli/build/flutter-watchos/bin/flutter-watchos';
+        final MemoryFileSystem fs = checkoutFs()..file(nested).createSync(recursive: true);
+
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: nested,
+        ).validate();
+
+        expect(result.type, ValidationType.partial);
+        expect(_texts(result)[1], startsWith('Warning: `flutter-watchos` on your path resolves to $nested,'));
+      });
+
+      testWithoutContext('with another stock warning, both stand and so does the footer', () async {
+        const nonStandardRemote = 'Upstream repository https://example.com/flutter.git is not a standard remote.';
+        final MemoryFileSystem fs = checkoutFs()..file(oldCheckout).createSync(recursive: true);
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[ValidationMessage.hint(nonStandardRemote)]),
+          fileSystem: fs,
+          onPath: oldCheckout,
+        ).validate();
+
+        expect(result.type, ValidationType.partial);
+        expect(_texts(result), containsAll(<String>[otherCheckoutWarning, nonStandardRemote]));
+        expect(_texts(result).last, intentional);
+      });
+
+      testWithoutContext('the PII-stripped warning names no path', () async {
+        final MemoryFileSystem fs = checkoutFs()..file(oldCheckout).createSync(recursive: true);
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: oldCheckout,
+        ).validate();
+
+        expect(
+          result.messages[1].piiStrippedMessage,
+          'Warning: `flutter-watchos` on your path resolves to another flutter-watchos checkout.',
+        );
+      });
+
+      testWithoutContext('a dangling link is named as it is', () async {
+        final MemoryFileSystem fs = checkoutFs();
+        fs.link('/opt/bin/flutter-watchos').createSync('/gone/bin/flutter-watchos', recursive: true);
+
+        final ValidationResult result = await pinned(
+          stock(const <ValidationMessage>[]),
+          fileSystem: fs,
+          onPath: '/opt/bin/flutter-watchos',
+        ).validate();
+
+        expect(result.type, ValidationType.partial);
+        expect(
+          _texts(result)[1],
+          startsWith('Warning: `flutter-watchos` on your path resolves to /opt/bin/flutter-watchos,'),
+        );
+      });
     });
   });
 
@@ -623,6 +797,20 @@ void main() {
       expect(workflow.canListEmulators, isTrue);
     });
   });
+}
+
+/// Finds [_found] as `flutter-watchos` on PATH, or nothing when it is null.
+class _FakeWhich extends FakeOperatingSystemUtils {
+  _FakeWhich(this._fileSystem, this._found);
+
+  final FileSystem _fileSystem;
+  final String? _found;
+
+  @override
+  File? which(String execName) {
+    final String? found = _found;
+    return execName == 'flutter-watchos' && found != null ? _fileSystem.file(found) : null;
+  }
 }
 
 class _FakeValidator extends DoctorValidator {
