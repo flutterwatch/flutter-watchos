@@ -16,15 +16,19 @@ import '../../src/test_flutter_command_runner.dart';
 import 'src/words.dart';
 
 /// The commands whose help has stock's port options.
-const List<String> _portCommands = <String>['run', 'drive', 'attach', 'debug-adapter'];
+const List<String> _portCommands = <String>['run', 'drive', 'attach', 'debug-adapter', 'test'];
 
-/// The phrases each command's help has; `debug-adapter` has only
+/// The commands whose only port option is `--dds-port`.
+const Set<String> _ddsPortOnly = <String>{'debug-adapter', 'test'};
+
+/// The phrases each command's help has; `debug-adapter` and `test` have only
 /// `--dds-port`.
 const Map<String, List<String>> _phrases = <String, List<String>>{
   'run': <String>['random unused port', 'random unused host port'],
   'drive': <String>['random unused port', 'random unused host port'],
   'attach': <String>['random unused port', 'random unused host port'],
   'debug-adapter': <String>['random unused port'],
+  'test': <String>['random unused port'],
 };
 
 void main() {
@@ -100,7 +104,7 @@ void main() {
       expect(ours, isA<UnusedPortHelp>());
       for (final option in <String>[
         'dds-port',
-        if (name != 'debug-adapter') 'host-vmservice-port',
+        if (!_ddsPortOnly.contains(name)) 'host-vmservice-port',
       ]) {
         expect(
           ours.argParser.options[option]!.help,

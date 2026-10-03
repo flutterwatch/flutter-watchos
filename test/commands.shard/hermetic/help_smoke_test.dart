@@ -57,13 +57,6 @@ const List<String> _registered = <String>[
 /// The commands whose `-v --help` shows more options, which is checked too.
 const List<String> _verboseHelpCommands = <String>['run', 'drive', 'attach', 'test'];
 
-/// Why a command's help may still have a forbidden word, until its join.
-const Map<String, String> _wordJoins = <String, String>{
-  'test':
-      "J-port-help: stock test's --dds-port help is reworded once "
-      'WatchosTestCommand takes UnusedPortHelp (lib/commands/port_help.dart).',
-};
-
 Set<String> _names(Iterable<FlutterCommand> commands) =>
     commands.map((FlutterCommand command) => command.name).toSet();
 
@@ -180,15 +173,9 @@ void main() {
           expect(logger.errorText, isEmpty);
         }, overrides: helpOverrides());
 
-        final String? join = _wordJoins[name];
-        testUsingContext(
-          '$name $flags has no forbidden word${join == null ? '' : ' (skipped until $join)'}',
-          () async {
-            expect(forbiddenWordsIn(await help(name, verboseHelp: verboseHelp)), isEmpty);
-          },
-          overrides: helpOverrides(),
-          skip: join != null,
-        );
+        testUsingContext('$name $flags has no forbidden word', () async {
+          expect(forbiddenWordsIn(await help(name, verboseHelp: verboseHelp)), isEmpty);
+        }, overrides: helpOverrides());
       }
     }
   });
