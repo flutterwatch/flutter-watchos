@@ -5,92 +5,30 @@
 import 'package:flutter/widgets.dart';
 
 import 'scroll_physics.dart';
-import 'watchos_ffi_bindings.dart';
-import 'watchos_info_platform.dart' as platform;
 
-/// Crown scroll sensitivity, mirroring the options native (SwiftUI)
-/// developers get from `.digitalCrownRotation(sensitivity:)`.
+/// The key of the mark [WatchCrownScroll] puts above its child; the crown
+/// runtime the flutter-watchos CLI compiles into every watch app looks for
+/// it.
+const String _crownScrollMarker = 'flutter_watchos.crownScroll';
+
+/// Chooses how the Digital Crown treats the scrollables in [child], and
+/// gives them the native watchOS feel under the finger as well.
 ///
-/// The value scales how far one unit of crown rotation scrolls: [high] is the
-/// system default; [medium] and [low] need progressively more rotation for
-/// the same travel — for fine positioning in dense content.
-enum WatchCrownSensitivity {
-  /// Most rotation per scroll distance — precise, slow travel.
-  low(0.25),
-
-  /// Between [low] and [high].
-  medium(0.5),
-
-  /// The native default (matches a watchOS `List`).
-  high(1.0);
-
-  const WatchCrownSensitivity(this.multiplier);
-
-  /// The delta multiplier the engine applies in scroll mode.
-  final double multiplier;
-}
-
-/// Options for the Digital Crown's **scroll** mode — the same knobs native
-/// watchOS developers get on `.digitalCrownRotation`.
+/// Every watch app built with flutter-watchos scrolls with the crown the way
+/// a native scroll view does, without this widget: a hidden native scroll
+/// view owns the crown, so watchOS itself supplies the acceleration, the
+/// momentum, the detent haptics, the spring at either end and the crown
+/// scroll indicator, and the content follows it exactly. The crown drives
+/// the vertical scrollable that fills most of the screen in the frontmost
+/// route, among those actually drawn (not a hidden tab, not under a dialog).
 ///
-/// The crown's scroll motion (acceleration, fling momentum, detent ticks) is
-/// produced by the engine; these settings tell it how to behave. They take
-/// effect from the next crown movement and apply app-wide:
+/// Use this widget for the cases that rule does not decide the way an app
+/// wants:
 ///
-/// ```dart
-/// WatchCrownScrolling.sensitivity = WatchCrownSensitivity.medium;
-/// WatchCrownScrolling.detentHaptics = false; // silent scrolling
-/// ```
-///
-/// Raw crown input ([WatchCrown]) is unaffected — raw consumers always
-/// receive unscaled rotation. On non-watchOS platforms this is a safe no-op.
-abstract final class WatchCrownScrolling {
-  static WatchOSNativeBindings? _bindings;
-  static WatchCrownSensitivity _sensitivity = WatchCrownSensitivity.high;
-
-  static WatchOSNativeBindings get _native => _bindings ??= platform.isWatch
-      ? WatchOSNativeBindings()
-      : WatchOSNativeBindings.forTesting();
-
-  /// Test seam: inject fake bindings and reset to defaults.
-  @visibleForTesting
-  static set bindingsOverride(WatchOSNativeBindings? bindings) {
-    _bindings = bindings;
-    _sensitivity = WatchCrownSensitivity.high;
-  }
-
-  /// How much the content scrolls per unit of crown rotation.
-  static WatchCrownSensitivity get sensitivity => _sensitivity;
-
-  static set sensitivity(WatchCrownSensitivity value) {
-    _sensitivity = value;
-    _native.crownScrollMultiplier = value.multiplier;
-  }
-
-  /// Whether the detent-click haptic plays as the content scrolls
-  /// (the native `isHapticFeedbackEnabled`). Defaults to `true`.
-  static bool get detentHaptics => _native.crownDetentHaptics;
-
-  static set detentHaptics(bool enabled) {
-    _native.crownDetentHaptics = enabled;
-  }
-}
-
-/// Gives the scrollables in [child] the native watchOS feel.
-///
-/// The Digital Crown's scroll motion, acceleration and detent ticks are
-/// produced by the engine. This widget supplies the piece that can only come
-/// from the Flutter side: it installs [WatchScrollPhysics] for the subtree
-/// (via [ScrollConfiguration]), so content stops at its end with the small,
-/// live, firm bounce a native watchOS 26 list has, instead of the
-/// iPhone-style deep elastic stretch.
-///
-/// Note there is deliberately NO haptic at the list edge: native watchOS 26
-/// plays none — the end of content is communicated by the rubber-band alone.
-/// An app that wants its own edge cue can listen for its scrollable's metrics
-/// going out of range and call `WatchHaptics` itself.
-///
-/// Wrap a scrollable subtree (commonly a whole screen or the app body):
+///  * choose a scrollable, for example a list that shares the screen with a
+///    larger one: the outermost vertical scrollable in [child] is preferred;
+///  * keep the crown off the scrollables in [child] with [enabled] false;
+///  * hide watchOS's scroll indicator with [scrollIndicator] false.
 ///
 /// ```dart
 /// WatchCrownScroll(
@@ -98,33 +36,55 @@ abstract final class WatchCrownScrolling {
 /// )
 /// ```
 ///
-/// Scrollables that pass an explicit `physics:` keep it (set
-/// [nativePhysics] to false to opt the subtree out entirely). On non-watchOS
-/// platforms this simply applies the firmer physics, so it is harmless in a
-/// cross-platform tree.
+/// Wrapping a whole app applies to every page; the same rule then picks the
+/// list on each. It also gives the subtree [WatchScrollPhysics] (via
+/// [ScrollConfiguration]): a finger stretches, releases and bounces as on a
+/// native scroll view. Scrollables that pass an explicit `physics:` keep it;
+/// set [nativePhysics] to false to keep the ambient physics for the whole
+/// subtree. On other platforms this only applies the physics.
 class WatchCrownScroll extends StatelessWidget {
-  /// Creates a native-feel wrapper around [child].
+  /// Applies the crown options to the scrollables in [child].
   const WatchCrownScroll({
     super.key,
     required this.child,
+    this.enabled = true,
+    this.scrollIndicator = true,
     this.nativePhysics = true,
   });
 
-  /// The subtree containing the scrollable(s) to add native feel to.
+  /// The subtree containing the scrollables.
   final Widget child;
 
+  /// Whether the crown may drive the scrollables in [child]. Defaults to
+  /// true, which also prefers the outermost one over the rest of the screen.
+  /// False keeps the crown off all of them; it then drives another
+  /// scrollable, or nothing.
+  final bool enabled;
+
+  /// Whether watchOS shows its scroll indicator by the crown while the
+  /// scrollable moves. Defaults to true, as on a native scroll view.
+  final bool scrollIndicator;
+
   /// Whether to install [WatchScrollPhysics] for the subtree. Defaults to
-  /// true; set false to keep Flutter's default physics.
+  /// true; set false to keep the ambient physics.
   final bool nativePhysics;
 
   @override
   Widget build(BuildContext context) {
+    final Widget marked = MetaData(
+      metaData: <String, Object>{
+        _crownScrollMarker: true,
+        'enabled': enabled,
+        'scrollIndicator': scrollIndicator,
+      },
+      child: child,
+    );
     if (!nativePhysics) {
-      return child;
+      return marked;
     }
     return ScrollConfiguration(
       behavior: const WatchScrollBehavior(),
-      child: child,
+      child: marked,
     );
   }
 }

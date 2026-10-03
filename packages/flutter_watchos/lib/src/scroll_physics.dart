@@ -6,23 +6,30 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
-/// Scroll physics tuned to feel like a native watchOS list.
+/// Scroll physics that move like a native watchOS scroll view under the
+/// finger.
 ///
-/// Flutter's default [BouncingScrollPhysics] is calibrated for iPhone: the
-/// content can be dragged far past its edge (a large elastic stretch) and a
-/// fling bounces deep before settling. Native watchOS is much firmer — the
-/// crown or a drag can pull content only a *small* distance past the edge,
-/// and a fling ends in a quick, shallow bounce that settles right at the end
-/// of the list.
+/// Measured on an Apple Watch Series 10 (46 mm, watchOS 26) against a native
+/// SwiftUI `ScrollView`, frame by frame:
 ///
-/// [WatchScrollPhysics] reproduces that:
+///  * **Rubber band** — past an edge the content follows the finger at 0.55
+///    of its travel, less the further it is stretched: UIKit's curve
+///    `c·x·d / (d + c·x)` with `c` = 0.55, `x` the finger's distance past the
+///    edge and `d` the viewport. The finger can hold it there.
+///  * **Edge spring** — a critically damped spring of 11 rad/s brings the
+///    content back, both when the finger lets go of a stretch and when a
+///    fling runs into the edge: the overscroll follows `e^(-11t)·(x0 + v·t)`
+///    from where it is (`x0`) with the velocity it has (`v`). A held stretch
+///    is let go with the finger's velocity, so a still finger lets it fall
+///    straight back and a flick outward carries it further first.
+///  * **Fling** — UIKit's normal deceleration (0.998 per millisecond), which
+///    [BouncingScrollPhysics] already uses, moving in the first frame after
+///    the finger lifts. A flick made during a fling starts at the finger's
+///    own velocity: nothing carries over, unlike iOS.
 ///
-///  * **Hard stretch cap** — overscroll resistance rises steeply and reaches
-///    infinity at [maxStretchFraction] of the viewport (default 12%, ≈30
-///    logical points on a 46 mm watch), so no amount of crown turning can drag
-///    the list further than a native one.
-///  * **Firm, fast settle** — a stiffer, slightly overdamped spring snaps the
-///    content back to the edge without the phone-style deep wobble.
+/// The Digital Crown does not go through these physics when the content is
+/// in a [WatchCrownScroll]: the native scroll view that owns the crown moves
+/// it, edges included.
 ///
 /// Applied automatically by [WatchCrownScroll]; for app-wide use install
 /// [WatchScrollBehavior] or pass the physics explicitly:
@@ -31,160 +38,156 @@ import 'package:flutter/widgets.dart';
 /// ListView(physics: const WatchScrollPhysics(), children: [...])
 /// ```
 ///
-/// On non-watch platforms it simply behaves as a firmer bouncing physics, so
-/// it is safe in cross-platform code.
+/// On other platforms it behaves as iOS-style bouncing physics, so it is safe
+/// in cross-platform code.
 class WatchScrollPhysics extends BouncingScrollPhysics {
   /// Creates watch-native scroll physics.
-  const WatchScrollPhysics({
-    this.maxStretchFraction = 0.12,
-    this.edgeRelaxation = 0.3,
-    super.parent,
-  });
+  const WatchScrollPhysics({super.parent});
 
-  /// The maximum overscroll, as a fraction of the viewport, that a drag or
-  /// crown turn can reach. Resistance grows steeply toward this limit and the
-  /// content cannot be pulled past it.
-  final double maxStretchFraction;
+  /// UIKit's rubber-band constant: how much of the finger's travel the
+  /// content follows right at the edge.
+  static const double rubberBand = 0.55;
 
-  /// Fraction of the current overscroll released back toward the edge on
-  /// every input event while tensioning. This is what keeps the edge ALIVE
-  /// under sustained crown input, like the native home screen: instead of
-  /// freezing at the stretch cap (a dead zone where further rotation is
-  /// ignored), the stretch settles at an equilibrium proportional to how hard
-  /// the crown is being turned — slow turning holds a few points, a hard turn
-  /// holds near the cap, and the fluctuation of real crown deltas makes it
-  /// visibly breathe. When input stops, the regular spring settles it.
-  final double edgeRelaxation;
+  /// The edge spring's natural frequency, in radians per second (critically
+  /// damped).
+  static const double edgeFrequency = 11.0;
 
   @override
   WatchScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return WatchScrollPhysics(
-      maxStretchFraction: maxStretchFraction,
-      edgeRelaxation: edgeRelaxation,
-      parent: buildParent(ancestor),
-    );
+    return WatchScrollPhysics(parent: buildParent(ancestor));
   }
 
-  /// The native-watch overscroll resistance curve.
-  ///
-  /// Same shape as the iOS curve, but compressed so friction hits zero at
-  /// [maxStretchFraction] of the viewport instead of at a full viewport —
-  /// that zero is what turns the soft iPhone stretch into a hard watch limit
-  /// (see [BouncingScrollPhysics.applyPhysicsToUserOffset]: zero friction
-  /// means further input moves the content not at all).
+  /// The rubber band's slope at a stretch of `overscrollFraction` of the
+  /// viewport: `0.55 · (1 − f)²`, the derivative of UIKit's curve.
   @override
   double frictionFactor(double overscrollFraction) {
-    final double fraction =
-        (overscrollFraction / maxStretchFraction).clamp(0.0, 1.0).toDouble();
-    return 0.52 * math.pow(1 - fraction, 2);
+    final double f = overscrollFraction.clamp(0.0, 1.0).toDouble();
+    return rubberBand * (1 - f) * (1 - f);
   }
 
-  /// Reworks overscroll input handling for crown-scale events. Two stock
-  /// assumptions break on the watch:
-  ///
-  ///  1. Stock physics applies NO friction to an input event that STARTS in
-  ///     range. Finger drags deliver a few pixels per event, so crossing the
-  ///     edge unfrictioned is invisible on a phone — but a single crown sample
-  ///     can move much more than a finger drag, and one sample crossing the
-  ///     edge would plant the content most of a screen deep with no
-  ///     resistance. Such an event is split at the edge: the in-range part
-  ///     moves freely, the excess is friction-integrated.
-  ///
-  ///  2. Stock friction freezes at the stretch limit — a dead zone where the
-  ///     crown visibly stops doing anything. The native edge stays live: while
-  ///     tensioning, each event both pushes (frictioned) and relaxes the
-  ///     stretch back by [edgeRelaxation], reaching a breathing equilibrium
-  ///     that tracks how hard the crown is turned (never past the cap, never
-  ///     dead).
+  /// Moves the content by `offset` of finger travel, following the rubber
+  /// band exactly instead of stepwise: the stretch is a function of how far
+  /// past the edge the finger is, so any event size lands on the curve (a
+  /// fast drag's large events included), stretching or easing back alike.
   @override
   double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
     if (offset == 0) {
       return 0;
     }
-    if (!position.outOfRange) {
-      // In-range travel available before the edge in the travel direction
-      // (positive offset moves pixels toward min, negative toward max).
-      final double free = offset > 0
-          ? position.pixels - position.minScrollExtent
-          : position.maxScrollExtent - position.pixels;
-      if (offset.abs() > free) {
-        final double excess = offset.abs() - free;
-        return offset.sign *
-            (free + _integrateFriction(position.viewportDimension, 0, excess));
-      }
+    final double d = position.viewportDimension;
+    if (d <= 0) {
       return offset;
     }
-
-    final double overscrollPastStart =
+    // Positive offset moves pixels toward min (content down).
+    final double pastStart =
         math.max(position.minScrollExtent - position.pixels, 0.0);
-    final double overscrollPastEnd =
+    final double pastEnd =
         math.max(position.pixels - position.maxScrollExtent, 0.0);
-    final double overscrollPast =
-        math.max(overscrollPastStart, overscrollPastEnd);
-    final bool easing = (overscrollPastStart > 0.0 && offset < 0.0) ||
-        (overscrollPastEnd > 0.0 && offset > 0.0);
-    if (easing) {
-      // Turning back toward the content: stock behavior reads fine.
-      return super.applyPhysicsToUserOffset(position, offset);
+    if (pastStart == 0 && pastEnd == 0) {
+      // In range: one to one up to the edge, rubber band beyond it.
+      final double room = offset > 0
+          ? position.pixels - position.minScrollExtent
+          : position.maxScrollExtent - position.pixels;
+      if (offset.abs() <= room) {
+        return offset;
+      }
+      return offset.sign * (room + _stretchFor(offset.abs() - room, d));
     }
-
-    // Tensioning while already stretched: push out (frictioned from the
-    // current stretch) minus the live relaxation pull-back. Net can be
-    // negative — the stretch shrinking under weak input IS the alive feel —
-    // but never snaps past the edge itself.
-    final double pushed = _integrateFriction(
-        position.viewportDimension, overscrollPast, offset.abs());
-    double net = pushed - overscrollPast * edgeRelaxation;
-    if (net < -overscrollPast) {
-      net = -overscrollPast;
+    // Out of range: where the finger is past the edge, moved by the event.
+    final bool atStart = pastStart > 0;
+    final double stretch = atStart ? pastStart : pastEnd;
+    // Outward at the start is positive offset; at the end, negative.
+    final double outward = atStart ? offset : -offset;
+    final double finger = _fingerFor(stretch, d) + outward;
+    if (finger >= 0) {
+      return (atStart ? 1 : -1) * (_stretchFor(finger, d) - stretch);
     }
-    return offset.sign * net;
+    // Eased all the way back and on into the content, which moves one to
+    // one.
+    return (atStart ? 1 : -1) * (finger - stretch);
   }
 
-  /// Overscroll produced by `input` pixels of user movement starting at
-  /// `startOverscroll` of existing stretch, integrating [frictionFactor] as
-  /// the stretch grows. Bounded by the stretch cap (friction reaches zero
-  /// there).
-  double _integrateFriction(
-      double viewport, double startOverscroll, double input) {
-    double over = startOverscroll;
-    double moved = 0;
-    const int steps = 24;
-    final double h = input / steps;
-    for (int i = 0; i < steps; i++) {
-      final double step = h * frictionFactor(over / viewport);
-      over += step;
-      moved += step;
-    }
-    return moved;
+  /// Content stretch for a finger `x` past the edge: `c·x·d / (d + c·x)`.
+  static double _stretchFor(double x, double d) =>
+      rubberBand * x * d / (d + rubberBand * x);
+
+  /// The inverse: how far past the edge the finger is for a `stretch`.
+  static double _fingerFor(double stretch, double d) {
+    final double s = math.min(stretch, d * 0.999);
+    return s * d / (rubberBand * (d - s));
   }
 
-  /// A stiff, slightly overdamped spring: the fling bounce is shallow and the
-  /// settle is quick, with no wobble, like a native watch list hitting its
-  /// end. (Flutter's default scroll spring is calibrated for phone-sized
-  /// travel and lets a hard fling overshoot by hundreds of pixels.)
+  /// Critically damped at [edgeFrequency]: `mass` 1, `stiffness` ω²,
+  /// `damping` 2ω.
   @override
-  SpringDescription get spring => SpringDescription.withDampingRatio(
-      mass: 0.5, stiffness: 800.0, ratio: 1.15);
+  SpringDescription get spring => const SpringDescription(
+        mass: 1,
+        stiffness: edgeFrequency * edgeFrequency,
+        damping: 2 * edgeFrequency,
+      );
 
-  /// Phone flings reach 8000 px/s — several times a watch screen per frame.
-  /// Native watch travel per flick is shorter, and this cap also bounds how
-  /// hard a fling can slam into the edge spring (i.e. the bounce depth).
-  @override
-  double get maxFlingVelocity => 4000.0;
-
-  /// Repeated crown/wheel bursts stack momentum ([carriedMomentum] alone
-  /// allows up to 40 000 px/s) and would blow through the edge spring for a
-  /// deep phone-style bounce. Clamp the ballistic entry velocity so the
-  /// bounce stays shallow no matter how the fling was accumulated.
+  /// A finger letting go of a stretch starts the edge spring so the
+  /// overscroll runs `e^(-ωt)·(x0 + v·t)`: in spring terms, an initial
+  /// velocity of `v − ω·x0`. A fling that reaches the edge in flight crosses
+  /// it with `x0` = 0, which [BouncingScrollSimulation] already hands the
+  /// spring. A ballistic restarted for any other reason (new dimensions in
+  /// the middle of the spring) carries on with the content's own velocity.
+  ///
+  /// A native release moves in the first frame after the finger lifts,
+  /// while a ballistic's first frame shows where it starts; a flick
+  /// therefore runs one frame (1/60 s) ahead.
   @override
   Simulation? createBallisticSimulation(
       ScrollMetrics position, double velocity) {
-    return super.createBallisticSimulation(
-      position,
-      velocity.clamp(-maxFlingVelocity, maxFlingVelocity).toDouble(),
-    );
+    final bool release = _isRelease(position);
+    double v = velocity;
+    if (release) {
+      if (position.pixels < position.minScrollExtent) {
+        v -= edgeFrequency * (position.pixels - position.minScrollExtent);
+      } else if (position.pixels > position.maxScrollExtent) {
+        v -= edgeFrequency * (position.pixels - position.maxScrollExtent);
+      }
+    }
+    final Simulation? simulation = super.createBallisticSimulation(position, v);
+    if (simulation == null || !release || velocity == 0) {
+      return simulation;
+    }
+    return _LeadSimulation(simulation, 1 / 60);
   }
+
+  /// Whether this ballistic is a finger's release: the position is still in
+  /// the drag (or hold) that ends with it. Bare metrics count as one.
+  static bool _isRelease(ScrollMetrics position) {
+    if (position is! ScrollPosition) {
+      return true;
+    }
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    final ScrollActivity? activity = position.activity;
+    return activity is DragScrollActivity || activity is HoldScrollActivity;
+  }
+
+  /// No iOS momentum build-up: a native watchOS scroll view launches a
+  /// flick made during a fling at the finger's own velocity (measured on a
+  /// Series 10).
+  @override
+  double carriedMomentum(double existingVelocity) => 0.0;
+}
+
+/// [inner], [lead] seconds ahead.
+class _LeadSimulation extends Simulation {
+  _LeadSimulation(this.inner, this.lead) : super(tolerance: inner.tolerance);
+
+  final Simulation inner;
+  final double lead;
+
+  @override
+  double x(double time) => inner.x(time + lead);
+
+  @override
+  double dx(double time) => inner.dx(time + lead);
+
+  @override
+  bool isDone(double time) => inner.isDone(time + lead);
 }
 
 /// A [ScrollBehavior] that gives every descendant scrollable the native

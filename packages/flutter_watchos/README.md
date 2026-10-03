@@ -32,14 +32,14 @@ channels, no async.
   expectation). It reflects SwiftUI's `\.isLuminanceReduced`, which is more
   precise than `AppLifecycleState.inactive` — that also fires for notification
   banners and Control Center.
-- **Digital Crown** — `WatchCrownScroll` gives scrollables the native feel:
-  watch-tuned scroll physics (`WatchScrollPhysics` — a firm, live, shallow
-  edge bounce instead of the iPhone-style deep stretch; no edge haptic, just
-  like native watchOS 26). `WatchCrownScrolling` exposes the same knobs
-  native developers get (`sensitivity`, detent haptics on/off). `WatchCrown`
-  gives the crown as a *raw* input (a rotation stream, or a per-frame
-  `drain()`) for games, value pickers, and custom controls — without it
-  driving scroll.
+- **Digital Crown** — every app built with flutter-watchos scrolls with the
+  crown the way a native scroll view does, with no code: watchOS itself
+  supplies the acceleration, the momentum, the detent haptics, the spring at
+  either end and the scroll indicator. `WatchCrownScroll` chooses the list
+  the crown drives when a screen has several, and `WatchScrollPhysics` gives
+  the finger a native scroll view's feel as well. `WatchCrown` gives the
+  crown as a *raw* input (a rotation stream, or a per-frame `drain()`) for
+  games, value pickers, and custom controls — without it driving scroll.
 - **Platform views** — `WatchPlatformView` embeds a native SwiftUI view
   (a `Gauge`, a `Toggle`, a map, a video surface) at its slot in the Flutter
   layout, composited at its position in paint order like any other content.
@@ -95,25 +95,35 @@ An app that would rather blank than dim opts out in its `Info.plist` with
 
 ### Digital Crown
 
-By default the crown scrolls. Wrap a scrollable (usually a whole screen) to
-give it the native watch feel — watch-tuned physics with a firm, live,
-shallow edge bounce (and, matching native watchOS 26, no haptic at the list
-edges):
+The crown scrolls with no code. A watch app built with flutter-watchos keeps
+a hidden native scroll view behind the Flutter content, shaped like the list
+the crown drives, so watchOS supplies the acceleration, the momentum after a
+flick, the detent haptics, the spring at either end and the crown scroll
+indicator, and the list shows exactly where that view is. The crown drives
+the vertical scrollable that fills most of the screen in the frontmost route,
+among those actually on screen: not a hidden tab, not a list under a dialog.
+
+`WatchCrownScroll` settles the cases that rule does not decide your way:
 
 ```dart
+// Prefer this list, for example one that shares the screen with a bigger one.
 WatchCrownScroll(child: ListView(children: const [/* ... */]));
+
+// Keep the crown off these lists.
+WatchCrownScroll(enabled: false, child: ...);
+
+// No scroll indicator by the crown (wrap the app to hide it everywhere).
+WatchCrownScroll(scrollIndicator: false, child: ...);
 ```
 
-App-wide instead: `MaterialApp(scrollBehavior: const WatchScrollBehavior())`,
-or pass `physics: const WatchScrollPhysics()` to a single scrollable.
-
-Scroll behavior has the same options native (SwiftUI) developers get on
-`.digitalCrownRotation` — they apply app-wide, from the next crown movement:
-
-```dart
-WatchCrownScrolling.sensitivity = WatchCrownSensitivity.medium; // low/medium/high
-WatchCrownScrolling.detentHaptics = false; // silent scrolling
-```
+`WatchCrownScroll` also gives its subtree `WatchScrollPhysics`, which moves
+under the finger like a native scroll view: UIKit's rubber band at the edge,
+and the same spring as the crown's when a stretch is let go or a fling runs
+into the end. App-wide instead: `MaterialApp(scrollBehavior: const
+WatchScrollBehavior())`, or pass `physics: const WatchScrollPhysics()` to a
+single scrollable. Without either, a drag uses Flutter's iOS rubber band,
+which resists a little differently; the release and the bounce at the end are
+native either way.
 
 For a game or custom control, take the crown as **raw** input instead. While a
 `WatchCrown` subscription (or `enable()`) is active, the crown stops scrolling

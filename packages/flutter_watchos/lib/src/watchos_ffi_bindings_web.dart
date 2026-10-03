@@ -11,9 +11,8 @@
 /// and the package's other APIs call it for them. It is public so that tests
 /// can replace it. Extend it through [WatchOSNativeBindings.forTesting],
 /// override the members the code under test reads, and pass the fake to a
-/// `bindingsOverride` setter: `WatchOSInfo`, `WatchCrownScrolling`,
-/// `WatchAlwaysOn`, `WatchPlatformView` and `WatchCrown.instance` each have
-/// one. In a test on the Dart VM, the members of a `forTesting` object that
+/// `bindingsOverride` setter: `WatchOSInfo`, `WatchAlwaysOn`,
+/// `WatchPlatformView` and `WatchCrown.instance` each have one. In a test on the Dart VM, the members of a `forTesting` object that
 /// read the device, play a haptic or report memory throw unless the fake
 /// overrides them; the other members return the defaults listed below.
 ///
@@ -97,21 +96,6 @@ class WatchOSNativeBindings {
   /// Returns the raw crown rotation gathered since the last call, and starts
   /// counting again from 0. Always 0 on the Web.
   double consumeCrownDelta() => 0.0;
-
-  /// The multiplier the engine applies to each crown movement when the crown
-  /// scrolls. 1.0 on the Web.
-  double get crownScrollMultiplier => 1.0;
-
-  /// Sets the crown scroll multiplier. The native side ignores a value that
-  /// is not positive. Does nothing on the Web.
-  set crownScrollMultiplier(double multiplier) {}
-
-  /// Whether the crown clicks at each detent while it scrolls. True on the
-  /// Web, the watchOS default.
-  bool get crownDetentHaptics => true;
-
-  /// Turns the crown's detent click on or off. Does nothing on the Web.
-  set crownDetentHaptics(bool enabled) {}
 
   /// Whether the running engine can show platform views. False on the Web.
   bool get supportsPlatformViews => false;

@@ -1,7 +1,29 @@
 ## 0.1.0
 
-The package's code and API are the same as in the last published build.
-The example and the API docs changed:
+The Digital Crown now scrolls the way it scrolls a native watchOS scroll
+view, in every app, and `WatchScrollPhysics` moves like a native scroll view
+under the finger, as measured on a watch. The crown API changes with it:
+
+* **The crown needs no code.** An app built with flutter-watchos 0.1.0
+  scrolls with a hidden native scroll view behind the Flutter content, so
+  watchOS supplies the acceleration, the momentum, the detent haptics, the
+  spring at either end and the crown scroll indicator. The crown drives the
+  vertical scrollable that fills most of the screen in the frontmost route.
+* **`WatchCrownScroll`** now chooses that scrollable, for a screen with more
+  than one, and still gives its subtree `WatchScrollPhysics`. `enabled: false`
+  keeps the crown off the scrollables under it, and `scrollIndicator: false`
+  hides the crown scroll indicator.
+* **`WatchScrollPhysics`** follows a native scroll view: UIKit's rubber band
+  (0.55 of the finger's travel at the edge), a critically damped spring at
+  either end, UIKit's fling deceleration. The `maxStretchFraction` and
+  `edgeRelaxation` parameters are removed.
+* **`WatchCrownScrolling` and `WatchCrownSensitivity` are removed.** A native
+  scroll view's crown sensitivity and detent haptics belong to the system,
+  so there is nothing left for them to set. Remove the calls.
+* **`WatchCrown`** is unchanged: while an app reads the raw crown, the crown
+  goes to it and does not scroll.
+
+The example and the API docs changed too:
 
 * **Example:** the home list no longer sits inside a `SafeArea`. It covers
   the whole screen and adds the safe-area insets to its padding, so its rows
@@ -10,8 +32,9 @@ The example and the API docs changed:
 * **Docs:** every public member now has API documentation, the Web side of
   `WatchOSNativeBindings` included.
 
-An app already on the last published build needs no change. An app on an
-older build should check two things:
+An app on the last published build removes its `WatchCrownScrolling` calls
+and any `WatchScrollPhysics` arguments. An app on an older build also checks
+two things:
 
 * **Web only:** `extension FlutterWatchosPlatformExt on Platform` exists only
   where `dart:io` does, so Web code cannot use it. Code that also builds for

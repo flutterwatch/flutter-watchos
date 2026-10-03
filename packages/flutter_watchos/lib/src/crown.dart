@@ -32,9 +32,9 @@ class CrownRotationEvent {
 /// Direct access to the Apple Watch Digital Crown as an input device — instead
 /// of as scroll.
 ///
-/// By default the watch host forwards crown rotation to Flutter as trackpad
-/// scroll, so lists scroll naturally (see `WatchCrownScroll`). Apps that need
-/// the crown as a *control* — a game, a value picker, a custom gauge — use
+/// By default the crown scrolls the app's list the way it scrolls a native
+/// scroll view (see `WatchCrownScroll`). Apps that need the crown as a
+/// *control* — a game, a value picker, a custom gauge — use
 /// [WatchCrown] to switch it into **raw/exclusive** mode: while active, the
 /// crown stops driving scroll and its rotation is delivered here.
 ///

@@ -114,28 +114,6 @@ FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_push_delta(double delta);
 /// (0 when idle). Called from Dart per frame / per game tick.
 FLUTTER_WATCHOS_EXPORT double flutter_watchos_crown_consume_delta(void);
 
-// --- Crown scroll options (native parity) -----------------------------------
-// SwiftUI gives native developers `.digitalCrownRotation(sensitivity:)` and
-// `isHapticFeedbackEnabled`. These flags give Dart the same knobs for crown
-// scroll mode: Dart sets them (FFI/UI thread) via WatchCrownScrolling, and
-// they are read per crown sample on the main thread. Raw mode is unaffected
-// (raw consumers get the unscaled delta).
-
-/// Scroll-sensitivity multiplier applied to each crown delta
-/// (1.0 = default/high, 0.5 ≈ medium, 0.25 ≈ low).
-FLUTTER_WATCHOS_EXPORT double flutter_watchos_crown_scroll_multiplier(void);
-
-/// Sets the scroll-sensitivity multiplier. Non-positive values are ignored.
-FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_set_scroll_multiplier(
-    double multiplier);
-
-/// Whether the crown detent-click haptic plays during scroll (1 = on, default).
-FLUTTER_WATCHOS_EXPORT int32_t flutter_watchos_crown_detent_haptics(void);
-
-/// Enables/disables the crown detent-click haptic (0 = off, 1 = on).
-FLUTTER_WATCHOS_EXPORT void flutter_watchos_crown_set_detent_haptics(
-    int32_t enabled);
-
 #pragma mark - Memory
 
 // watchOS enforces a hard per-process memory limit and kills the app with

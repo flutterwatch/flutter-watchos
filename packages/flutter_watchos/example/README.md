@@ -8,7 +8,7 @@ flutter-watchos run
 ```
 
 The home screen is itself a `WatchCrownScroll` list, so scrolling it with the
-Digital Crown already demonstrates the native scroll feel. Below is what each
+Digital Crown or a finger already demonstrates the native scroll feel. Below is what each
 part shows and the API behind it.
 
 ## Platform detection & device info
@@ -63,10 +63,12 @@ WatchHaptics.click();                        // shorthand for the selection tick
 
 ## Digital Crown — scroll mode
 
-`WatchCrownScroll` wraps a scrollable to give it the native watch feel:
-watch-tuned physics with a firm, shallow edge bounce (and, matching native
-watchOS 26, **no** haptic at the list edges — the rubber-band alone signals the
-end).
+Every watch app scrolls with the crown the way a native scroll view does,
+with no code: watchOS supplies the acceleration, the momentum, the detent
+haptics, the spring at either end and the scroll indicator. `WatchCrownScroll`
+marks the scrollable the crown drives (the home list here) and gives its
+subtree `WatchScrollPhysics`, so a finger stretches, releases and bounces as
+on a native scroll view too.
 
 ```dart
 WatchCrownScroll(
@@ -80,15 +82,6 @@ App-wide instead of per-subtree:
 MaterialApp(scrollBehavior: const WatchScrollBehavior(), /* ... */);
 // or, on a single scrollable:
 ListView(physics: const WatchScrollPhysics(), children: const [/* ... */]);
-```
-
-The **crown sensitivity** row and the **detent ticks** button are the same
-knobs native (SwiftUI) developers get on `.digitalCrownRotation`. They apply
-app-wide from the next crown movement:
-
-```dart
-WatchCrownScrolling.sensitivity = WatchCrownSensitivity.medium; // low/medium/high
-WatchCrownScrolling.detentHaptics = false;                      // silent scroll
 ```
 
 ## Digital Crown — raw mode (`crown demo →`)

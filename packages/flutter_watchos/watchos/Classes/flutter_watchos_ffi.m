@@ -215,40 +215,6 @@ double flutter_watchos_crown_consume_delta(void) {
     return value;
 }
 
-// --- Crown scroll options (native parity) -----------------------------------
-// Dart sets these (FFI/UI thread); they are read per crown sample on the
-// main thread. Same lock discipline as the raw crown bridge.
-static double s_crown_scroll_multiplier = 1.0;
-static int32_t s_crown_detent_haptics = 1;
-
-double flutter_watchos_crown_scroll_multiplier(void) {
-    os_unfair_lock_lock(&s_crown_lock);
-    double value = s_crown_scroll_multiplier;
-    os_unfair_lock_unlock(&s_crown_lock);
-    return value;
-}
-
-void flutter_watchos_crown_set_scroll_multiplier(double multiplier) {
-    if (!(multiplier > 0.0)) return;  // also rejects NaN
-    os_unfair_lock_lock(&s_crown_lock);
-    s_crown_scroll_multiplier = multiplier;
-    os_unfair_lock_unlock(&s_crown_lock);
-}
-
-int32_t flutter_watchos_crown_detent_haptics(void) {
-    os_unfair_lock_lock(&s_crown_lock);
-    int32_t value = s_crown_detent_haptics;
-    os_unfair_lock_unlock(&s_crown_lock);
-    return value;
-}
-
-void flutter_watchos_crown_set_detent_haptics(int32_t enabled) {
-    os_unfair_lock_lock(&s_crown_lock);
-    s_crown_detent_haptics = enabled ? 1 : 0;
-    os_unfair_lock_unlock(&s_crown_lock);
-}
-
-
 #pragma mark - Memory
 
 uint64_t flutter_watchos_available_memory(void) {
