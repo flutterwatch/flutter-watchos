@@ -29,10 +29,20 @@ String? _pubspecVersion(String pubspec) {
 }
 
 /// The version that the first `## ` heading of a CHANGELOG names, or null.
+///
+/// A first heading `## Unreleased` is skipped, and the version is the next
+/// heading's: CONTRIBUTING.md asks for that section, which collects changes
+/// until a release turns it into the new version's heading.
 String? _firstChangelogVersion(String changelog) {
+  var first = true;
   for (final String line in changelog.split('\n')) {
     if (line.startsWith('## ')) {
-      return line.substring(3).trim().split(RegExp(r'\s+')).first;
+      final String name = line.substring(3).trim().split(RegExp(r'\s+')).first;
+      if (first && name.toLowerCase() == 'unreleased') {
+        first = false;
+        continue;
+      }
+      return name;
     }
   }
   return null;
@@ -160,6 +170,16 @@ void main() {
       expect(_flutterPinMismatch(readme: readme, flutterVersion: '$flutterSha\n'), isNull);
       expect(_enginePinMismatch(readme: readme, engineVersion: 'engine-0123456789ab\n'), isNull);
       expect(_packageVersionMismatch(pubspec: pubspec, changelog: changelog), isNull);
+    });
+
+    testWithoutContext('a leading Unreleased section is skipped, and only that one', () {
+      const unreleased = '# Changelog\n\n## Unreleased\n\n- A change to come.\n\n$changelog';
+      expect(_firstChangelogVersion(unreleased), '0.2.0');
+      expect(_cliVersionMismatch(pubspec: pubspec, changelog: unreleased, readme: readme), isNull);
+      expect(_packageVersionMismatch(pubspec: pubspec, changelog: unreleased), isNull);
+      expect(_firstChangelogVersion('## Unreleased\n\n- A change to come.\n'), isNull);
+      expect(_firstChangelogVersion('## 0.2.1\n\n## Unreleased\n\n## 0.2.0\n'), '0.2.1');
+      expect(_firstChangelogVersion('## Unreleased\n\n## Unreleased\n\n## 0.2.0\n'), 'Unreleased');
     });
 
     testWithoutContext('a CLI bump that misses one file is a mismatch', () {
