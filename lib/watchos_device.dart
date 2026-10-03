@@ -643,6 +643,10 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
     }
     if (_restarted) {
       _log.printTrace('The Simulator log stream ended again (exit $code); not restarting it.');
+      // End the lines, as stock's reader does when its process ends, so a
+      // listener such as `logs` stops instead of waiting for lines that will
+      // not come.
+      unawaited(_linesController.close());
       return;
     }
     _restarted = true;

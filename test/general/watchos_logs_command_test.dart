@@ -186,6 +186,57 @@ void main() {
     },
   );
 
+  // A stream that dies twice is not started a third time. logs used to wait
+  // on it for good, printing nothing; it ends now, as stock's does.
+  testUsingContext(
+    'logs -d <simulator> ends when the log stream dies twice',
+    () async {
+      FakeCommand stream() => const FakeCommand(
+        command: <String>[
+          'xcrun',
+          'simctl',
+          'spawn',
+          'sim-1',
+          'log',
+          'stream',
+          '--style',
+          'json',
+          '--predicate',
+          WatchosSimulatorLogReader.predicate,
+        ],
+        stdout:
+            'Filtering the log data using "eventType = logEvent"\n'
+            '  "eventMessage" : "[flutter:flutter] SUITE_MARK_PRINT",\n',
+        exitCode: 1,
+      );
+      processManager.addCommands(<FakeCommand>[stream(), stream()]);
+      deviceManager.attachedDevices.add(
+        WatchosDevice(
+          'sim-1',
+          name: 'Apple Watch Series 11 (46mm)',
+          logger: logger,
+          isSimulator: true,
+        ),
+      );
+      final command = WatchosLogsCommand(
+        sigint: _FakeProcessSignal(),
+        sigterm: _FakeProcessSignal(),
+      );
+
+      // No signal is sent: the command ends by itself.
+      await createTestCommandRunner(command).run(<String>['logs', '-d', 'sim-1']);
+
+      expect(testLogger.statusText, contains('flutter: SUITE_MARK_PRINT'));
+      expect(processManager, hasNoRemainingExpectations);
+    },
+    overrides: <Type, Generator>{
+      DeviceManager: () => deviceManager,
+      ProcessManager: () => processManager,
+      ApplicationPackageFactory: () => _NoPackages(),
+      Platform: () => FakePlatform(),
+    },
+  );
+
   testUsingContext(
     'logs -d <UDID> of a shut-down Simulator exits at once, and says run boots it',
     () async {

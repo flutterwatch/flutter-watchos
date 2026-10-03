@@ -370,7 +370,7 @@ void main() {
     }, overrides: <Type, Generator>{ProcessManager: () => processManager});
 
     testUsingContext(
-      'a stream that dies is restarted once, and a second death leaves it stopped',
+      'a stream that dies is restarted once, and a second death ends the lines',
       () async {
         final first = _LogStreamProcess();
         final second = _LogStreamProcess();
@@ -379,7 +379,8 @@ void main() {
           logStream(process: second),
         ]);
         final WatchosSimulatorLogReader subject = reader();
-        subject.logLines.listen(null);
+        var done = false;
+        subject.logLines.listen(null, onDone: () => done = true);
         await pump();
         first.emit(_preamble);
         await pump();
@@ -398,10 +399,13 @@ void main() {
         await pump();
         expect(ready, isTrue);
 
+        expect(done, isFalse);
         second.end(1);
         await pump();
         expect(logger.traceText, contains('not restarting it'));
         expect(logger.traceText, isNot(contains('Could not start')));
+        // Nothing more will come: listeners such as `logs` are told so.
+        expect(done, isTrue);
         expect(processManager, hasNoRemainingExpectations);
         subject.dispose();
       },
