@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:file/memory.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
@@ -13,10 +14,13 @@ import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_watchos/commands/logs.dart';
+import 'package:flutter_watchos/executable.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 import 'package:test/fake.dart';
 
+import '../src/common.dart';
 import '../src/context.dart';
 import '../src/fake_process_manager.dart';
 import '../src/test_flutter_command_runner.dart';
@@ -60,6 +64,39 @@ void main() {
   });
 
   tearDown(Cache.enableLocking);
+
+  testUsingContext(
+    'logs is the watch command, with stock name and options',
+    () {
+      final FlutterCommand logs = generateWatchosCommands(
+        verboseHelp: false,
+        verbose: false,
+      ).singleWhere((FlutterCommand command) => command.name == 'logs');
+
+      expect(logs, isA<WatchosLogsCommand>());
+      expect(logs.argParser.options.keys, contains('clear'));
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => MemoryFileSystem.test(),
+      DeviceManager: () => deviceManager,
+      ProcessManager: () => processManager,
+      Cache: () => Cache.test(processManager: FakeProcessManager.empty()),
+    },
+  );
+
+  testWithoutContext('the watch guidance offers bare commands, each alone on its line', () {
+    final String guidance = WatchosLogsCommand.physicalWatchGuidance('watch-1');
+
+    // The docs URL names a heading; nothing else may hold a `#`.
+    expect(
+      guidance.replaceAll(WatchosLogsCommand.physicalWatchLogsDocUrl, ''),
+      isNot(contains('#')),
+    );
+    expect(guidance.split('\n').where((String line) => line.startsWith('  ')), <String>[
+      '  flutter-watchos run -d watch-1 --profile',
+    ]);
+    expect(guidance, contains(WatchosLogsCommand.physicalWatchLogsDocUrl));
+  });
 
   testUsingContext(
     'logs -d <watch> exits non-zero with the guidance, and runs nothing',

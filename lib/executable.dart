@@ -28,7 +28,6 @@ import 'package:flutter_tools/src/commands/doctor.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
-import 'package:flutter_tools/src/commands/logs.dart';
 import 'package:flutter_tools/src/commands/packages.dart';
 import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
@@ -64,6 +63,7 @@ import 'commands/drive.dart';
 import 'commands/host.dart';
 import 'commands/install.dart';
 import 'commands/login.dart';
+import 'commands/logs.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
@@ -307,7 +307,9 @@ List<FlutterCommand> generateWatchosCommands({required bool verboseHelp, require
         processManager: globals.processManager,
       ),
       WatchosInstallCommand(verboseHelp: verboseHelp),
-      LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
+      // `logs` streams a watch Simulator as stock streams an iOS Simulator,
+      // and refuses a physical watch, which has no log stream, with guidance.
+      WatchosLogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
       PackagesCommand(),
       ScreenshotCommand(fs: globals.fs),
       ShellCompletionCommand(),
