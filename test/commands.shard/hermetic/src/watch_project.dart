@@ -15,6 +15,9 @@ const String kSimulatorId = '4F1C2B7E-0000-4000-8000-00000000A11E';
 /// The id of [physicalWatch].
 const String kWatchId = '00008310-000A1B2C3D4E5F60';
 
+/// The id of [shutDownWatchSimulator].
+const String kShutDownSimulatorId = '4F1C2B7E-0000-4000-8000-0000000005D0';
+
 /// A booted watch Simulator.
 WatchosDevice watchSimulator() => WatchosDevice(
   kSimulatorId,
@@ -22,6 +25,17 @@ WatchosDevice watchSimulator() => WatchosDevice(
   logger: BufferLogger.test(),
   isSimulator: true,
   osVersion: '26.5',
+);
+
+/// A watch Simulator that is shut down, as discovery lists it when `-d`
+/// names its exact UDID.
+WatchosDevice shutDownWatchSimulator() => WatchosDevice(
+  kShutDownSimulatorId,
+  name: 'Apple Watch Ultra 3 (49mm)',
+  logger: BufferLogger.test(),
+  isSimulator: true,
+  osVersion: '26.5',
+  isShutDown: true,
 );
 
 /// A paired physical watch.

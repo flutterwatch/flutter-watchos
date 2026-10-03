@@ -7,8 +7,11 @@ import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
-import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_watchos/commands/launch_checks.dart';
+import 'package:flutter_watchos/commands/screenshot.dart';
+import 'package:flutter_watchos/executable.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 
 import '../src/common.dart';
@@ -96,7 +99,7 @@ void main() {
     ];
 
     Future<void> screenshot() => createTestCommandRunner(
-      ScreenshotCommand(fs: fileSystem),
+      WatchosScreenshotCommand(fs: fileSystem),
     ).run(<String>['screenshot', '-d', 'watch-1', '-o', 'shot.png']);
 
     testUsingContext(
@@ -181,6 +184,71 @@ void main() {
         );
 
         await expectLater(screenshot(), throwsToolExit(message: 'devicectl wrote no screenshot.'));
+        expect(fileSystem.file('shot.png').existsSync(), isFalse);
+      },
+      overrides: <Type, Generator>{
+        DeviceManager: () => deviceManager,
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  group('the screenshot command', () {
+    late FakeDeviceManager deviceManager;
+
+    setUp(() {
+      Cache.disableLocking();
+      deviceManager = FakeDeviceManager();
+    });
+
+    tearDown(Cache.enableLocking);
+
+    testUsingContext(
+      'is the watch command, with stock name and options',
+      () {
+        final FlutterCommand command = generateWatchosCommands(
+          verboseHelp: false,
+          verbose: false,
+        ).singleWhere((FlutterCommand command) => command.name == 'screenshot');
+
+        expect(command, isA<WatchosScreenshotCommand>());
+        expect(command.argParser.options.keys, containsAll(<String>['out', 'type']));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        DeviceManager: () => deviceManager,
+        ProcessManager: () => processManager,
+        Cache: () => Cache.test(processManager: FakeProcessManager.empty()),
+      },
+    );
+
+    // A shut-down Simulator is found only by its exact UDID, so that run can
+    // boot it; it has no screen to capture, and simctl would only fail.
+    testUsingContext(
+      'stops on a shut-down Simulator with the boot guidance, and runs nothing',
+      () async {
+        final shutDown = WatchosDevice(
+          'AAAA-BBBB-CCCC',
+          name: 'Apple Watch Ultra 3 (49mm)',
+          logger: logger,
+          isSimulator: true,
+          isShutDown: true,
+        );
+        deviceManager.attachedDevices.add(shutDown);
+
+        await expectLater(
+          createTestCommandRunner(
+            WatchosScreenshotCommand(fs: fileSystem),
+          ).run(<String>['screenshot', '-d', 'AAAA-BBBB-CCCC', '-o', 'shot.png']),
+          throwsToolExit(
+            message: watchosShutDownSimulatorGuidance(
+              shutDown,
+              reason: 'it has no screen to capture',
+            ),
+          ),
+        );
+        expect(processManager, hasNoRemainingExpectations);
         expect(fileSystem.file('shot.png').existsSync(), isFalse);
       },
       overrides: <Type, Generator>{

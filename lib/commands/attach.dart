@@ -32,6 +32,7 @@ class WatchosAttachCommand extends AttachCommand with UnusedPortHelp {
     await super.validateCommand();
     // super found the target device, or stopped; this lookup is cached.
     final Device? device = await findTargetDevice();
+    throwIfShutDownSimulator(device, reason: 'no app is running on it to attach to');
     if (device is WatchosDevice && !device.isSimulator) {
       // attach cannot find an app on a physical watch by itself: the watch's
       // log, which carries the VM Service URI, reaches the tool only through

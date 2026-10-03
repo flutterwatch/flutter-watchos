@@ -101,6 +101,32 @@ void main() {
     expect(command.reachedRunCommand, isTrue);
   }, overrides: overrides());
 
+  for (final args in <List<String>>[
+    <String>[],
+    <String>['--uninstall-only'],
+  ]) {
+    final name = args.isEmpty ? 'install' : 'install ${args.join(' ')}';
+    testUsingContext('$name on a shut-down Simulator stops with the boot guidance', () async {
+      deviceManager.attachedDevices.add(shutDownWatchSimulator());
+      final List<String> before = allFiles(fileSystem);
+
+      await expectLater(
+        createTestCommandRunner(
+          command,
+        ).run(<String>['install', '-d', kShutDownSimulatorId, ...args]),
+        throwsToolExit(
+          message: watchosShutDownSimulatorGuidance(
+            shutDownWatchSimulator(),
+            reason: 'install cannot reach it',
+          ),
+        ),
+      );
+
+      expect(command.reachedRunCommand, isFalse);
+      expect(allFiles(fileSystem), before);
+    }, overrides: overrides());
+  }
+
   testUsingContext('--flavor with no device stops as stock does', () async {
     deviceManager.attachedDevices = <Device>[];
 

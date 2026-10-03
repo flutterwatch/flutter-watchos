@@ -36,6 +36,29 @@ void throwIfWatchCannotRunMode({
   }
 }
 
+/// What a command prints, before it exits, when `-d` names a watch Simulator
+/// by its UDID and that Simulator is shut down.
+///
+/// [reason] says what the command cannot do there; `run`, which boots the
+/// Simulator, is offered alone on its line, ready to paste.
+String watchosShutDownSimulatorGuidance(WatchosDevice simulator, {required String reason}) =>
+    '${simulator.name} (${simulator.id}) is shut down, so $reason. run boots it:\n'
+    '  flutter-watchos run -d ${simulator.id}';
+
+/// Stops with [watchosShutDownSimulatorGuidance] when [device] is a watch
+/// Simulator that is shut down.
+///
+/// Discovery lists a shut-down Simulator only when `-d` names its exact
+/// UDID, so that `run` can boot it. `attach`, `logs`, `install` and
+/// `screenshot` call this once they have found their device: on a Simulator
+/// that is not booted they would otherwise wait for an app that cannot have
+/// started, or stop on simctl's own error.
+void throwIfShutDownSimulator(Device? device, {required String reason}) {
+  if (device is WatchosDevice && device.isShutDown) {
+    throwToolExit(watchosShutDownSimulatorGuidance(device, reason: reason));
+  }
+}
+
 /// What a command does about a flavor, from [watchosFlavorCheck].
 enum WatchosFlavorCheck {
   /// Nothing: no flavor, or no watch target.

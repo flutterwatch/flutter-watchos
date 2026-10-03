@@ -29,7 +29,6 @@ import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
 import 'package:flutter_tools/src/commands/packages.dart';
-import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/device.dart';
@@ -67,6 +66,7 @@ import 'commands/logs.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
+import 'commands/screenshot.dart';
 import 'commands/test.dart';
 import 'commands/upgrade.dart';
 import 'commands/upload.dart';
@@ -311,7 +311,8 @@ List<FlutterCommand> generateWatchosCommands({required bool verboseHelp, require
       // and refuses a physical watch, which has no log stream, with guidance.
       WatchosLogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
       PackagesCommand(),
-      ScreenshotCommand(fs: globals.fs),
+      // `screenshot` stops on a watch Simulator that is shut down.
+      WatchosScreenshotCommand(fs: globals.fs),
       ShellCompletionCommand(),
       SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
       // Commands extended for watchOS.

@@ -14,6 +14,7 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_watchos/commands/attach.dart';
+import 'package:flutter_watchos/commands/launch_checks.dart';
 import 'package:flutter_watchos/watchos_mode_guidance.dart';
 
 import '../../src/common.dart';
@@ -126,4 +127,33 @@ void main() {
       expect(command.reachedRunCommand, isTrue);
     }, overrides: overrides());
   });
+
+  // A shut-down Simulator is found only by its exact UDID, so that run can
+  // boot it; attach cannot find an app there, and stops before it waits for
+  // a VM Service.
+  for (final args in <List<String>>[
+    <String>[],
+    <String>['--debug-url', 'http://127.0.0.1:50001/aBcD1234=/'],
+  ]) {
+    testUsingContext(
+      'a shut-down Simulator ${args.isEmpty ? '' : 'with --debug-url '}stops with the boot guidance',
+      () async {
+        deviceManager.attachedDevices.add(shutDownWatchSimulator());
+
+        await expectLater(
+          createTestCommandRunner(
+            command,
+          ).run(<String>['attach', '-d', kShutDownSimulatorId, ...args]),
+          throwsToolExit(
+            message: watchosShutDownSimulatorGuidance(
+              shutDownWatchSimulator(),
+              reason: 'no app is running on it to attach to',
+            ),
+          ),
+        );
+        expect(command.reachedRunCommand, isFalse);
+      },
+      overrides: overrides(),
+    );
+  }
 }
