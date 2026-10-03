@@ -621,7 +621,7 @@ void main() {
 
     // One source for the mode guidance: what startApp prints is run's
     // guidance, so no second text with comments after its commands exists.
-    testWithoutContext("unsupportedModeGuidance is run's paste-ready guidance", () {
+    testWithoutContext("unsupportedModeGuidance is run's guidance, with bare command lines", () {
       for (final simulator in <bool>[true, false]) {
         final device = WatchosDevice(
           'id-1',

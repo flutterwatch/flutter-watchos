@@ -113,6 +113,9 @@ where possible; watchOS-specific behaviour is called out per command.
   watchOS plugin, port an existing one (`flutter-watchos plugin port`) or
   author an FFI package by hand — see [plugins.md](plugins.md).
 
+  Only an app gets `watchos/`. A package, a module or a plugin, made by
+  `create` or recreated with `create .`, gets none, and one line says so.
+
   `create` also wires up the app's **host mode** from the project shape: a
   watchOS-only project is *standalone* (watch-only app inside a thin iOS
   container), while a project with an `ios/` app gets the watch app embedded
@@ -298,7 +301,9 @@ where possible; watchOS-specific behaviour is called out per command.
   Simulator on Xcode 26, to show it.
 
   `--route` has no effect on watchOS: the app starts at its home route, and
-  `run` says so.
+  `run` says so. `--use-application-binary` is refused for a watch or a
+  watch simulator: flutter-watchos installs the app it builds from the
+  project.
 
   Physical-watch installs go through `devicectl` to the paired watch; see
   [debug-app.md](debug-app.md) for pairing/tunnel troubleshooting.
@@ -356,9 +361,10 @@ where possible; watchOS-specific behaviour is called out per command.
 
 ## Forwarded commands
 
-These stock Flutter commands work unchanged: `analyze`, `assemble`,
-`config`, `daemon`, `emulators`, `generate`, `gen-l10n`, `pub` / `packages`,
-`shell-completion`, `symbolize`.
+These stock Flutter commands work unchanged: `analyze`, `bash-completion`
+(or `zsh-completion`), `config`, `emulators`, `gen-l10n`, `pub` (or
+`packages`) and `symbolize`. So do `assemble`, `daemon` and `generate`,
+which `flutter-watchos -h` does not list.
 
 These work as in stock Flutter, with a watch in mind:
 
@@ -370,7 +376,9 @@ These work as in stock Flutter, with a watch in mind:
   (see [debug-app.md](debug-app.md#logs-from-a-physical-watch)).
 - `screenshot` on a physical watch works when the watch can take one, which
   needs Xcode 27 or later; other watches are refused, as in stock.
-- `install` refuses `--flavor` for a watch, whose build has no flavors.
+- `install` refuses `--flavor` for a watch, whose build has no flavors, and
+  `--use-application-binary`, since a watch gets the app built from the
+  project.
 - `channel` shows the Flutter version flutter-watchos pins, which follows no
   Flutter channel. `channel <name>` and `downgrade` refuse: they would move
   the pinned SDK, and the next run would put it back. `upgrade` moves to the

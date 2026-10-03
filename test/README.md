@@ -93,7 +93,7 @@ test/
     ├── watchos_device_test.dart            # launch arguments, log readers, startApp
     ├── watchos_emulator_test.dart          # simctl and devicectl parsing
     ├── watchos_logs_command_test.dart      # logs: the watch command, a watch and a shut-down Simulator
-    ├── watchos_mode_guidance_test.dart     # which modes a target runs, and the paste-ready refusals
+    ├── watchos_mode_guidance_test.dart     # which modes a target runs, and the refusals' bare commands
     ├── watchos_physical_device_test.dart   # physical watch properties, launch argv and logs
     ├── watchos_screenshot_test.dart        # screenshots through simctl and devicectl
     ├── watchos_simulator_launch_test.dart  # the Simulator launch flow, with fake processes

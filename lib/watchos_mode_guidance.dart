@@ -10,9 +10,10 @@
 /// the Mach APIs the Dart JIT VM relies on), so it runs profile and release
 /// only.
 ///
-/// Every command line in a refusal is a bare command, alone on its line and
-/// ready to paste: no `#` comment, no parentheses, nothing after its last
-/// argument. What it is for is in the sentence above it.
+/// Every command line in a refusal is a bare command, alone on its line: no
+/// `#` comment, no parentheses, nothing after its last argument, so it pastes
+/// as it is once a placeholder such as `<watch>` is filled in. What it is for
+/// is in the sentence above it.
 library;
 
 import 'package:flutter_tools/src/build_info.dart';

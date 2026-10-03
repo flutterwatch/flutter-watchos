@@ -799,7 +799,7 @@ class WatchosDevice extends Device {
   /// The guidance for a [mode] this target cannot run, or null when it can.
   ///
   /// It is `run`'s guidance from [watchosModeRefusal], the one source of the
-  /// mode guidance: each offered command alone on its line, ready to paste.
+  /// mode guidance: each offered command alone on its line, with no comment.
   /// `run`, `drive` and `attach` refuse such a mode in validateCommand, before
   /// they build; [startApp] prints this for a caller that starts the app
   /// directly instead.
