@@ -40,30 +40,46 @@ void main() {
   // (and is not even installed when flutter-watchos is the only Flutter).
   group('watchosCreateNextSteps', () {
     testWithoutContext('says flutter-watchos run, after a cd into the project', () {
-      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: false);
+      final String steps = watchosCreateNextSteps(
+        'hello_watch',
+        afterStockCreate: false,
+        companion: false,
+      );
       expect(steps, contains('  \$ cd hello_watch\n  \$ flutter-watchos run'));
       expect(steps, contains('flutter-watchos devices'));
       expect(steps, isNot(contains('flutter run')));
     });
 
     testWithoutContext('after stock create, says the flutter run above is not for the watch', () {
-      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: true);
+      final String steps = watchosCreateNextSteps(
+        'hello_watch',
+        afterStockCreate: true,
+        companion: true,
+      );
       expect(steps, contains('The `flutter run` above runs the app on the other platforms.'));
       expect(steps, contains(r'$ flutter-watchos run'));
     });
 
     testWithoutContext('no cd when the project is the current directory', () {
-      expect(watchosCreateNextSteps('.', afterStockCreate: false), isNot(contains(r'$ cd')));
+      expect(
+        watchosCreateNextSteps('.', afterStockCreate: false, companion: false),
+        isNot(contains(r'$ cd')),
+      );
     });
 
-    // After stock create the watch runs the phone's lib/main.dart, so one line
-    // points to the two layout docs.
+    // With an iOS app the watch runs the phone's lib/main.dart, so one line
+    // points to the two layout docs; without one it runs stock's counter, and
+    // the line points to the layout doc.
     const companionAppsDoc =
         'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/companion-apps.md';
     const layoutDoc = 'https://github.com/flutterwatch/flutter-watchos/blob/main/doc/layout.md';
 
-    testWithoutContext('after stock create, one line links the two layout docs', () {
-      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: true);
+    testWithoutContext('beside an iOS app, one line links the two layout docs', () {
+      final String steps = watchosCreateNextSteps(
+        'hello_watch',
+        afterStockCreate: true,
+        companion: true,
+      );
       final List<String> adviceLines = steps
           .split('\n')
           .where((String line) => line.contains('doc/'))
@@ -79,9 +95,29 @@ void main() {
       );
     });
 
-    testWithoutContext('a watch-only create gets no layout advice', () {
-      final String steps = watchosCreateNextSteps('hello_watch', afterStockCreate: false);
-      expect(steps, isNot(contains('doc/')));
+    testWithoutContext('a watch-only create beside an iOS app gets the same line', () {
+      // `create . --platforms=watchos` in an iOS project takes the watch-only
+      // path, but the watch app is the phone's companion.
+      final String steps = watchosCreateNextSteps('.', afterStockCreate: false, companion: true);
+      expect(steps, contains(companionAppsDoc));
+      expect(steps, contains(layoutDoc));
+      expect(steps, isNot(contains('The `flutter run` above')));
+    });
+
+    testWithoutContext('a watch-only app gets one line that links the layout doc', () {
+      final String steps = watchosCreateNextSteps(
+        'hello_watch',
+        afterStockCreate: false,
+        companion: false,
+      );
+      final List<String> adviceLines = steps
+          .split('\n')
+          .where((String line) => line.contains('doc/'))
+          .toList();
+      expect(adviceLines, hasLength(1));
+      expect(adviceLines.single, contains("stock Flutter's counter"));
+      expect(adviceLines.single, contains(layoutDoc));
+      expect(steps, isNot(contains(companionAppsDoc)));
       expect(steps, isNot(contains('lib/main.dart')));
     });
   });

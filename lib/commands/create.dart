@@ -59,15 +59,21 @@ const String _layoutDocUrl =
 /// only Flutter on the machine). [afterStockCreate] says that instruction has
 /// just been printed above, and is not the one for the watch.
 ///
-/// After stock `create` the watch runs the phone's `lib/main.dart`, a layout
-/// made for a larger screen, so the steps end with one line that points to
-/// the two docs on laying it out for the watch.
-String watchosCreateNextSteps(String relativeProjectPath, {required bool afterStockCreate}) {
+/// Either way the watch runs a layout made for a larger screen: the phone's
+/// `lib/main.dart` when the project has an iOS app ([companion]), stock
+/// Flutter's counter app otherwise. So the steps end with one line that points
+/// to the docs on laying it out for the watch.
+String watchosCreateNextSteps(
+  String relativeProjectPath, {
+  required bool afterStockCreate,
+  required bool companion,
+}) {
   final cd = relativeProjectPath == '.' ? '' : '  \$ cd $relativeProjectPath\n';
-  final layoutAdvice = afterStockCreate
+  final layoutAdvice = companion
       ? '\n\nThe watch app runs the same lib/main.dart as the phone app. To lay it '
             'out for the watch, read $_companionAppsDocUrl and $_layoutDocUrl'
-      : '';
+      : "\n\nThe app is stock Flutter's counter, made for a larger screen. To lay "
+            'it out for the watch, read $_layoutDocUrl';
   return '\n'
       '${afterStockCreate ? 'The `flutter run` above runs the app on the other platforms. ' : ''}'
       'To run the watch app on the watchOS Simulator, type:\n'
@@ -117,14 +123,29 @@ class WatchosCreateCommand extends CreateCommand {
     // nothing is generated then stripped, and the app is the one stock create
     // writes, unmodified.
     if (boolArg('watchos-only')) {
-      globals.logger.printStatus('Generating watchOS-only project...');
+      _checkWatchOnlyArgs(templateType, projectDirPath);
+      validateProjectDir(overwrite: boolArg('overwrite'));
+      globals.logger.printStatus('Generating the app and watchos/...');
       await _generateStockApp(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);
-      await _adoptHostMode(projectDirPath);
+      final WatchosHostMode? mode = await _adoptHostMode(projectDirPath);
+      // pub get last, as stock create runs it after every folder is written: a
+      // failed pub get leaves a whole project, watchos/ included.
+      if (shouldCallPubGet) {
+        await pub.get(
+          context: PubContext.create,
+          project: FlutterProject.fromDirectory(globals.fs.directory(projectDirPath)),
+          offline: offline,
+          outputMode: PubOutputMode.summaryOnly,
+        );
+      }
+      final companion = mode == WatchosHostMode.companion;
       globals.logger.printStatus(
-        'Created watchOS-only project (shared app + watchos/, no other platforms).',
+        companion
+            ? 'Added watchos/ beside the iOS app in ios/.'
+            : 'Created watchOS-only project (shared app + watchos/, no other platforms).',
       );
-      _printNextSteps(projectDirPath, templateType, afterStockCreate: false);
+      _printNextSteps(projectDirPath, templateType, afterStockCreate: false, companion: companion);
       return FlutterCommandResult.success();
     }
 
@@ -135,14 +156,24 @@ class WatchosCreateCommand extends CreateCommand {
       return exitCode;
     }
     await _renderWatchosRunner(projectDirPath, name);
-    await _adoptHostMode(projectDirPath);
-    _printNextSteps(projectDirPath, templateType, afterStockCreate: true);
+    final WatchosHostMode? mode = await _adoptHostMode(projectDirPath);
+    _printNextSteps(
+      projectDirPath,
+      templateType,
+      afterStockCreate: true,
+      companion: mode == WatchosHostMode.companion,
+    );
     return FlutterCommandResult.success();
   }
 
   /// Ends `create` with how to run the watch app — for the templates that
   /// make one to run.
-  void _printNextSteps(String projectDirPath, String templateType, {required bool afterStockCreate}) {
+  void _printNextSteps(
+    String projectDirPath,
+    String templateType, {
+    required bool afterStockCreate,
+    required bool companion,
+  }) {
     if (templateType != 'app' && templateType != 'skeleton') {
       return;
     }
@@ -150,8 +181,39 @@ class WatchosCreateCommand extends CreateCommand {
       watchosCreateNextSteps(
         globals.fs.path.normalize(globals.fs.path.relative(projectDirPath)),
         afterStockCreate: afterStockCreate,
+        companion: companion,
       ),
     );
+  }
+
+  /// Refuses, before anything is written, what a watch-only create cannot
+  /// make: it makes stock's app only. Another template, an existing project
+  /// of another type, or a `--sample` (which stock fetches with its own,
+  /// private code) goes to stock `flutter create`.
+  void _checkWatchOnlyArgs(String templateType, String projectDirPath) {
+    if (templateType != 'app') {
+      throwToolExit(
+        'flutter-watchos create --platforms=watchos makes an app only. For a '
+        '--template=$templateType project, use stock `flutter create`.',
+      );
+    }
+    final Directory directory = globals.fs.directory(projectDirPath);
+    final FlutterTemplateType? existing = directory.existsSync() && directory.listSync().isNotEmpty
+        ? determineTemplateType()
+        : null;
+    if (existing != null && existing != FlutterTemplateType.app) {
+      throwToolExit(
+        'This directory holds a ${existing.cliName} project, and '
+        'flutter-watchos create --platforms=watchos makes an app only.',
+      );
+    }
+    if (argResults!.wasParsed('sample')) {
+      throwToolExit(
+        'flutter-watchos create --platforms=watchos does not take --sample. '
+        'Create the app with stock `flutter create --sample`, then run '
+        '`flutter-watchos create --platforms=watchos .` in it.',
+      );
+    }
   }
 
   /// Applies the host mode the project's shape implies — companion when
@@ -159,7 +221,7 @@ class WatchosCreateCommand extends CreateCommand {
   /// tells the user which one they got and why. Nothing is recorded: like
   /// stock Flutter platforms, the ios/ directory itself is the source of
   /// truth, and build/run re-derive the mode the same way.
-  Future<void> _adoptHostMode(String projectDirPath) async {
+  Future<WatchosHostMode?> _adoptHostMode(String projectDirPath) async {
     final WatchosHostMode? mode = await syncWatchosHostMode(
       projectDir: globals.fs.directory(projectDirPath),
       logger: globals.logger,
@@ -183,18 +245,16 @@ class WatchosCreateCommand extends CreateCommand {
           'companion.',
         );
     }
+    return mode;
   }
 
-  /// Renders the `watchos/` Xcode runner into [projectDirPath], detecting the
-  /// org and (for on-device signing) a development team the way
-  /// `flutter create` does. Delegates the template work to the shared
-  /// [renderWatchosRunner] so the plugin porter can reuse it.
   /// Writes the app stock `flutter create` writes, from the pinned SDK's own
   /// `app` template with no platform folders: `lib/main.dart`, the widget
   /// test, `pubspec.yaml`, `analysis_options.yaml`, `README.md` and the rest,
   /// exactly as stock writes them. Like stock, it honours `--empty`,
-  /// `--description`, `--org` and `--overwrite`, pins the SDK's own versions
-  /// in `pubspec.lock`, and runs `pub get` unless `--no-pub`.
+  /// `--description`, `--org` and `--overwrite`, and pins the SDK's own
+  /// versions in `pubspec.lock`. The caller runs `pub get` once `watchos/` is
+  /// written too.
   Future<void> _generateStockApp(String projectDirPath, String name) async {
     final bool empty = boolArg('empty');
     final Directory directory = globals.fs.directory(projectDirPath);
@@ -216,14 +276,6 @@ class WatchosCreateCommand extends CreateCommand {
       projectType: FlutterTemplateType.app,
     );
     _writeSdkPubspecLock(directory);
-    if (shouldCallPubGet) {
-      await pub.get(
-        context: PubContext.create,
-        project: FlutterProject.fromDirectory(directory),
-        offline: offline,
-        outputMode: PubOutputMode.summaryOnly,
-      );
-    }
   }
 
   /// Seeds `pubspec.lock` with the versions the Flutter SDK is tested with,
@@ -244,6 +296,10 @@ class WatchosCreateCommand extends CreateCommand {
         .writeAsStringSync(const JsonEncoder.withIndent('  ').convert({'packages': packages}));
   }
 
+  /// Renders the `watchos/` Xcode runner into [projectDirPath], detecting the
+  /// org and (for on-device signing) a development team the way
+  /// `flutter create` does. Delegates the template work to the shared
+  /// [renderWatchosRunner] so the plugin porter can reuse it.
   Future<void> _renderWatchosRunner(String projectDirPath, String name) async {
     final String organization = await getOrganization();
     final String? developmentTeam = await getCodeSigningIdentityDevelopmentTeam(
