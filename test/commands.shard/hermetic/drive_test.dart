@@ -176,4 +176,30 @@ void main() {
       expect(logger.warningText, isEmpty);
     }, overrides: overrides());
   });
+
+  group('drive --use-application-binary', () {
+    for (final (List<String> args, String target) in <(List<String>, String)>[
+      (<String>['-d', kSimulatorId], 'the Simulator'),
+      (<String>['-d', kWatchId, '--profile'], 'a physical watch'),
+    ]) {
+      testUsingContext('for $target stops before the tooling check', () async {
+        fileSystem.file('/project/Runner.app/Info.plist').createSync(recursive: true);
+        final List<String> before = allFiles(fileSystem);
+
+        await expectLater(
+          createTestCommandRunner(command).run(<String>[
+            'drive',
+            '--no-pub',
+            ...args,
+            '--use-application-binary',
+            '/project/Runner.app',
+          ]),
+          throwsToolExit(message: kWatchosApplicationBinaryRefusal),
+        );
+
+        expect(command.reachedRunCommand, isFalse);
+        expect(allFiles(fileSystem), before);
+      }, overrides: overrides());
+    }
+  });
 }

@@ -931,8 +931,9 @@ class WatchosDevice extends Device {
     // VM relies on), and the Simulator engine is JIT-only, so AOT modes need a
     // physical watch. Without this check the engine lookup fails mid-build
     // with a bare "libflutter_engine.dylib not found — run precache", which
-    // cannot help. `run`, `drive` and `attach` refuse earlier, prebuilt apps
-    // included, and the daemon's app.start checks supportsRuntimeMode itself.
+    // cannot help. `run`, `drive` and `attach` refuse earlier, and `run` and
+    // `drive` refuse a prebuilt app outright; the daemon's app.start checks
+    // supportsRuntimeMode itself.
     // This covers a caller that starts the app directly: stock's integration
     // test device, behind `test integration_test -d <watch>`, which always
     // runs debug.

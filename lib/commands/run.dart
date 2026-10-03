@@ -18,6 +18,7 @@ class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts, Unused
   @override
   Future<void> validateCommand() async {
     await refuseFlavorForWatch(this);
+    await refuseApplicationBinaryForWatch(this);
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
     await super.validateCommand();

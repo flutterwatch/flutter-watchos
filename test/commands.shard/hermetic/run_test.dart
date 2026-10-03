@@ -256,4 +256,57 @@ void main() {
       expect(logger.warningText, isEmpty);
     }, overrides: overrides());
   });
+
+  // A watch launch takes the app built from the project, so a binary named
+  // with --use-application-binary was ignored without a word.
+  group('run --use-application-binary', () {
+    for (final (List<String> args, String target) in <(List<String>, String)>[
+      (<String>['-d', kSimulatorId], 'the Simulator'),
+      (<String>['-d', kWatchId], 'a physical watch in debug'),
+      (<String>['-d', kWatchId, '--profile'], 'a physical watch in profile'),
+      (<String>['-d', kWatchId, '--release'], 'a physical watch in release'),
+    ]) {
+      testUsingContext('for $target stops before the tooling check', () async {
+        fileSystem.file('/project/Runner.app/Info.plist').createSync(recursive: true);
+        final List<String> before = allFiles(fileSystem);
+
+        await expectLater(
+          createTestCommandRunner(command).run(<String>[
+            'run',
+            '--no-pub',
+            ...args,
+            '--use-application-binary',
+            '/project/Runner.app',
+          ]),
+          throwsToolExit(message: kWatchosApplicationBinaryRefusal),
+        );
+
+        expect(command.reachedRunCommand, isFalse);
+        expect(allFiles(fileSystem), before);
+      }, overrides: overrides());
+    }
+
+    testUsingContext('for an iPhone keeps stock behaviour', () async {
+      deviceManager.attachedDevices = <Device>[
+        FakeDevice('iPhone', 'iphone-id', type: PlatformType.ios),
+      ];
+      fileSystem.file('/project/app.ipa').createSync();
+
+      await createTestCommandRunner(command).run(<String>[
+        'run',
+        '--no-pub',
+        '-d',
+        'iphone-id',
+        '--use-application-binary',
+        '/project/app.ipa',
+      ]);
+
+      expect(command.reachedRunCommand, isTrue);
+    }, overrides: overrides());
+
+    testUsingContext('the refusal says what to do and names no forbidden word', () {
+      expect(kWatchosApplicationBinaryRefusal, endsWith('without --use-application-binary.'));
+      expect(forbiddenWordsIn(kWatchosApplicationBinaryRefusal), isEmpty);
+    }, overrides: overrides());
+  });
 }

@@ -151,6 +151,39 @@ Future<void> refuseFlavorForWatch(FlutterCommand command, {String? noDeviceMessa
   }
 }
 
+/// What `run`, `drive` and `install` say when `--use-application-binary` is
+/// given for a watch target.
+const String kWatchosApplicationBinaryRefusal =
+    '--use-application-binary is not supported for an Apple Watch target: '
+    'flutter-watchos installs the app it builds from the project.\n'
+    'Run the command again without --use-application-binary.';
+
+/// Refuses `--use-application-binary` when a target of [command] is a watch
+/// or a watch Simulator, in any mode.
+///
+/// A watch launch or install takes the app built from the project, so the
+/// binary named would be ignored without a word. `run`, `drive` and `install`
+/// call this first in `validateCommand`, before anything is built. Only when
+/// the option is given, it finds the targets with the command's own lookup,
+/// which stock's later lookup reuses. When no target is found, it stops as
+/// stock would, with [noDeviceMessage].
+Future<void> refuseApplicationBinaryForWatch(
+  FlutterCommand command, {
+  String? noDeviceMessage,
+}) async {
+  if (!command.argParser.options.containsKey(FlutterOptions.kUseApplicationBinary) ||
+      command.stringArg(FlutterOptions.kUseApplicationBinary) == null) {
+    return;
+  }
+  final List<Device>? devices = await command.findAllTargetDevices();
+  if (devices == null) {
+    throwToolExit(noDeviceMessage);
+  }
+  if (devices.any((Device device) => device is WatchosDevice)) {
+    throwToolExit(kWatchosApplicationBinaryRefusal);
+  }
+}
+
 /// Prints [watchosDefaultFlavorWarning] once when [defaultFlavor] is set, no
 /// `--flavor` ([cliFlavor]) was given, and a target among [devices] is a
 /// watch.

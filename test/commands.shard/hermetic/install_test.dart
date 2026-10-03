@@ -136,4 +136,29 @@ void main() {
     );
     expect(command.reachedRunCommand, isFalse);
   }, overrides: overrides());
+
+  for (final device in <String>[kSimulatorId, kWatchId]) {
+    testUsingContext(
+      '--use-application-binary for a watch ($device) stops before any install step',
+      () async {
+        fileSystem.file('/project/Runner.app/Info.plist').createSync(recursive: true);
+        final List<String> before = allFiles(fileSystem);
+
+        await expectLater(
+          createTestCommandRunner(command).run(<String>[
+            'install',
+            '-d',
+            device,
+            '--use-application-binary',
+            '/project/Runner.app',
+          ]),
+          throwsToolExit(message: kWatchosApplicationBinaryRefusal),
+        );
+
+        expect(command.reachedRunCommand, isFalse);
+        expect(allFiles(fileSystem), before);
+      },
+      overrides: overrides(),
+    );
+  }
 }
