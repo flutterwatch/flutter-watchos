@@ -113,6 +113,95 @@ PASS vm.new_check ok
     expect(scratch.listSync(), isEmpty);
   });
 
+  // The suite runs the CLI under a temporary HOME, which it deletes at the
+  // end. Packages resolved there would leave the CLI's checkout pointing into
+  // a pub cache that is gone, and nothing in it would compile again.
+  group('run.sh and the packages of the CLI under test', () {
+    late Directory scratch;
+    late Directory tmp;
+    late String ran;
+
+    setUp(() {
+      scratch = Directory.systemTemp.createTempSync('debug_suite_cli');
+      tmp = Directory('${scratch.path}/tmp')..createSync();
+      ran = '${scratch.path}/ran.txt';
+    });
+
+    tearDown(() => scratch.deleteSync(recursive: true));
+
+    /// A checkout at `<scratch>/cli` whose bin/flutter-watchos writes its
+    /// HOME and its arguments to [ran], with [packageConfig] as its package
+    /// config, if given. Returns the CLI's path.
+    String fakeCli({String? packageConfig}) {
+      final cli = File('${scratch.path}/cli/bin/flutter-watchos')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('#!/bin/sh\nprintf "%s\\n" "\$HOME" "\$*" > "$ran"\n');
+      Process.runSync('chmod', <String>['+x', cli.path]);
+      if (packageConfig != null) {
+        File('${scratch.path}/cli/.dart_tool/package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(packageConfig);
+      }
+      return cli.path;
+    }
+
+    /// run.sh for a made-up Simulator, which stops at its space check if
+    /// nothing stops it before.
+    ProcessResult runSuite(String cli) => Process.runSync(
+      'bash',
+      <String>['tool/debug_suite/run.sh', '00000000-0000-0000-0000-000000000000'],
+      environment: <String, String>{
+        'HOME': '${scratch.path}/caller-home',
+        'TMPDIR': tmp.path,
+        'WATCHOS_ENGINE_ARTIFACTS': tmp.path,
+        'FLUTTER_WATCHOS_CLI': cli,
+        'DEBUG_SUITE_MIN_GIB': '999999',
+      },
+    );
+
+    test('it refuses a checkout that an earlier run left pointing into its temporary HOME', () {
+      final String cli = fakeCli(
+        packageConfig:
+            '{"packages":[{"name":"path","rootUri":'
+            '"file:///private/var/folders/x/T/fw_debug_suite.AbC123/home/.pub-cache/'
+            'hosted/pub.dev/path-1.9.1"}]}',
+      );
+      final String root = Directory('${scratch.path}/cli').resolveSymbolicLinksSync();
+
+      final ProcessResult result = runSuite(cli);
+
+      expect(result.exitCode, 2);
+      expect(
+        result.stderr,
+        contains('points into the temporary directory of an earlier suite run'),
+      );
+      expect(result.stderr, contains('  rm "$root/.dart_tool/package_config.json"\n'));
+      expect(result.stderr, contains('  "$root/bin/flutter-watchos" --version'));
+      expect(File(ran).existsSync(), isFalse);
+      expect(tmp.listSync(), isEmpty);
+    });
+
+    test("it runs the CLI once under the caller's HOME before it makes anything", () {
+      final ProcessResult result = runSuite(
+        fakeCli(packageConfig: '{"packages":[{"name":"path","rootUri":"file:///pub-cache/path"}]}'),
+      );
+
+      expect(result.exitCode, 2);
+      expect(result.stderr, contains('the suite needs 999999'));
+      expect(File(ran).readAsLinesSync(), <String>['${scratch.path}/caller-home', '--version']);
+      expect(tmp.listSync(), isEmpty);
+    });
+
+    test("it keeps the caller's pub cache when it switches to its own HOME", () {
+      final List<String> lines = File('tool/debug_suite/run.sh').readAsLinesSync();
+      final int pubCache = lines.indexOf(r'export PUB_CACHE="${PUB_CACHE:-$HOME/.pub-cache}"');
+      final int home = lines.indexOf(r'export HOME="$WORK/home"');
+
+      expect(pubCache, isNonNegative);
+      expect(home, pubCache + 1);
+    });
+  });
+
   // A limitation is either still an expected failure or, once fixed, named in
   // the "Fixed:" comment above the check that now passes, so none is dropped
   // silently. A new limitation is added here too.

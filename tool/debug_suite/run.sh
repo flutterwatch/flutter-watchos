@@ -28,7 +28,9 @@
 #                             ./debug_suite_out).
 #
 # Everything else the suite makes (the app, a fresh HOME, the build, the
-# installed app and a --create Simulator) is deleted when it ends.
+# installed app and a --create Simulator) is deleted when it ends. The CLI
+# under test runs once under the caller's HOME first, so that it resolves its
+# own packages there, and every run after it keeps the caller's pub cache.
 #
 # Exit 0 when every check matches expectations.txt, 1 when not, 2 when the
 # suite could not run.
@@ -58,7 +60,7 @@ case "${1:-}" in
     [ -n "$CREATE_RUNTIME" ] || die "--create needs a runtime id"
     ;;
   "" | -h | --help)
-    sed -n '6,34p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '6,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
   *) UDID="$1" ;;
@@ -68,6 +70,45 @@ esac
 [ -x "$DART" ] || die "Dart not found at $DART (run the CLI once to set up flutter/)"
 [ -n "${WATCHOS_ENGINE_ARTIFACTS:-}" ] || die "set WATCHOS_ENGINE_ARTIFACTS"
 [ -d "$WATCHOS_ENGINE_ARTIFACTS" ] || die "no engine artifacts at $WATCHOS_ENGINE_ARTIFACTS"
+
+# The checkouts whose resolved packages the suite's runs use: the CLI
+# under test's, and this one's, which runs vmcheck.dart and verdict.dart.
+CLI_ROOT="$(cd "$(dirname "$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CLI")")/.." && pwd -P)"
+CHECKOUTS=("$CLI_ROOT")
+[ "$CLI_ROOT" = "$(cd "$REPO_ROOT" && pwd -P)" ] || CHECKOUTS+=("$(cd "$REPO_ROOT" && pwd -P)")
+
+# stale_checkout <text>: prints the first checkout whose package config names
+# a path that holds <text>.
+stale_checkout() {
+  local root
+  for root in "${CHECKOUTS[@]}"; do
+    if grep -qF -- "$1" "$root/.dart_tool/package_config.json" 2>/dev/null; then
+      echo "$root"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# How to repair a checkout whose package config points into a directory that
+# is gone: without the file, the checkout's CLI resolves its packages again.
+repair_lines() {
+  printf '  rm "%s"\n  "%s" --version\n' "$1/.dart_tool/package_config.json" "$1/bin/flutter-watchos"
+}
+
+# A run that resolved packages under a suite's temporary HOME left the
+# checkout pointing into a pub cache deleted since, and nothing in it
+# compiles any more.
+if stale="$(stale_checkout /fw_debug_suite.)"; then
+  die "the package config of $stale points into the temporary directory of an earlier suite run, which is gone. To resolve the packages again:
+$(repair_lines "$stale")"
+fi
+
+# Bootstrap the CLI under test now, under the caller's HOME: its first run
+# resolves its own packages, and under the suite's HOME they would come from a
+# pub cache that the suite deletes at the end.
+note "bootstrapping $CLI"
+"$CLI" --version >/dev/null 2>&1 || die "$CLI --version failed; run it to see why"
 
 SCRATCH_PARENT="${TMPDIR:-/tmp}"
 available_gib="$(df -g "$SCRATCH_PARENT" | awk 'NR == 2 { print $4 }')"
@@ -85,7 +126,7 @@ PIDS=()
 : > "$RESULTS"
 
 cleanup() {
-  local pid
+  local status=$? pid stale
   for pid in "${PIDS[@]:-}"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null
   done
@@ -99,8 +140,14 @@ cleanup() {
   fi
   mkdir -p "$OUT"
   cp "$WORK"/*.log "$WORK"/*.txt "$OUT"/ 2>/dev/null
+  if stale="$(stale_checkout "/$(basename "$WORK")/")"; then
+    echo "debug_suite: error: the package config of $stale points into $WORK, which is deleted now. To resolve the packages again:" >&2
+    repair_lines "$stale" >&2
+    status=2
+  fi
   rm -rf "$WORK"
   note "results and logs in $OUT"
+  exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 2' INT TERM
@@ -133,6 +180,9 @@ xcrun simctl boot "$UDID" >/dev/null 2>&1
 xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || die "Simulator $UDID did not boot"
 note "Simulator $SIM_NAME ($UDID) is booted"
 
+# Every pub get from here on, the app's included, uses the caller's pub cache,
+# which outlives the suite's HOME.
+export PUB_CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
 export HOME="$WORK/home"
 export FLUTTER_WATCHOS_BUILD_REGISTRY=0
 mkdir -p "$HOME"
