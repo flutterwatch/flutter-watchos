@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_watchos/watchos_device.dart';
+import 'package:flutter_watchos/watchos_mode_guidance.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -612,6 +613,33 @@ void main() {
       expect(watch.unsupportedModeGuidance(BuildMode.profile), isNull);
       expect(watch.unsupportedModeGuidance(BuildMode.release), isNull);
       expect(watch.unsupportedModeGuidance(BuildMode.debug), startsWith('Debug mode is not supported'));
+    });
+
+    // One source for the mode guidance: what startApp prints is run's
+    // guidance, so no second text with comments after its commands exists.
+    testWithoutContext("unsupportedModeGuidance is run's paste-ready guidance", () {
+      for (final simulator in <bool>[true, false]) {
+        final device = WatchosDevice(
+          'id-1',
+          name: 'W',
+          logger: BufferLogger.test(),
+          isSimulator: simulator,
+        );
+        for (final BuildMode mode in BuildMode.values) {
+          final String? guidance = device.unsupportedModeGuidance(mode);
+          expect(
+            guidance,
+            watchosModeRefusal(
+              command: WatchosModeCommand.run,
+              mode: mode,
+              simulator: simulator,
+              deviceId: 'id-1',
+            ),
+            reason: '${simulator ? 'Simulator' : 'watch'} ${mode.cliName}',
+          );
+          expect(guidance ?? '', isNot(contains('#')));
+        }
+      }
     });
   });
 }

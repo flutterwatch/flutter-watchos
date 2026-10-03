@@ -7,18 +7,36 @@ import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
+import 'package:flutter_tools/src/test/integration_test_device.dart';
+import 'package:flutter_tools/src/test/test_device.dart';
 import 'package:flutter_watchos/watchos_application_package.dart';
 import 'package:flutter_watchos/watchos_device.dart';
+import 'package:flutter_watchos/watchos_mode_guidance.dart';
+import 'package:test/fake.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/fake_process_manager.dart';
+
+/// An application package factory with a package for every platform, so a
+/// launch gets as far as the device's startApp.
+class _OnePackage extends Fake implements ApplicationPackageFactory {
+  @override
+  Future<ApplicationPackage?> getPackageForPlatform(
+    TargetPlatform platform, {
+    BuildInfo? buildInfo,
+    File? applicationBinary,
+  }) async => _Package();
+}
+
+class _Package extends Fake implements ApplicationPackage {}
 
 void main() {
   group('WatchosPhysicalDeviceLogReader noise filtering', () {
@@ -163,6 +181,48 @@ void main() {
         expect(processManager, hasNoRemainingExpectations);
       },
       overrides: <Type, Generator>{
+        FileSystem: () => MemoryFileSystem.test(),
+        ProcessManager: () => processManager,
+      },
+    );
+
+    // `test integration_test -d <watch>` runs debug, and stock's integration
+    // test device starts the app directly, past the checks of run, drive and
+    // attach: startApp's refusal is what stops it.
+    testUsingContext(
+      'test integration_test -d <watch> stops at startApp with the guidance',
+      () async {
+        final logger = BufferLogger.test();
+        final device = WatchosDevice(
+          'physical-id',
+          name: 'My Watch',
+          logger: logger,
+          isSimulator: false,
+        );
+        final testDevice = IntegrationTestTestDevice(
+          id: 1,
+          device: device,
+          debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
+          userIdentifier: null,
+          compileExpression: null,
+        );
+
+        await expectLater(
+          testDevice.start('integration_test/app_test.dart'),
+          throwsA(isA<TestDeviceException>()),
+        );
+        final String? guidance = watchosModeRefusal(
+          command: WatchosModeCommand.run,
+          mode: BuildMode.debug,
+          simulator: false,
+          deviceId: 'physical-id',
+        );
+        expect(logger.errorText, '$guidance\n');
+        expect(logger.errorText, isNot(contains('#')));
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        ApplicationPackageFactory: () => _OnePackage(),
         FileSystem: () => MemoryFileSystem.test(),
         ProcessManager: () => processManager,
       },
