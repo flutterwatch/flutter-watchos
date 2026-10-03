@@ -39,8 +39,10 @@ class WatchosDeviceManager extends FlutterDeviceManager {
 
   final WatchosWorkflow watchosWorkflow;
 
-  @override
-  List<DeviceDiscovery> get deviceDiscoverers => <DeviceDiscovery>[
+  /// Stock's discoverers and the watch's, made once: each discoverer caches
+  /// the devices it finds, so a command that looks its device up more than
+  /// once lists them once.
+  late final List<DeviceDiscovery> _deviceDiscoverers = <DeviceDiscovery>[
     ...super.deviceDiscoverers,
     WatchosDeviceDiscovery(
       watchosWorkflow: watchosWorkflow,
@@ -48,6 +50,9 @@ class WatchosDeviceManager extends FlutterDeviceManager {
       requestedDeviceId: () => specifiedDeviceId,
     ),
   ];
+
+  @override
+  List<DeviceDiscovery> get deviceDiscoverers => _deviceDiscoverers;
 }
 
 /// Discovers watchOS devices and simulators via `xcrun simctl` / `devicectl`.
