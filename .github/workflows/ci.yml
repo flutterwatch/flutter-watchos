@@ -8,8 +8,9 @@ on:
 jobs:
   analyze-and-test:
     # The docs promise Xcode 26 or later. This image offers the first Xcode
-    # 26 release (26.0.1) and defaults to 26.6. Branch protection requires
-    # this job by its id, so keep the id.
+    # 26 release (26.0.1) and defaults to 26.6. The branch protection that
+    # .github/BRANCH_PROTECTION.md recommends names this job by its id, so
+    # keep the id.
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -99,9 +100,10 @@ jobs:
           exit "$status"
 
   package:
-    # The flutter_watchos package and its example, with the pinned SDK. The
-    # CLI's own analyze leaves packages/ out (analysis_options.yaml), so this
-    # job is where the package is analysed and tested.
+    # The flutter_watchos package and its example, the crown runtime and the
+    # debug suite's verdict logic, with the pinned SDK. The CLI's own analyze
+    # leaves packages/ and runtime/ out (analysis_options.yaml), so this job
+    # is where they are analysed and tested.
     runs-on: macos-26
     timeout-minutes: 30
     # Reports without blocking on the release push: by then the package is
@@ -140,6 +142,25 @@ jobs:
       - name: Example tests
         working-directory: packages/flutter_watchos/example
         run: $GITHUB_WORKSPACE/flutter/bin/flutter test
+
+      # The crown runtime, which the CLI compiles into every watch app: a
+      # Flutter package of its own, with its own lockfile.
+      - name: Runtime dependencies (from the lockfile)
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter pub get --enforce-lockfile
+
+      - name: Runtime analyze
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter analyze --fatal-infos
+
+      - name: Runtime tests
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter test
+
+      # Which results make a run of tool/debug_suite/run.sh green. The suite
+      # itself needs a watch Simulator, so CI runs only this.
+      - name: Debug suite verdict tests
+        run: ./flutter/bin/dart test tool/debug_suite/verdict_test.dart
 
       # No command above may leave a change behind: a dirty tree would also
       # put stray files into the package archive.
