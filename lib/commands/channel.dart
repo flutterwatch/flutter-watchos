@@ -98,8 +98,10 @@ class WatchosChannelCommand extends FlutterCommand {
   @override
   final String category = FlutterCommandCategory.sdk;
 
+  /// The usage line names flutter-watchos: the runner's executable name is
+  /// stock's `flutter`, which runs no watch command.
   @override
-  String get invocation => '${runner?.executableName} $name';
+  String get invocation => 'flutter-watchos $name';
 
   @override
   bool get shouldUpdateCache => false;

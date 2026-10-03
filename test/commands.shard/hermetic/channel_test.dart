@@ -113,6 +113,8 @@ void main() {
       await createTestCommandRunner(WatchosChannelCommand()).run(<String>['channel', '--help']);
 
       expect(logger.statusText, contains('Show the Flutter version flutter-watchos pins.'));
+      expect(logger.statusText, contains('Usage: flutter-watchos channel\n'));
+      expect(logger.statusText, isNot(contains('Usage: flutter channel')));
       expect(logger.statusText, contains('flutter-watchos upgrade'));
       expect(logger.statusText, isNot(contains('switch Flutter channels')));
       expect(logger.statusText, isNot(contains('--all')));
