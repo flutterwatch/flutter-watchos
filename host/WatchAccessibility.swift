@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // The watchOS accessibility overlay — the host half of the bridge whose engine
 // half is documented in flutter_watchos_accessibility.h.
 //

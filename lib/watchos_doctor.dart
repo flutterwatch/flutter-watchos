@@ -2,19 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/version.dart' show kUserBranch;
 import 'package:process/process.dart';
 
 import 'watchos_auth.dart';
+import 'watchos_build_info.dart';
 import 'watchos_cache.dart';
 
 WatchosWorkflow? get watchosWorkflow => context.get<WatchosWorkflow>();
@@ -127,16 +131,19 @@ class PinnedFlutterValidator extends DoctorValidator {
 class WatchosValidator extends DoctorValidator {
   WatchosValidator({
     required ProcessManager processManager,
+    Xcode? xcode,
     FileSystem? fileSystem,
     Platform? platform,
     OperatingSystemUtils? operatingSystemUtils,
   }) : _processManager = processManager,
+       _xcode = xcode,
        _fileSystem = fileSystem,
        _platform = platform,
        _operatingSystemUtils = operatingSystemUtils,
        super('watchOS toolchain - develop for Apple Watch devices');
 
   final ProcessManager _processManager;
+  final Xcode? _xcode;
   final FileSystem? _fileSystem;
   final Platform? _platform;
   final OperatingSystemUtils? _operatingSystemUtils;
@@ -147,7 +154,7 @@ class WatchosValidator extends DoctorValidator {
     final messages = <ValidationMessage>[];
 
     // 1. Check Xcode installation
-    final bool xcodeOk = await _checkXcode(messages);
+    final bool xcodeOk = _checkXcode(messages);
     if (!xcodeOk) {
       return ValidationResult(ValidationType.missing, messages);
     }
@@ -183,17 +190,28 @@ class WatchosValidator extends DoctorValidator {
     return ValidationResult(validationType, messages, statusInfo: statusInfo);
   }
 
-  /// Checks that Xcode is installed and reports its version.
-  Future<bool> _checkXcode(List<ValidationMessage> messages) async {
-    try {
-      final ProcessResult result = await _processManager.run(<String>['xcodebuild', '-version']);
-      if (result.exitCode == 0) {
-        final String version = (result.stdout as String).split('\n').first;
-        messages.add(ValidationMessage('Xcode installed ($version)'));
-        return true;
+  /// Checks that Xcode is installed and reports its version, as an error
+  /// when it is older than [kWatchosXcodeRequiredVersion].
+  ///
+  /// The version is stock's cached `xcodebuild -version`
+  /// ([Xcode.currentVersion]), the one the build stop reads too. An Xcode
+  /// whose version does not parse is reported without a verdict.
+  bool _checkXcode(List<ValidationMessage> messages) {
+    final Xcode? xcode = _xcode ?? globals.xcode;
+    final String? versionText = xcode?.versionText;
+    if (xcode != null && versionText != null) {
+      final Version? version = xcode.currentVersion;
+      final String name = version == null
+          ? versionText.split(',').first.trim()
+          : watchosXcodeName(version);
+      final String? build = xcode.buildVersion;
+      messages.add(
+        ValidationMessage('Xcode installed ($name${build == null ? '' : ', build $build'})'),
+      );
+      if (version != null && version < kWatchosXcodeRequiredVersion) {
+        messages.add(ValidationMessage.error(watchosXcodeTooOldMessage(version)));
       }
-    } on ProcessException {
-      // ignore
+      return true;
     }
 
     messages.add(
@@ -244,7 +262,8 @@ class WatchosValidator extends DoctorValidator {
     messages.add(const ValidationMessage('Apple Silicon host (arm64)'));
   }
 
-  /// Checks that the watchOS SDK is available in Xcode.
+  /// Checks that the watchOS SDK is available in Xcode, as an error when it
+  /// is older than [kWatchosSupportedMinimum].
   Future<void> _checkWatchosSdk(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>[
@@ -255,11 +274,22 @@ class WatchosValidator extends DoctorValidator {
       ]);
       if (result.exitCode == 0) {
         final String sdkPath = (result.stdout as String).trim();
-        // Extract version from path like .../WatchOS11.0.sdk
-        final versionRegex = RegExp(r'WatchOS(\d+\.\d+)\.sdk');
-        final Match? match = versionRegex.firstMatch(sdkPath);
-        final version = match != null ? ' ${match.group(1)}' : '';
-        messages.add(ValidationMessage('watchOS SDK$version installed'));
+        // The version is in the SDK's file name: .../WatchOS27.0.sdk
+        final Match? match = RegExp(r'WatchOS([0-9.]+)\.sdk').firstMatch(sdkPath);
+        final String? versionText = match?.group(1);
+        messages.add(
+          ValidationMessage('watchOS SDK${versionText == null ? '' : ' $versionText'} installed'),
+        );
+        final Version? version = Version.parse(versionText);
+        if (version != null && version < kWatchosSupportedMinimum) {
+          messages.add(
+            ValidationMessage.error(
+              'watchOS SDK $versionText is older than watchOS $kWatchosSupportedMinimum, the '
+              'oldest watchOS flutter-watchos builds for. Install Xcode '
+              '$kWatchosXcodeRequiredVersion or later, which comes with a newer SDK.',
+            ),
+          );
+        }
         return;
       }
     } on ProcessException {
@@ -273,7 +303,12 @@ class WatchosValidator extends DoctorValidator {
     );
   }
 
-  /// Checks that at least one watchOS Simulator runtime is installed.
+  /// Checks that at least one watchOS Simulator runtime is available and
+  /// names the highest one, with a hint when none is at least
+  /// [kWatchosSupportedMinimum].
+  ///
+  /// A runtime whose JSON has no `isAvailable` key counts as available, as
+  /// stock's nullable `IOSSimulatorRuntime.isAvailable` allows.
   Future<void> _checkSimulatorRuntime(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>[
@@ -284,16 +319,25 @@ class WatchosValidator extends DoctorValidator {
         '--json',
       ]);
       if (result.exitCode == 0) {
-        final stdout = result.stdout as String;
-        if (stdout.contains('watchOS') ||
-            stdout.contains('com.apple.CoreSimulator.SimRuntime.watchOS')) {
-          final versionRegex = RegExp(r'"name"\s*:\s*"watchOS (\d+\.\d+)"');
-          final Iterable<Match> matches = versionRegex.allMatches(stdout);
-          if (matches.isNotEmpty) {
-            final String latest = matches.last.group(1)!;
-            messages.add(ValidationMessage('watchOS Simulator runtime (watchOS $latest)'));
-          } else {
-            messages.add(const ValidationMessage('watchOS Simulator runtime installed'));
+        final List<_SimulatorRuntime> runtimes = _availableWatchosRuntimes(result.stdout as String);
+        if (runtimes.isNotEmpty) {
+          _SimulatorRuntime highest = runtimes.first;
+          for (final _SimulatorRuntime runtime in runtimes.skip(1)) {
+            final Version? version = runtime.version;
+            if (version != null && (highest.version == null || version > highest.version!)) {
+              highest = runtime;
+            }
+          }
+          messages.add(ValidationMessage('watchOS Simulator runtime (${highest.name})'));
+          final Version? highestVersion = highest.version;
+          if (highestVersion != null && highestVersion < kWatchosSupportedMinimum) {
+            messages.add(
+              ValidationMessage.hint(
+                'No watchOS Simulator runtime of watchOS $kWatchosSupportedMinimum or later is '
+                'installed, and apps need watchOS $kWatchosSupportedMinimum or later to run. Open '
+                'Xcode → Settings → Components and download a newer watchOS Simulator.',
+              ),
+            );
           }
           return;
         }
@@ -310,7 +354,46 @@ class WatchosValidator extends DoctorValidator {
     );
   }
 
-  /// Checks that CocoaPods is installed (needed for plugin support).
+  /// The available watchOS runtimes in `simctl list runtimes --json` output,
+  /// each with its name ("watchOS 27.0") and version; empty when the output
+  /// is not that JSON.
+  static List<_SimulatorRuntime> _availableWatchosRuntimes(String json) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(json);
+    } on FormatException {
+      return const <_SimulatorRuntime>[];
+    }
+    final Object? list = decoded is Map<String, Object?> ? decoded['runtimes'] : null;
+    if (list is! List<Object?>) {
+      return const <_SimulatorRuntime>[];
+    }
+    final runtimes = <_SimulatorRuntime>[];
+    for (final Object? runtime in list) {
+      if (runtime is! Map<String, Object?>) {
+        continue;
+      }
+      final Object? name = runtime['name'];
+      final Object? identifier = runtime['identifier'];
+      final bool watchos =
+          runtime['platform'] == 'watchOS' ||
+          (identifier is String && identifier.contains('.SimRuntime.watchOS')) ||
+          (name is String && name.startsWith('watchOS '));
+      if (!watchos || name is! String || runtime['isAvailable'] == false) {
+        continue;
+      }
+      final Object? version = runtime['version'];
+      runtimes.add((
+        name: name,
+        version: Version.parse(version is String ? version : name.substring(name.indexOf(' ') + 1)),
+      ));
+    }
+    return runtimes;
+  }
+
+  /// Checks that CocoaPods is installed. Only a `watchos/Podfile` needs it:
+  /// the build runs `pod install` for one and for nothing else, and plugins
+  /// build without it.
   Future<void> _checkCocoaPods(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>['pod', '--version']);
@@ -325,8 +408,8 @@ class WatchosValidator extends DoctorValidator {
 
     messages.add(
       const ValidationMessage.hint(
-        'CocoaPods not installed. Install with: brew install cocoapods\n'
-        'CocoaPods is required for plugins with native watchOS code.',
+        'CocoaPods not installed. You need it only if your watchos/ folder has a Podfile.\n'
+        'Install it with: brew install cocoapods',
       ),
     );
   }
@@ -414,6 +497,10 @@ class WatchosValidator extends DoctorValidator {
     return validate();
   }
 }
+
+/// A watchOS Simulator runtime from `simctl list runtimes --json`: its name
+/// ("watchOS 27.0") and its version, when that parses.
+typedef _SimulatorRuntime = ({String name, Version? version});
 
 /// The watchOS-specific implementation of a [Workflow].
 class WatchosWorkflow extends Workflow {

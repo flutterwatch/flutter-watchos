@@ -9,7 +9,8 @@
 // stock Flutter, whose iOS Runner is a dozen lines because the machinery
 // lives in Flutter.framework.
 
-import 'package:file/file.dart';
+import 'dart:io' as io;
+
 import 'package:file/memory.dart';
 import 'package:flutter_watchos/build_targets/watchos_host_module.dart';
 
@@ -45,32 +46,30 @@ void main() {
     });
   });
 
-  group('parseWatchosDeploymentTarget', () {
-    late MemoryFileSystem fileSystem;
-
-    setUp(() {
-      fileSystem = MemoryFileSystem.test();
+  // The per-configuration target itself is tested with the other deployment
+  // target rules, in watchos_deployment_target_test.dart.
+  group('hostModuleArchs', () {
+    testWithoutContext('the Simulator is arm64 only', () {
+      for (final target in <String>['26.0', '26.5', '27.0']) {
+        expect(hostModuleArchs(simulator: true, deploymentTarget: target), <String>['arm64']);
+      }
     });
 
-    testWithoutContext('reads the project declaration', () {
-      final File file = fileSystem.file('/p/project.pbxproj')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('WATCHOS_DEPLOYMENT_TARGET = 26.0;');
-      expect(parseWatchosDeploymentTarget(file), '26.0');
+    // Xcode's Standard Architectures build an arm64_32 slice of App.swift
+    // below 27.0, and its `import FlutterWatchOS` must resolve there too.
+    testWithoutContext('a device below 27.0 adds arm64_32', () {
+      for (final target in <String>['26.0', '26.5', '26.99']) {
+        expect(hostModuleArchs(simulator: false, deploymentTarget: target), <String>[
+          'arm64',
+          'arm64_32',
+        ]);
+      }
     });
 
-    testWithoutContext('falls back when the project file is missing', () {
-      expect(
-        parseWatchosDeploymentTarget(fileSystem.file('/nope/project.pbxproj')),
-        '26.0',
-      );
-    });
-
-    testWithoutContext('falls back when the declaration is absent', () {
-      final File file = fileSystem.file('/p/project.pbxproj')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('SWIFT_VERSION = 5.0;');
-      expect(parseWatchosDeploymentTarget(file), '26.0');
+    testWithoutContext('a device from 27.0 is arm64 only', () {
+      for (final target in <String>['27.0', '27.1', '27', '28.0']) {
+        expect(hostModuleArchs(simulator: false, deploymentTarget: target), <String>['arm64']);
+      }
     });
   });
 
@@ -255,21 +254,228 @@ void main() {
     });
   });
 
+  group('host sources and the arm64_32 slice', () {
+    // Below watchOS 27.0 a device build compiles the host module for arm64
+    // and for arm64_32, the slice Xcode's Standard Architectures add for the
+    // App Store. The engine is arm64-only and the template's arm64_32 slice
+    // links no engine at all, so a host source that reaches the engine must
+    // be compiled out of that slice whole. The only other way to stay in it
+    // is to be a listed exception that names nothing of the engine outside
+    // its comments (spec 0002, criterion 23).
+    final List<String> hostFunctions = _declaredHostFunctions(
+      readHostSource('flutter_watchos_host.h'),
+    );
+
+    test('every host/*.swift is guarded whole-file or a listed exception', () {
+      final names = <String>[
+        for (final io.FileSystemEntity entity in io.Directory(cliRootPath('host')).listSync())
+          if (entity is io.File && entity.path.endsWith('.swift')) entity.uri.pathSegments.last,
+      ]..sort();
+      // The five sources this test was written against; a new one is picked
+      // up by the listing above and checked the same way.
+      expect(
+        names,
+        containsAll(<String>[
+          'FlutterAppDelegate.swift',
+          'FlutterHostView.swift',
+          'FlutterRunner.swift',
+          'FlutterWatchOSVmBridge.swift',
+          'WatchAccessibility.swift',
+        ]),
+      );
+      final problems = <String>[
+        for (final name in names) ?_hostSourceProblem(name, readHostSource(name), hostFunctions),
+      ];
+      expect(problems, isEmpty);
+    });
+
+    test('every listed exception exists and says why', () {
+      for (final MapEntry<String, String> entry in _unguardedHostSources.entries) {
+        expect(io.File(cliRootPath('host/${entry.key}')).existsSync(), isTrue, reason: entry.key);
+        expect(entry.value, isNotEmpty, reason: entry.key);
+      }
+    });
+
+    test('reads the functions the header declares, not its comments or typedefs', () {
+      expect(hostFunctions, contains('FlutterWatchOSHostRun'));
+      expect(hostFunctions, contains('FlutterWatchOSTextInputCopyFields'));
+      expect(hostFunctions, contains('FlutterWatchOSA11yPerformCustomAction'));
+      // A typedef names a type, not an entry point.
+      expect(hostFunctions, isNot(contains('FlutterWatchOSFrameCallback')));
+      // Resolved with dlsym, so the header names it only in a comment.
+      expect(hostFunctions, isNot(contains('FlutterWatchOSHostSetLayersCallback')));
+    });
+
+    // The mutations of criterion 23, applied to the real sources: each one
+    // must be reported.
+    test('reports WatchAccessibility.swift without its guard', () {
+      final String source = readHostSource('WatchAccessibility.swift');
+      expect(source, contains('import FlutterWatchOSHostC'));
+      expect(
+        _hostSourceProblem('WatchAccessibility.swift', _withoutGuard(source), hostFunctions),
+        isNotNull,
+      );
+    });
+
+    test('reports FlutterHostView.swift without its guard', () {
+      // It has no FlutterWatchOSHostC import; it reaches the engine through
+      // FlutterRunner, which an import check alone would not notice.
+      final String source = readHostSource('FlutterHostView.swift');
+      expect(source, isNot(contains('import FlutterWatchOSHostC')));
+      expect(
+        _hostSourceProblem('FlutterHostView.swift', _withoutGuard(source), hostFunctions),
+        isNotNull,
+      );
+    });
+
+    test('reports FlutterRunner named in code in FlutterWatchOSVmBridge.swift', () {
+      final String source = readHostSource('FlutterWatchOSVmBridge.swift');
+      // Named in a comment only, which is allowed.
+      expect(source, contains('FlutterRunner'));
+      expect(_hostSourceProblem('FlutterWatchOSVmBridge.swift', source, hostFunctions), isNull);
+      final String mutated = source.replaceFirst(
+        '#else',
+        'private let runner = FlutterRunner.shared\n\n#else',
+      );
+      expect(_hostSourceProblem('FlutterWatchOSVmBridge.swift', mutated, hostFunctions), isNotNull);
+    });
+
+    test('reports a new host file without the guard', () {
+      expect(
+        _hostSourceProblem(
+          'NewHostFile.swift',
+          '// A new host source.\nimport SwiftUI\n\nstruct NewHostView: View {}\n',
+          hostFunctions,
+        ),
+        isNotNull,
+      );
+    });
+
+    test('reports an engine call in an exception', () {
+      const source = 'import Foundation\n\nfunc tick() { FlutterWatchOSHostNotifyVsync() }\n';
+      expect(
+        _hostSourceProblem('FlutterWatchOSVmBridge.swift', source, hostFunctions),
+        contains('FlutterWatchOSHostNotifyVsync'),
+      );
+      expect(
+        _hostSourceProblem(
+          'FlutterWatchOSVmBridge.swift',
+          'import FlutterWatchOSHostC\n',
+          hostFunctions,
+        ),
+        contains('FlutterWatchOSHostC'),
+      );
+    });
+
+    test('reports a guard that closes before the end of the file', () {
+      const source = '#if !arch(arm64_32)\nimport SwiftUI\n#endif\nstruct Late {}\n';
+      expect(_hostSourceProblem('Late.swift', source, hostFunctions), isNotNull);
+    });
+
+    test('reports a guard with an #else branch for the arm64_32 slice', () {
+      const source = '#if !arch(arm64_32)\nimport SwiftUI\n#else\nstruct Stub {}\n#endif\n';
+      expect(_hostSourceProblem('Else.swift', source, hostFunctions), isNotNull);
+    });
+
+    test('accepts a header comment above the guard and nested conditions inside', () {
+      const source =
+          '// Copyright header.\n'
+          '/* A block comment. */\n'
+          '#if !arch(arm64_32)\n'
+          'import SwiftUI\n'
+          '#if FLUTTER_WATCHOS_STATUS_BAR_SPI\n'
+          'let url = "http://example.com" // not a comment start inside the string\n'
+          '#endif\n'
+          '#endif  // !arch(arm64_32)\n';
+      expect(_hostSourceProblem('Nested.swift', source, hostFunctions), isNull);
+    });
+  });
+
+  group('host API comments', () {
+    // Spec 0007, criterion 27: the host module is the Swift API every app
+    // compiles against, and its C header is the contract with the engine, so
+    // both carry their documentation in the source.
+    test('every public or open Swift declaration has a doc comment', () {
+      final documented = <String>[];
+      final undocumented = <String>[];
+      for (final io.FileSystemEntity entity in io.Directory(cliRootPath('host')).listSync()) {
+        if (entity is! io.File || !entity.path.endsWith('.swift')) {
+          continue;
+        }
+        final String name = entity.uri.pathSegments.last;
+        final List<String> lines = readHostSource(name).split('\n');
+        final List<String> code = _withoutComments(readHostSource(name)).split('\n');
+        for (var i = 0; i < code.length; i++) {
+          if (!_publicSwiftDeclaration.hasMatch(code[i])) {
+            continue;
+          }
+          // The doc comment sits above the declaration or above its
+          // attributes (`@objc`, `@discardableResult`, …).
+          int above = i - 1;
+          while (above >= 0 && _swiftAttributeLine.hasMatch(lines[above])) {
+            above--;
+          }
+          final where = '$name:${i + 1}: ${lines[i].trim()}';
+          if (above >= 0 && lines[above].trimLeft().startsWith('///')) {
+            documented.add(where);
+          } else {
+            undocumented.add(where);
+          }
+        }
+      }
+      // 24 when the spec was written; more is fine, fewer means the scan
+      // stopped finding them.
+      expect(documented.length, greaterThanOrEqualTo(24));
+      expect(undocumented, isEmpty);
+    });
+
+    test('the header says the thread and pointer ownership of 18 prototypes', () {
+      const names = <String>[
+        'FlutterWatchOSTextInputCopyFields',
+        'FlutterWatchOSTextInputGeneration',
+        'FlutterWatchOSTextInputSetChangeCallback',
+        'FlutterWatchOSTextInputGetText',
+        'FlutterWatchOSTextInputBeginEditing',
+        'FlutterWatchOSTextInputSetText',
+        'FlutterWatchOSTextInputSubmitEditing',
+        'FlutterWatchOSTextInputEndEditing',
+        'FlutterWatchOSPlatformViewsCopy',
+        'FlutterWatchOSPlatformViewsGeneration',
+        'FlutterWatchOSPlatformViewsSetChangeCallback',
+        'FlutterWatchOSA11yCopyElements',
+        'FlutterWatchOSA11yGeneration',
+        'FlutterWatchOSA11ySetChangeCallback',
+        'FlutterWatchOSA11yFocusGained',
+        'FlutterWatchOSA11yFocusLost',
+        'FlutterWatchOSA11yPerformAction',
+        'FlutterWatchOSA11yPerformCustomAction',
+      ];
+      final String header = readHostSource('flutter_watchos_host.h');
+      final List<String> lines = header.split('\n');
+      final List<String> code = _withoutComments(header).split('\n');
+      final List<String> declared = _declaredHostFunctions(header);
+      for (final name in names) {
+        expect(declared, contains(name));
+        final int at = code.indexWhere(
+          (String line) => RegExp('\\b${RegExp.escape(name)}\\s*\\(').hasMatch(line),
+        );
+        expect(at, greaterThan(0), reason: name);
+        expect(lines[at - 1].trimLeft(), startsWith('//'), reason: 'no comment above $name');
+        // The comment says which thread may call it or where its callback
+        // runs.
+        final int start = lines.lastIndexWhere(
+          (String line) => !line.trimLeft().startsWith('//'),
+          at - 1,
+        );
+        final String comment = lines.sublist(start + 1, at).join(' ');
+        expect(comment, contains('thread'), reason: name);
+      }
+    });
+  });
+
   group('host module sources', () {
     final String runner = readHostSource('FlutterRunner.swift');
     final String hostView = readHostSource('FlutterHostView.swift');
-
-    test('are compiled out entirely for the arm64_32 stub slice', () {
-      // Device builds compile the module for arm64 AND arm64_32 (the App
-      // Store's fat-executable requirement); the glue references engine
-      // symbols that don't exist in the arm64_32 engine stub, so every
-      // source must be guarded whole-file.
-      for (final source in <String>[runner, hostView]) {
-        expect(source.trimLeft(), isNot(startsWith('import')));
-        expect(source, contains('#if !arch(arm64_32)'));
-        expect(source, contains('#endif  // !arch(arm64_32)'));
-      }
-    });
 
     test('reach the engine ABI through the FlutterWatchOSHostC clang module', () {
       // The glue is a standalone module: no bridging header exists anymore,
@@ -406,3 +612,151 @@ void main() {
     });
   });
 }
+
+/// The host sources that may be compiled into the arm64_32 slice, each with
+/// the reason. Outside comments such a file must not use
+/// `FlutterWatchOSHostC`, `FlutterRunner`, `FlutterHostView` or any function
+/// that `host/flutter_watchos_host.h` declares.
+const _unguardedHostSources = <String, String>{
+  'FlutterWatchOSVmBridge.swift':
+      'It is guarded by FLUTTER_WATCHOS_VM_BRIDGE instead, and a release build '
+      'compiles its stub. It imports only Compression and Foundation, so it '
+      'compiles for any architecture.',
+};
+
+/// What is wrong with the host source [fileName], or null when it follows
+/// the rule: wrapped whole in `#if !arch(arm64_32)` … `#endif`, or listed in
+/// [_unguardedHostSources] and naming nothing of the engine outside comments.
+/// [hostFunctions] are the functions the host C header declares.
+String? _hostSourceProblem(String fileName, String source, List<String> hostFunctions) {
+  if (!_unguardedHostSources.containsKey(fileName)) {
+    return _isGuardedWholeFile(source)
+        ? null
+        : '$fileName is not wrapped whole in #if !arch(arm64_32) ... #endif. Guard it, '
+              'or list it in _unguardedHostSources with the reason.';
+  }
+  final String code = _withoutComments(source);
+  final found = <String>[
+    for (final name in <String>[
+      'FlutterWatchOSHostC',
+      'FlutterRunner',
+      'FlutterHostView',
+      ...hostFunctions,
+    ])
+      if (RegExp('\\b${RegExp.escape(name)}\\b').hasMatch(code)) name,
+  ];
+  return found.isEmpty
+      ? null
+      : '$fileName is compiled for arm64_32 but names ${found.join(', ')} outside comments.';
+}
+
+/// Whether [source], comments aside, starts with `#if !arch(arm64_32)`, ends
+/// with the `#endif` that closes it, and gives that `#if` no `#else` or
+/// `#elseif` branch.
+bool _isGuardedWholeFile(String source) {
+  final lines = <String>[
+    for (final String line in _withoutComments(source).split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
+  if (lines.length < 2 || lines.first != '#if !arch(arm64_32)' || lines.last != '#endif') {
+    return false;
+  }
+  var depth = 0;
+  for (var i = 0; i < lines.length; i++) {
+    final String line = lines[i];
+    if (line.startsWith('#if')) {
+      depth++;
+    } else if (line.startsWith('#endif')) {
+      depth--;
+      if (depth == 0 && i != lines.length - 1) {
+        return false;
+      }
+    } else if (depth == 1 && (line.startsWith('#else') || line.startsWith('#elseif'))) {
+      return false;
+    }
+  }
+  return depth == 0;
+}
+
+/// [source] with the whole-file guard lines removed, as if it had never had
+/// them.
+String _withoutGuard(String source) =>
+    source.replaceFirst('#if !arch(arm64_32)\n', '').replaceFirst('#endif  // !arch(arm64_32)', '');
+
+/// The names of the functions that the C header [header] declares, read from
+/// its code (not its comments), leaving out typedefs.
+List<String> _declaredHostFunctions(String header) {
+  final String code = <String>[
+    for (final String line in _withoutComments(header).split('\n'))
+      if (!line.trimLeft().startsWith('#')) line,
+  ].join('\n');
+  return <String>[
+    for (final RegExpMatch match in RegExp(
+      r'(?:^|[;}])\s*(?!typedef\b)[A-Za-z_][\w\s*]*?\b([A-Za-z_]\w*)\s*\(',
+    ).allMatches(code))
+      match.group(1)!,
+  ];
+}
+
+/// [source] with its `//` and `/* */` comments removed and its line breaks
+/// kept. Block comments may nest, as in Swift, and a string literal is copied
+/// as it is, so a `//` inside one does not start a comment.
+String _withoutComments(String source) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < source.length) {
+    if (source.startsWith('//', i)) {
+      final int end = source.indexOf('\n', i);
+      i = end == -1 ? source.length : end;
+    } else if (source.startsWith('/*', i)) {
+      var depth = 0;
+      while (i < source.length) {
+        if (source.startsWith('/*', i)) {
+          depth++;
+          i += 2;
+        } else if (source.startsWith('*/', i)) {
+          depth--;
+          i += 2;
+          if (depth == 0) {
+            break;
+          }
+        } else {
+          if (source[i] == '\n') {
+            out.write('\n');
+          }
+          i++;
+        }
+      }
+    } else if (source[i] == '"') {
+      final bool multiline = source.startsWith('"""', i);
+      final quote = multiline ? '"""' : '"';
+      int end = i + quote.length;
+      while (end < source.length && !source.startsWith(quote, end)) {
+        if (!multiline && source[end] == '\n') {
+          break;
+        }
+        end += source[end] == r'\' ? 2 : 1;
+      }
+      end = end < source.length && source.startsWith(quote, end) ? end + quote.length : end;
+      end = end > source.length ? source.length : end;
+      out.write(source.substring(i, end));
+      i = end;
+    } else {
+      out.write(source[i]);
+      i++;
+    }
+  }
+  return out.toString();
+}
+
+/// A line of Swift code that declares something `public` or `open`, after
+/// any attributes and modifiers.
+final _publicSwiftDeclaration = RegExp(
+  r'^\s*(?:@\w+(?:\([^)]*\))?\s+)*'
+  r'(?:(?:override|final|required|convenience|static|class|nonisolated|mutating)\s+)*'
+  r'(?:public|open)\s',
+);
+
+/// A line that holds only a Swift attribute, such as `@objc` or
+/// `@available(watchOS 26, *)`.
+final _swiftAttributeLine = RegExp(r'^\s*@\w+(?:\(.*\))?\s*$');

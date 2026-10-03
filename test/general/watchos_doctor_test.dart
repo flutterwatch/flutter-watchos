@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
+import 'package:flutter_tools/src/ios/xcodeproj.dart';
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_watchos/watchos_auth.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
 import 'package:flutter_watchos/watchos_doctor.dart';
+import 'package:test/fake.dart';
 
 import '../src/common.dart';
 import '../src/fake_process_manager.dart';
@@ -37,20 +43,47 @@ MemoryFileSystem _makeEngineFs({bool artifactsPresent = true}) {
   return fs;
 }
 
-const FakeCommand _xcodeOk = FakeCommand(
-  command: <String>['xcodebuild', '-version'],
-  stdout: 'Xcode 16.3\nBuild version 16E140',
+/// A cached Xcode as stock reads it from `xcodebuild -version`; null
+/// [version] is no Xcode at all.
+Xcode _xcode([
+  Version? version = const Version.withText(27, 0, 0, '27.0'),
+  String build = '27A266a',
+]) => Xcode.test(
+  processManager: FakeProcessManager.any(),
+  xcodeProjectInterpreter: XcodeProjectInterpreter.test(
+    processManager: FakeProcessManager.any(),
+    version: version,
+    build: build,
+  ),
 );
-const FakeCommand _watchosSdkOk = FakeCommand(
-  command: <String>['xcrun', '--sdk', 'watchos', '--show-sdk-path'],
-  // ignore: lines_longer_than_80_chars
-  stdout: '/Applications/Xcode.app/Contents/Developer/Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.0.sdk',
+
+FakeCommand _watchosSdk(String sdkName) => FakeCommand(
+  command: const <String>['xcrun', '--sdk', 'watchos', '--show-sdk-path'],
+  stdout:
+      '/Applications/Xcode.app/Contents/Developer/Platforms/WatchOS.platform/Developer/SDKs/$sdkName',
 );
-const FakeCommand _runtimeOk = FakeCommand(
-  command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
-  // ignore: lines_longer_than_80_chars
-  stdout: '{"runtimes":[{"name":"watchOS 11.0","identifier":"com.apple.CoreSimulator.SimRuntime.watchOS-11-0"}]}',
+final FakeCommand _watchosSdkOk = _watchosSdk('WatchOS27.0.sdk');
+
+/// `simctl list runtimes --json` output listing [runtimes], each a map of the
+/// keys simctl prints.
+FakeCommand _runtimes(List<Map<String, Object>> runtimes) => FakeCommand(
+  command: const <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
+  stdout: jsonEncode(<String, Object>{'runtimes': runtimes}),
 );
+
+Map<String, Object> _watchosRuntime(String version, {bool? isAvailable}) => <String, Object>{
+  'name': 'watchOS $version',
+  'version': version,
+  'platform': 'watchOS',
+  'identifier': 'com.apple.CoreSimulator.SimRuntime.watchOS-${version.replaceAll('.', '-')}',
+  'isAvailable': ?isAvailable,
+};
+
+final FakeCommand _runtimeOk = _runtimes(<Map<String, Object>>[
+  _watchosRuntime('26.5', isAvailable: true),
+  _watchosRuntime('27.0', isAvailable: true),
+]);
+
 const FakeCommand _podOk = FakeCommand(command: <String>['pod', '--version'], stdout: '1.15.2');
 
 List<String> _texts(ValidationResult r) =>
@@ -66,10 +99,11 @@ void main() {
 
   group('WatchosValidator', () {
     testWithoutContext('success when all checks pass', () async {
-      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      processManager.addCommands(<FakeCommand>[_watchosSdkOk, _runtimeOk, _podOk]);
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -88,12 +122,9 @@ void main() {
     });
 
     testWithoutContext('missing when Xcode is not installed', () async {
-      processManager.addCommand(
-        const FakeCommand(command: <String>['xcodebuild', '-version'], exitCode: 1),
-      );
-
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(null),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -102,11 +133,11 @@ void main() {
       final ValidationResult result = await validator.validate();
       expect(result.type, equals(ValidationType.missing));
       expect(result.messages.first.message, contains('Xcode is not installed'));
+      expect(processManager, hasNoRemainingExpectations);
     });
 
     testWithoutContext('partial when watchOS SDK is missing', () async {
       processManager.addCommands(<FakeCommand>[
-        _xcodeOk,
         const FakeCommand(
           command: <String>['xcrun', '--sdk', 'watchos', '--show-sdk-path'],
           exitCode: 1,
@@ -117,6 +148,7 @@ void main() {
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -129,7 +161,6 @@ void main() {
 
     testWithoutContext('partial when no watchOS Simulator runtime is installed', () async {
       processManager.addCommands(<FakeCommand>[
-        _xcodeOk,
         _watchosSdkOk,
         const FakeCommand(
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
@@ -141,6 +172,7 @@ void main() {
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -153,7 +185,6 @@ void main() {
 
     testWithoutContext('CocoaPods missing is a hint, not a failure', () async {
       processManager.addCommands(<FakeCommand>[
-        _xcodeOk,
         _watchosSdkOk,
         _runtimeOk,
         const FakeCommand(command: <String>['pod', '--version'], exitCode: 1),
@@ -161,6 +192,7 @@ void main() {
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -168,14 +200,23 @@ void main() {
 
       final ValidationResult result = await validator.validate();
       expect(result.type, equals(ValidationType.success));
-      expect(_texts(result), contains(contains('CocoaPods not installed')));
+      // Only a watchos/Podfile makes the build run `pod install`; plugins
+      // build without CocoaPods, so the hint must not say they need it.
+      final ValidationMessage hint = result.messages.singleWhere(
+        (ValidationMessage m) => m.message.startsWith('CocoaPods not installed'),
+      );
+      expect(hint.isHint, isTrue);
+      expect(hint.message, contains('only if your watchos/ folder has a Podfile'));
+      expect(hint.message, contains('brew install cocoapods'));
+      expect(hint.message, isNot(contains('plugins')));
     });
 
     testWithoutContext('absent engine artifacts is a hint, not a failure', () async {
-      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      processManager.addCommands(<FakeCommand>[_watchosSdkOk, _runtimeOk, _podOk]);
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(artifactsPresent: false),
         platform: _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -190,10 +231,11 @@ void main() {
     // first sign on an Intel Mac was "bad CPU type" from gen_snapshot, a
     // gigabyte of SDK download later.
     testWithoutContext('an Intel Mac is an error', () async {
-      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      processManager.addCommands(<FakeCommand>[_watchosSdkOk, _runtimeOk, _podOk]);
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
         operatingSystemUtils: FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_x64),
@@ -209,10 +251,11 @@ void main() {
     // bootstrap downloaded an x86_64 Dart SDK. The VM's version string is
     // what gives that away.
     testWithoutContext('a Rosetta shell on Apple Silicon is an error', () async {
-      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      processManager.addCommands(<FakeCommand>[_watchosSdkOk, _runtimeOk, _podOk]);
 
       final validator = WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: _makeEngineFs(),
         platform: FakePlatform(
           script: Uri.file('/cli/bin/cache/flutter-watchos.snapshot'),
@@ -227,6 +270,169 @@ void main() {
     });
   });
 
+  // Spec 0002, criteria 1, 12 and 15: the Xcode and SDK floors, and which
+  // Simulator runtime doctor names.
+  group('WatchosValidator watchOS 26 floor', () {
+    Future<ValidationResult> validate({Xcode? xcode, FakeCommand? sdk, FakeCommand? runtimes}) {
+      processManager.addCommands(<FakeCommand>[
+        sdk ?? _watchosSdkOk,
+        runtimes ?? _runtimeOk,
+        _podOk,
+      ]);
+      return WatchosValidator(
+        processManager: processManager,
+        xcode: xcode ?? _xcode(),
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
+        operatingSystemUtils: _appleSilicon(),
+      ).validate();
+    }
+
+    List<String> errors(ValidationResult result) => <String>[
+      for (final ValidationMessage message in result.messages)
+        if (message.isError) message.message,
+    ];
+
+    List<String> hints(ValidationResult result) => <String>[
+      for (final ValidationMessage message in result.messages)
+        if (message.isHint) message.message,
+    ];
+
+    testWithoutContext('Xcode 27.0 is named with its build, with no error', () async {
+      final ValidationResult result = await validate();
+      expect(result.type, ValidationType.success);
+      expect(_texts(result), contains('Xcode installed (Xcode 27.0, build 27A266a)'));
+      expect(errors(result), isEmpty);
+      expect(processManager, hasNoRemainingExpectations);
+    });
+
+    testWithoutContext('Xcode 26.0 has no Xcode-version error', () async {
+      final ValidationResult result = await validate(
+        xcode: _xcode(const Version.withText(26, 0, 0, '26.0'), '17A324'),
+      );
+      expect(result.type, ValidationType.success);
+      expect(_texts(result), contains('Xcode installed (Xcode 26.0, build 17A324)'));
+      expect(errors(result), isEmpty);
+    });
+
+    testWithoutContext('Xcode 16.4 is an error that names both versions', () async {
+      final ValidationResult result = await validate(
+        xcode: _xcode(const Version.withText(16, 4, 0, '16.4'), '16F6'),
+      );
+      expect(result.type, ValidationType.partial);
+      expect(errors(result), <Object>[
+        allOf(contains('Xcode 26.0 or later'), contains('found Xcode 16.4')),
+      ]);
+    });
+
+    testWithoutContext('an Xcode version that does not parse is named without a verdict', () async {
+      final ValidationResult result = await validate(xcode: _UnparsedXcode());
+      expect(result.type, ValidationType.success);
+      expect(_texts(result), contains('Xcode installed (Xcode X)'));
+      expect(errors(result), isEmpty);
+    });
+
+    testWithoutContext('a watchOS SDK older than 26.0 is an error', () async {
+      final ValidationResult result = await validate(sdk: _watchosSdk('WatchOS11.0.sdk'));
+      expect(result.type, ValidationType.partial);
+      expect(_texts(result), contains('watchOS SDK 11.0 installed'));
+      expect(errors(result), <Object>[
+        allOf(contains('watchOS SDK 11.0 is older than watchOS 26.0'), contains('Xcode 26.0')),
+      ]);
+    });
+
+    testWithoutContext(
+      'watchOS SDK 26.0 passes, and an SDK path without a version is named',
+      () async {
+        ValidationResult result = await validate(sdk: _watchosSdk('WatchOS26.0.sdk'));
+        expect(_texts(result), contains('watchOS SDK 26.0 installed'));
+        expect(errors(result), isEmpty);
+
+        result = await validate(sdk: _watchosSdk('WatchOS.sdk'));
+        expect(_texts(result), contains('watchOS SDK installed'));
+        expect(errors(result), isEmpty);
+      },
+    );
+
+    testWithoutContext(
+      'the highest available runtime is named, wherever simctl lists it',
+      () async {
+        for (final order in <List<String>>[
+          <String>['27.0', '26.5'],
+          <String>['26.5', '27.0'],
+        ]) {
+          final ValidationResult result = await validate(
+            runtimes: _runtimes(<Map<String, Object>>[
+              for (final version in order) _watchosRuntime(version, isAvailable: true),
+            ]),
+          );
+          expect(
+            _texts(result),
+            contains('watchOS Simulator runtime (watchOS 27.0)'),
+            reason: '$order',
+          );
+          expect(hints(result), isEmpty);
+        }
+      },
+    );
+
+    testWithoutContext('an unavailable runtime is not named', () async {
+      final ValidationResult result = await validate(
+        runtimes: _runtimes(<Map<String, Object>>[
+          _watchosRuntime('26.5', isAvailable: true),
+          <String, Object>{
+            ..._watchosRuntime('27.0', isAvailable: false),
+            'availabilityError': 'The runtime is not available.',
+          },
+        ]),
+      );
+      expect(_texts(result), contains('watchOS Simulator runtime (watchOS 26.5)'));
+      expect(_texts(result).join('\n'), isNot(contains('watchOS 27.0')));
+    });
+
+    testWithoutContext('a runtime without isAvailable counts as available', () async {
+      final ValidationResult result = await validate(
+        runtimes: _runtimes(<Map<String, Object>>[
+          <String, Object>{
+            'name': 'watchOS 27.0',
+            'identifier': 'com.apple.CoreSimulator.SimRuntime.watchOS-27-0',
+          },
+        ]),
+      );
+      expect(result.type, ValidationType.success);
+      expect(_texts(result), contains('watchOS Simulator runtime (watchOS 27.0)'));
+    });
+
+    testWithoutContext('only runtimes below 26.0: the highest is named, with a hint', () async {
+      final ValidationResult result = await validate(
+        runtimes: _runtimes(<Map<String, Object>>[
+          _watchosRuntime('10.5', isAvailable: true),
+          _watchosRuntime('11.0', isAvailable: true),
+        ]),
+      );
+      expect(_texts(result), contains('watchOS Simulator runtime (watchOS 11.0)'));
+      expect(hints(result), <Object>[contains('watchOS 26.0 or later')]);
+      expect(errors(result), isEmpty);
+    });
+
+    testWithoutContext(
+      'only unavailable runtimes, or output that is not JSON: none found',
+      () async {
+        for (final runtimes in <FakeCommand>[
+          _runtimes(<Map<String, Object>>[_watchosRuntime('27.0', isAvailable: false)]),
+          const FakeCommand(
+            command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
+            stdout: 'watchOS 27.0 (27.0 - 24R1) - com.apple.CoreSimulator.SimRuntime.watchOS-27-0',
+          ),
+        ]) {
+          final ValidationResult result = await validate(runtimes: runtimes);
+          expect(result.type, ValidationType.partial);
+          expect(errors(result), <Object>[contains('No watchOS Simulator runtime found')]);
+        }
+      },
+    );
+  });
+
   // doctor is where people look when something is off, and it said nothing
   // about the account, nor about the engines a signed-out download skipped.
   group('WatchosValidator engines and account', () {
@@ -239,9 +445,10 @@ void main() {
     ];
 
     Future<ValidationResult> validate(MemoryFileSystem fs, {FakePlatform? platform}) {
-      processManager.addCommands(<FakeCommand>[_xcodeOk, _watchosSdkOk, _runtimeOk, _podOk]);
+      processManager.addCommands(<FakeCommand>[_watchosSdkOk, _runtimeOk, _podOk]);
       return WatchosValidator(
         processManager: processManager,
+        xcode: _xcode(),
         fileSystem: fs,
         platform: platform ?? _makePlatform(),
         operatingSystemUtils: _appleSilicon(),
@@ -425,4 +632,16 @@ class _FakeValidator extends DoctorValidator {
 
   @override
   Future<ValidationResult> validateImpl() async => _result;
+}
+
+/// An Xcode whose `xcodebuild -version` output stock could not parse.
+class _UnparsedXcode extends Fake implements Xcode {
+  @override
+  String? get versionText => 'Xcode X, Build version 27A266a';
+
+  @override
+  Version? get currentVersion => null;
+
+  @override
+  String? get buildVersion => null;
 }

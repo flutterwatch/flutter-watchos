@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // The FlutterWatchOS host view — the whole Flutter UI as one SwiftUI view,
 // identical for every app. The app template's `App.swift` shows it:
 //
@@ -61,6 +65,8 @@ public struct FlutterHostView<Splash: View>: View {
         self.splashScreen = splashScreen()
     }
 
+    /// The Flutter frame with its native overlays, the touch and Digital
+    /// Crown input, and the launch placeholder until the first frame.
     public var body: some View {
         GeometryReader { _ in
             // The frame itself lives in its own leaf view, which is the only
