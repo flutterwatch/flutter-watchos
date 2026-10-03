@@ -151,12 +151,26 @@ The URI is printed at engine startup and appears in the device console logs.
 
 ## Logs
 
+On a watch Simulator, `logs` streams the running app's output, as it does for
+an iOS Simulator:
+
 ```sh
-flutter-watchos logs -d <device-id>
+flutter-watchos logs -d <simulator-id>
 ```
 
-For the Simulator you can also use `xcrun simctl spawn <udid> log stream`
-filtered on your bundle id; `print()`/`debugPrint()` output lands there.
+`xcrun simctl spawn <udid> log stream`, filtered on your bundle id, shows the
+same lines; `print()`/`debugPrint()` output lands there.
+
+A physical watch has no log stream to attach to, so `logs -d <watch-id>` stops
+and says where to look instead. The app's output reaches this Mac through the
+console of the launch that `run` opens, so start it in profile mode:
+
+```sh
+flutter-watchos run -d <watch-id> --profile
+```
+
+Or have the app write its logs into its own container, as the next section
+describes.
 
 ### Logs from a physical watch
 

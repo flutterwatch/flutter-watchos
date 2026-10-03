@@ -31,6 +31,15 @@ where possible; watchOS-specific behaviour is called out per command.
   The VM Service URI is printed when the app is launched via
   `flutter-watchos run`; it is also visible in the device console logs.
 
+  On a physical watch, `attach` cannot find the app by itself: give it the
+  URI with `--debug-url`, or its port with `--debug-port`. Without either it
+  stops and points to `run --profile`, which starts the app on the watch and
+  prints a DevTools link:
+
+  ```sh
+  flutter-watchos run -d <watch-id> --profile
+  ```
+
 - ### `build watchos`
 
   Build the watch app bundle (`Runner.app`).
@@ -64,6 +73,11 @@ where possible; watchOS-specific behaviour is called out per command.
   To ship to the App Store, `build watchos --release` first, then archive in
   Xcode (Product → Archive) and distribute from the Organizer — see
   [publish-app.md](publish-app.md).
+
+  `build` offers only `watchos`. `build apk`, `build ipa` and the other stock
+  targets stop and name the stock `flutter build` command to use instead.
+  `--analyze-size` and `--code-size-directory` are not available for a watch
+  build.
 
 - ### `clean`
 
@@ -121,6 +135,11 @@ where possible; watchOS-specific behaviour is called out per command.
   engines are installed, whether this machine is signed in, and CLI health.
   It reads local files only. The `Flutter` entry shows the SDK flutter-watchos
   pins; leave that SDK off your PATH and keep your own `flutter` there.
+
+  When `flutter-watchos` on your PATH is another checkout than the one
+  running, for example an older clone that comes first, the `Flutter` entry
+  warns and names both. Put this checkout's `bin/` at the front of PATH, as
+  [Getting started](get-started.md) does.
 
   ```sh
   flutter-watchos doctor -v
@@ -274,6 +293,13 @@ where possible; watchOS-specific behaviour is called out per command.
   always debug (its engine is JIT-only). The tool rejects the impossible
   combinations with guidance instead of attempting the build.
 
+  `devices` lists booted simulators only. Given the UDID of a watch simulator
+  that is shut down, `run` boots it, then opens Device Hub on Xcode 27, or
+  Simulator on Xcode 26, to show it.
+
+  `--route` has no effect on watchOS: the app starts at its home route, and
+  `run` says so.
+
   Physical-watch installs go through `devicectl` to the paired watch; see
   [debug-app.md](debug-app.md) for pairing/tunnel troubleshooting.
 
@@ -330,7 +356,25 @@ where possible; watchOS-specific behaviour is called out per command.
 
 ## Forwarded commands
 
-These stock Flutter commands work unchanged: `assemble`, `channel`,
-`config`, `daemon`, `downgrade`, `emulators`, `generate`, `gen-l10n`,
-`install`, `logs`, `pub` / `packages`, `screenshot`, `shell-completion`,
-`symbolize`.
+These stock Flutter commands work unchanged: `analyze`, `assemble`,
+`config`, `daemon`, `emulators`, `generate`, `gen-l10n`, `pub` / `packages`,
+`shell-completion`, `symbolize`.
+
+These work as in stock Flutter, with a watch in mind:
+
+- `install`, `logs` and `screenshot` work on a watch simulator as on an iOS
+  simulator. On a simulator that is shut down they stop and point to `run`,
+  which boots it.
+- `logs` on a physical watch stops and says where its output goes instead:
+  to the console of `run --profile`, or to a file in the app's container
+  (see [debug-app.md](debug-app.md#logs-from-a-physical-watch)).
+- `screenshot` on a physical watch works when the watch can take one, which
+  needs Xcode 27 or later; other watches are refused, as in stock.
+- `install` refuses `--flavor` for a watch, whose build has no flavors.
+- `channel` shows the Flutter version flutter-watchos pins, which follows no
+  Flutter channel. `channel <name>` and `downgrade` refuse: they would move
+  the pinned SDK, and the next run would put it back. `upgrade` moves to the
+  next release.
+
+`update-packages` is not offered: it maintains the Flutter repository
+itself.

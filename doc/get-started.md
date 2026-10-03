@@ -98,8 +98,17 @@ in Xcode:
 3. Set **Simulator Type** to an Apple Watch (e.g. *Apple Watch Series 11
    (46mm)*) and pick a watchOS runtime (26.0 or later).
 
-Once booted, it appears in `flutter-watchos devices`. No code signing is needed
-for simulator builds; a physical watch needs a `DEVELOPMENT_TEAM` set in Xcode.
+Once booted, it appears in `flutter-watchos devices`. A simulator that is shut
+down does not, but `flutter-watchos run -d <UDID>` boots it, then opens Device
+Hub on Xcode 27, or Simulator on Xcode 26, to show it. This lists every
+simulator with its UDID:
+
+```sh
+xcrun simctl list devices
+```
+
+No code signing is needed for simulator builds; a physical watch needs a
+`DEVELOPMENT_TEAM` set in Xcode.
 
 ## 4. Create an app
 
