@@ -54,10 +54,9 @@ release builds need one, and signing in with GitHub is all an account takes.
   the service for them every time. Before, the first engine that wanted an
   account ended the download and the Simulator engine that had already
   arrived was thrown away with it. An account the service has switched off
-  keeps the Simulator engine too. A service that wants an account for
-  everything still gets a plain error, in its own words, and so does a
-  sign-in the service no longer accepts, which now also says to run `login`
-  again.
+  keeps the Simulator engine too. A sign-in the service no longer accepts
+  still gets a plain error, in the service's own words, which now also says
+  to run `login` again.
 
 - **A build that lacks its engine says why.** `build` or `run` in profile or
   release, when that engine is one the last download left out, stops before
@@ -65,11 +64,9 @@ release builds need one, and signing in with GitHub is all an account takes.
   It used to fail partway with "libflutter_engine.dylib not found — run
   precache", which for a signed-out machine changes nothing.
 
-- **Which engines an account gets is the service's decision, and its
-  wording.** The tool no longer names a programme in its own messages: an
-  engine the service holds back is "not available to this account, skipped",
-  and any other refusal is passed on as the service wrote it, once, after the
-  download. A change of policy reaches every installed CLI without a release.
+- **Other download refusals read as the service wrote them.** The tool prints
+  the service's own words, once, after the download, so its wording can change
+  without a CLI release.
 
 - **Release builds are registered with your account.** After a successful
   `build watchos --release` the tool sends four fields — bundle id, app

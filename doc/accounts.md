@@ -41,9 +41,9 @@ early and says the same thing. `flutter-watchos doctor` shows which engines
 are installed and whether the machine is signed in.
 
 If a download is denied for any other reason, the CLI prints the reason
-returned by the service — the message tells you what to do. An account the
-service has switched off still gets the Simulator engine. Which engines an
-account gets is decided by the service, not by the CLI version you have.
+returned by the service — the message tells you what to do. Every account
+gets every engine as soon as it is created. An account the
+service has switched off still gets the Simulator engine.
 
 ## What gets downloaded
 
