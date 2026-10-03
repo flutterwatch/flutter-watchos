@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
@@ -51,12 +52,40 @@ String watchosSwiftTypeName(String name) {
   return pascalCase.startsWith(RegExp('[0-9]')) ? '_$pascalCase' : pascalCase;
 }
 
+/// The bundled `watchos/` Xcode runner template,
+/// `templates/app/swift/watchos.tmpl` of the flutter-watchos checkout, which
+/// is looked for next to the checkout's `flutter/` folder.
+///
+/// Throws a [ToolExit] that names the path it looked for when the template is
+/// not there: the checkout is incomplete, and no `watchos/` can be made.
+Directory watchosRunnerTemplate(FileSystem fileSystem) {
+  final String path = fileSystem.path.join(
+    Cache.flutterRoot!,
+    '..',
+    'templates',
+    'app',
+    'swift',
+    'watchos.tmpl',
+  );
+  final Directory template = fileSystem.directory(path);
+  if (!template.existsSync()) {
+    throwToolExit(
+      'Cannot create watchos/: the watchOS app template is not at $path.\n'
+      'The flutter-watchos checkout looks incomplete. Its templates/ folder is looked for '
+      'next to its flutter/ folder, and when flutter/ is a link to an SDK elsewhere, next to '
+      'that SDK.',
+    );
+  }
+  return template;
+}
+
 /// Renders the bundled `watchos/` Xcode runner template into
 /// [projectDirPath]. Extracted from `WatchosCreateCommand` so the plugin
 /// porter can drop a `watchos/` runner into a copied example app too, without
 /// re-running `flutter create`.
 ///
-/// No-op when the template is missing or `watchos/` already exists.
+/// No-op when `watchos/` already exists. Throws a [ToolExit] when the template
+/// is missing ([watchosRunnerTemplate]), before anything is written.
 /// [developmentTeam] is only relevant for on-device signing (left null for
 /// example apps).
 Future<void> renderWatchosRunner({
@@ -68,19 +97,11 @@ Future<void> renderWatchosRunner({
   required String organization,
   String? developmentTeam,
 }) async {
-  final String watchosTemplatePath = fileSystem.path.join(
-    Cache.flutterRoot!,
-    '..',
-    'templates',
-    'app',
-    'swift',
-    'watchos.tmpl',
-  );
-  final Directory templateDir = fileSystem.directory(watchosTemplatePath);
   final Directory targetDir = fileSystem.directory(projectDirPath).childDirectory('watchos');
-  if (!templateDir.existsSync() || targetDir.existsSync()) {
+  if (targetDir.existsSync()) {
     return;
   }
+  final Directory templateDir = watchosRunnerTemplate(fileSystem);
 
   final String projectName = watchosRunnerProjectName(
     name: name,

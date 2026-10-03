@@ -144,6 +144,9 @@ class WatchosCreateCommand extends CreateCommand {
     if (boolArg('watchos-only')) {
       _checkWatchOnlyArgs(templateType, projectDirPath);
       validateProjectDir(overwrite: boolArg('overwrite'));
+      // Without the watchos/ template there is no watch app to make: stop
+      // before the shared app is written.
+      watchosRunnerTemplate(globals.fs);
       globals.logger.printStatus('Generating the app and watchos/...');
       await _generateStockApp(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);

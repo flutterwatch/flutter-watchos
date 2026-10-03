@@ -118,6 +118,26 @@ void main() {
     TemplatePathProvider: () => _NoImagesTemplatePathProvider(),
   };
 
+  // An incomplete checkout used to write the shared app, leave watchos/ out
+  // and say it had created a watchOS project.
+  testUsingContext(
+    'a watch-only create without the watchos/ template stops before it writes anything',
+    () async {
+      fileSystem.directory(cliRootPath('templates')).deleteSync(recursive: true);
+
+      await expectLater(
+        create(WatchosCreateCommand(verboseHelp: false), <String>[
+          '--watchos-only',
+          '/projects/watch',
+        ]),
+        throwsToolExit(message: 'The flutter-watchos checkout looks incomplete.'),
+      );
+
+      expect(project('watch').existsSync(), isFalse);
+    },
+    overrides: overrides,
+  );
+
   testUsingContext(
     'a watch-only create writes the files stock create writes, unmodified',
     () async {
