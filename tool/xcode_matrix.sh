@@ -25,7 +25,8 @@
 #   7    a 27.0 app runs on the newer runtime (the step 3 checks).
 #   7b   a 27.0 app on the older runtime: run, drive and test exit non-zero
 #        before xcodebuild, name the device, both versions, and print no stack
-#        trace. This needs M113 (join J2) in the CLI under test.
+#        trace. No release of the CLI refuses this yet, so 7b is not in the
+#        default list; run it with --only 7b once one does.
 #   10   device builds, unsigned, at 26.0 and 27.0, of the
 #        shared_preferences_watchos and firebase_core_watchos examples, with
 #        the exact list of warnings. Needs --plugins.
@@ -40,7 +41,7 @@
 #
 # Usage:
 #   tool/xcode_matrix.sh [options]
-#     --only LIST        comma-separated steps (default: 2,3,4,5,6,6b,7,7b,10,17)
+#     --only LIST        comma-separated steps (default: 2,3,4,5,6,6b,7,10,17)
 #     --plugins DIR      a plugins checkout; its HEAD is cloned into the work dir
 #     --out DIR          logs and summary.txt (default: a new temporary dir)
 #     --min-gib N        GiB that must be available before each heavy step
@@ -51,6 +52,14 @@
 #                        for the whole run and remove it at the end
 #     --keep             keep the work directory (apps and builds)
 #   FLUTTER_WATCHOS      the CLI to test (default: bin/flutter-watchos here)
+#   DEVELOPMENT_TEAM     export it for the device steps (5, 6, 6b and 10) when
+#                        the keychain holds more than one development team:
+#                        the CLI picks a team before xcodebuild runs, even for
+#                        these unsigned builds, and stops when it cannot choose.
+#
+# The script sets FLUTTER_WATCHOS_BUILD_REGISTRY=0 for everything it runs, so
+# its release builds are never registered with the account this Mac is signed
+# in to.
 #
 # One heavy step runs at a time. Before each, the script checks that at
 # least --min-gib GiB are available on the data volume and stops otherwise;
@@ -63,7 +72,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FW="${FLUTTER_WATCHOS:-$REPO_ROOT/bin/flutter-watchos}"
-ONLY="2,3,4,5,6,6b,7,7b,10,17"
+ONLY="2,3,4,5,6,6b,7,10,17"
 PLUGINS=""
 OUT=""
 MIN_GIB=20
@@ -92,6 +101,10 @@ while [ $# -gt 0 ]; do
 done
 
 [ -x "$FW" ] || { echo "xcode_matrix: no CLI at $FW" >&2; exit 2; }
+
+# The matrix builds release apps of its own; none may be registered with the
+# build registry of the account this Mac is signed in to.
+export FLUTTER_WATCHOS_BUILD_REGISTRY=0
 case "$MIN_GIB" in ''|*[!0-9]*) echo "xcode_matrix: --min-gib takes a whole number" >&2; exit 64 ;; esac
 
 if [ -z "$OUT" ]; then
@@ -229,6 +242,10 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+if [ -z "${DEVELOPMENT_TEAM:-}" ] && { wants 5 || wants 6 || wants 6b || wants 10; }; then
+  say "DEVELOPMENT_TEAM is not set: with more than one team in the keychain, the device steps stop before xcodebuild"
+fi
+
 if [ -n "$LOCK" ]; then
   until mkdir "$LOCK" 2>/dev/null; do
     say "waiting for the lock $LOCK"
@@ -317,10 +334,12 @@ simulators() {
 
 # --- The app ----------------------------------------------------------------
 
+# A watch-only app, as the docs create one. A plain create also adds the stock
+# platforms, and with an ios/ folder the watch app becomes a companion app.
 make_app() {
   if [ -d "$APP/watchos" ]; then return 0; fi
   say "creating $APP"
-  (cd "$WORK" && "$FW" create matrix_app) > "$OUT/logs/create.log" 2>&1
+  (cd "$WORK" && "$FW" create --platforms=watchos matrix_app) > "$OUT/logs/create.log" 2>&1
 }
 
 clean_app_build() { rm -rf "$APP/build" "$WORK/symroot" "$WORK/dd"; }
