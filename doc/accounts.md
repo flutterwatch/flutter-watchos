@@ -21,7 +21,7 @@ flutter-watchos login
 ```
 
 Prints a URL and a short code (e.g. `AB2C-9XYZ`). Open the URL, sign in with
-GitHub, confirm the code — the CLI detects the approval and stores an API
+GitHub, confirm the code — the CLI picks that up and stores an API
 token in `~/.flutter-watchos/credentials.json` (file mode `600`). One login
 per machine; tokens don't expire on a timer.
 
