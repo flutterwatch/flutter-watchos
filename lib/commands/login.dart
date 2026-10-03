@@ -14,8 +14,8 @@ import '../watchos_auth.dart';
 import '../watchos_cache.dart';
 
 /// Connects the CLI to a flutterwatch.dev account via an OAuth-style
-/// device-code flow: prints a URL + short code, the user approves in a
-/// browser (signing in with GitHub there, which is also what creates the
+/// device-code flow: prints a URL + short code, the user confirms the code in
+/// a browser (signing in with GitHub there, which is also what creates the
 /// account), and the CLI polls until it receives an API token. The token is
 /// stored in `~/.flutter-watchos/credentials.json` and sent as a Bearer
 /// header on engine-artifact downloads. The Simulator engine downloads
@@ -54,7 +54,7 @@ class WatchosLoginCommand extends FlutterCommand {
       globals.printStatus('\nTo sign in, open this URL in a browser:\n');
       globals.printStatus('  $url\n');
       globals.printStatus('and confirm the code: $userCode\n');
-      globals.printStatus('Waiting for approval (Ctrl-C to cancel)...');
+      globals.printStatus(kLoginWaitingNote);
 
       final elapsed = Stopwatch()..start();
       while (elapsed.elapsed.inSeconds < expiresIn) {
@@ -110,6 +110,12 @@ class WatchosLoginCommand extends FlutterCommand {
     }
   }
 }
+
+/// Said while `login` waits for the browser, where the person confirms the
+/// code the command printed.
+@visibleForTesting
+const String kLoginWaitingNote =
+    'Waiting for you to confirm the code in the browser (Ctrl-C to cancel)...';
 
 class WatchosLogoutCommand extends FlutterCommand {
   @override
@@ -172,7 +178,7 @@ String loginFailureMessage(int status, Map<String, Object?> body) {
     return message;
   }
   if (code == 'expired_token') {
-    return 'The sign-in code expired before it was approved. Run '
+    return 'The sign-in code expired before it was confirmed. Run '
         '`flutter-watchos login` again.';
   }
   return 'Login failed (HTTP $status${code == null ? '' : ': $code'}).';

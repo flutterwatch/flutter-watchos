@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`login` says what you do in the browser.** It waits for you to confirm
+  the code it printed, and a code that runs out "expired before it was
+  confirmed". It used to wait "for approval", as if someone else had to say
+  yes. An engine the service holds back is now "not available, skipped".
+
 ## 0.1.0
 
 The Simulator engine downloads without an account; a physical watch and

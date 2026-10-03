@@ -183,8 +183,8 @@ where possible; watchOS-specific behaviour is called out per command.
   flutter-watchos logout
   ```
 
-  `login` prints a URL plus a short code; approve it in a browser and the
-  CLI finishes automatically. Credentials are stored in
+  `login` prints a URL plus a short code; confirm the code in a browser and
+  the CLI finishes automatically. Credentials are stored in
   `~/.flutter-watchos/credentials.json`, and the next build downloads the
   engines the machine was missing. `logout` revokes this machine's sign-in
   on the service, then removes the file. See [accounts.md](accounts.md).

@@ -296,8 +296,8 @@ void main() {
     testWithoutContext('extracts the error code from a JSON gate response', () {
       final File file = fs.file('resp.json')
         ..writeAsStringSync(
-            '{"error":"release_not_in_beta","message":"Release engine '
-            'artifacts are not part of the closed beta."}');
+            '{"error":"release_not_in_beta","message":"Release engines '
+            'are not available yet."}');
       expect(apiGateErrorCode(file), 'release_not_in_beta');
     });
 
