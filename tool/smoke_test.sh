@@ -7,10 +7,10 @@
 #
 # Builds and runs the bundled example on a watchOS simulator and asserts the
 # Dart VM Service comes up. This exercises the end-to-end install → launch →
-# log-stream path that the unit suite (test/general/) intentionally does NOT
-# mock — that path is a timing-sensitive multi-command flow (simctl boot →
-# install → terminate → await log-stream ready → launch) that is fragile to
-# fake with a scripted ProcessManager but cheap to verify for real here.
+# log-stream path on a real simulator. The unit suite drives the same flow
+# (simctl boot → install → terminate → log stream → launch) with fake
+# processes in test/general/watchos_simulator_launch_test.dart; this checks
+# that a real simulator does what those fakes assume.
 #
 # Usage:
 #   tool/smoke_test.sh [SIMULATOR_UDID]

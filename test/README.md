@@ -26,6 +26,30 @@ test/
 │   └── host_sources.dart            # cliRootPath, readHostSource, readRunnerTemplate
 ├── commands.shard/
 │   └── hermetic/          # One file per command, run through the command runner
+│       ├── src/
+│       │   ├── watch_project.dart       # a watch project and watch targets to run against
+│       │   └── words.dart               # the word rule, exported from src/forbidden_words.dart
+│       ├── attach_test.dart             # mode checks, a watch without a URL, a shut-down Simulator
+│       ├── build_command_test.dart      # build watchos modes and registration, stock build targets
+│       ├── build_registry_test.dart     # build-registry state and the ways to turn it off
+│       ├── channel_test.dart            # channel shows the pin; channel <name> refuses
+│       ├── clean_test.dart              # clean removes the watch build outputs
+│       ├── custom_devices_test.dart     # custom devices on unless configured off
+│       ├── debug_adapter_test.dart      # debug-adapter starts bin/flutter-watchos
+│       ├── downgrade_test.dart          # downgrade refuses
+│       ├── drive_test.dart              # mode checks, --flavor, --route
+│       ├── flavor_check_test.dart       # the --flavor decision and its texts
+│       ├── help_smoke_test.dart         # the command list, and every command's help
+│       ├── host_test.dart               # host mode and its errors
+│       ├── install_test.dart            # --flavor, a shut-down Simulator
+│       ├── logger_test.dart             # stock's logger for daemon and --machine
+│       ├── logout_test.dart             # logout when signed out
+│       ├── port_help_test.dart          # "random unused port" in the port help
+│       ├── run_test.dart                # mode checks, --flavor, --route
+│       ├── test_command_test.dart       # test runs the watch tooling check first
+│       ├── unknown_command_test.dart    # the usage hint names flutter-watchos
+│       ├── watchos_upload_test.dart     # upload help, altool arguments, .ipa lookup
+│       └── wrapper_test.dart            # bin/ wrapper: proxy_root links, progress on stderr
 └── general/               # One file per lib area
     │  Engine download, access and account
     ├── watchos_artifact_api_contract_test.dart  # the CLI against data/artifact_api_contract.json
@@ -40,12 +64,14 @@ test/
     ├── watchos_app_bundle_test.dart        # flutter_assets copy, JIT core snapshots
     ├── watchos_build_hooks_test.dart       # native-asset build hooks
     ├── watchos_build_info_test.dart        # SDK name and destination per target
+    ├── watchos_deployment_target_test.dart # deployment target per configuration, plugin targets, Xcode floor
     ├── watchos_kernel_snapshot_test.dart   # kernel compile for AOT modes
     ├── watchos_linked_frameworks_test.dart # Package.swift .linkedFramework parsing
     ├── watchos_native_link_test.dart       # host archive and plugin link flags
     ├── watchos_platform_args_test.dart     # watchOS platform argument expansion
     ├── watchos_shader_target_test.dart     # shader backends in a bundle
     ├── watchos_signing_test.dart           # development team and keychain lookup
+    ├── watchos_xcodebuild_args_test.dart   # the xcodebuild command line of the app build
     │  Host module, runner and templates
     ├── watchos_accessibility_test.dart     # accessibility C ABI and host mirror
     ├── watchos_content_scale_test.dart     # FlutterWatchOSContentScale
@@ -66,7 +92,11 @@ test/
     ├── watchos_device_install_test.dart    # install and uninstall, Simulator and watch
     ├── watchos_device_test.dart            # launch arguments, log readers, startApp
     ├── watchos_emulator_test.dart          # simctl and devicectl parsing
-    ├── watchos_physical_device_test.dart   # physical watch properties and logs
+    ├── watchos_logs_command_test.dart      # logs: the watch command, a watch and a shut-down Simulator
+    ├── watchos_mode_guidance_test.dart     # which modes a target runs, and the paste-ready refusals
+    ├── watchos_physical_device_test.dart   # physical watch properties, launch argv and logs
+    ├── watchos_screenshot_test.dart        # screenshots through simctl and devicectl
+    ├── watchos_simulator_launch_test.dart  # the Simulator launch flow, with fake processes
     ├── watchos_vm_relay_test.dart          # the VM Service relay for a watch
     │  Plugins and plugin porting
     ├── plugin_port_compat_db_test.dart     # compatibility database, watchOS versions
@@ -81,9 +111,13 @@ test/
     ├── watchos_create_stock_app_test.dart  # a watch-only create writes stock's app
     ├── watchos_create_test.dart            # create template errors and next steps
     ├── watchos_doctor_test.dart            # doctor validators
+    ├── watchos_install_docs_test.dart      # the install docs put bin/ first on PATH
+    ├── watchos_license_headers_test.dart   # every source file starts with the license header
     ├── watchos_public_text_test.dart       # the word rule on .github/ and test names
+    ├── watchos_safe_area_tools_test.dart   # the tool/safe_area/ scripts on fake input
     ├── watchos_upgrade_test.dart           # release-tag selection and git upgrade safety
-    └── watchos_version_fields_test.dart    # version fields that must agree
+    ├── watchos_version_fields_test.dart    # version fields that must agree
+    └── watchos_xcode_matrix_test.dart      # tool/xcode_matrix.sh usage and settings
 ```
 
 ## Running
@@ -101,20 +135,23 @@ A single file:
 flutter/bin/dart test test/general/watchos_upgrade_test.dart
 ```
 
-The bundled `flutter_watchos` package and its example have their own tests,
-which CI runs in its package job:
+The bundled `flutter_watchos` package and its example, and the crown runtime
+in `runtime/`, have their own tests, which CI runs in its package job, with
+the debug suite's verdict tests. From the repo root:
 
 ```bash
-cd packages/flutter_watchos && ../../flutter/bin/flutter test
-cd packages/flutter_watchos/example && ../../../flutter/bin/flutter test
+(cd packages/flutter_watchos && ../../flutter/bin/flutter test)
+(cd packages/flutter_watchos/example && ../../../flutter/bin/flutter test)
+(cd runtime && ../flutter/bin/flutter test)
+flutter/bin/dart test tool/debug_suite/verdict_test.dart
 ```
 
 ## Launch-flow smoke test (needs a watchOS simulator)
 
-The unit suite covers the extractable logic but deliberately does **not** mock
-the launch orchestration (`_startAppOnSimulator`: a timing-sensitive
-boot → install → terminate → await-log-stream-ready → launch flow). That path is
-verified end-to-end against a real simulator instead:
+`watchos_simulator_launch_test.dart` drives the Simulator launch (boot →
+install → terminate → log stream → launch → VM Service) with fake processes
+and fake time. What fakes cannot show, that a real Simulator does what they
+assume, is checked end to end against a real simulator instead:
 
 ```bash
 tool/smoke_test.sh
@@ -130,6 +167,10 @@ tool/smoke_test.sh <SIM_UDID>
 It builds + runs the example and asserts the Dart VM Service comes up; exit 0 =
 the app launched. Keep it out of `dart test` runs — it's an integration check,
 run it manually or in a sim-equipped CI job.
+
+The debugging checks (hot reload, DevTools, attach, logs, screenshots, test
+and drive) run the same way, on one Simulator, with
+`tool/debug_suite/run.sh <SIM_UDID>`.
 
 ## Conventions
 

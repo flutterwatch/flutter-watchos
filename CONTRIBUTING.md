@@ -93,16 +93,25 @@ exists to preserve. See [.github/BRANCH_PROTECTION.md](.github/BRANCH_PROTECTION
 ## Running tests
 
 The pinned Flutter SDK is bootstrapped into `flutter/` the first time you
-run any `flutter-watchos` command. Then, from the repo root:
+run any `flutter-watchos` command. Then, from the repo root, run what CI's
+`analyze-and-test` job runs:
 
 ```bash
-flutter/bin/dart analyze --fatal-warnings
-flutter/bin/dart test test/general
+flutter/bin/dart analyze --fatal-infos
+flutter/bin/dart test --timeout 2s test/general
+flutter/bin/dart test --timeout 2s test/commands.shard/hermetic
+tool/check_untested_commits.sh --self-test
 ```
 
 The tests use Flutter's own test infrastructure (`FakeProcessManager`,
 `testWithoutContext`, `testUsingContext`) and need no device or simulator.
-CI runs exactly these two commands.
+Each test gets 2 seconds; a test that waits on a timer runs on fake time.
+
+CI also typechecks `host/*.swift` with Xcode 26.0.1 and 26.6, and its
+`package` job analyses and tests `packages/flutter_watchos`, its example and
+`runtime/`, runs the debug suite's verdict tests and makes a publish dry run
+of the package. [test/README.md](test/README.md) shows how to run those
+tests yourself; `.github/workflows/ci.yml` has every step.
 
 ## Code style
 
