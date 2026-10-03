@@ -1204,17 +1204,19 @@ class WatchosDevice extends Device {
     final logReader =
         (_logReader ??= WatchosPhysicalDeviceLogReader(name)) as WatchosPhysicalDeviceLogReader;
 
+    // A release engine has no Dart VM Service, and a release app should not
+    // be launched asking for one, nor with any of stock's debugging options.
+    // A launch with debugging off asks for none either.
+    final bool enableVmService =
+        debuggingOptions.buildInfo.mode != BuildMode.release && debuggingOptions.debuggingEnabled;
     // Live DevTools on a physical watch rides the relay: the app cannot be
     // dialled into, but it can dial out over URLSession. Start the Mac half
     // first so the bridge has something to reach the moment the app launches.
-    final wantsRelay = debuggingOptions.buildInfo.mode == BuildMode.profile;
+    final bool wantsRelay = enableVmService && debuggingOptions.buildInfo.mode == BuildMode.profile;
     var relayEnvironment = <String, String>{};
     if (wantsRelay) {
       relayEnvironment = await _startVmRelay(debuggingOptions.deviceVmServicePort);
     }
-    // A release engine has no Dart VM Service, and a release app should not
-    // be launched asking for one, nor with any of stock's debugging options.
-    final enableVmService = debuggingOptions.buildInfo.mode != BuildMode.release;
     // Pin the port so the in-app bridge knows where the VM Service is without
     // having to discover it; --device-vmservice-port chooses the pinned port.
     final int? vmServicePort = relayEnvironment.isNotEmpty
@@ -1238,6 +1240,12 @@ class WatchosDevice extends Device {
       },
       enableVmService: enableVmService,
     );
+
+    // Without a VM Service there is nothing to wait for: the app is running,
+    // and its console streams to this Mac.
+    if (!enableVmService) {
+      return LaunchResult.succeeded();
+    }
 
     // With the relay up, the Mac-reachable VM Service *is* the relay: it speaks
     // the protocol transparently, so DDS and DevTools connect to it unchanged.

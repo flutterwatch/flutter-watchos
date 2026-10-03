@@ -585,16 +585,30 @@ void main() {
       ),
     ];
 
+    late BufferLogger logger;
+    LaunchResult? result;
+    Duration? launchedAfter;
+
+    /// Starts a release launch in fake time and lets 40 s pass. [result] is
+    /// what startApp returned, and [launchedAfter] how much fake time it took.
     Future<void> launchInFakeTime() async {
-      final device = WatchosDevice('watch-1', name: 'My Watch', logger: BufferLogger.test(), isSimulator: false);
+      logger = BufferLogger.test();
+      result = null;
+      launchedAfter = null;
+      final device = WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false);
       time.run((_) {
         unawaited(
-          device.startApp(
-            WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
-            prebuiltApplication: true,
-            route: '/r',
-            debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
-          ),
+          device
+              .startApp(
+                WatchosApp(id: bundleId, projectDirectory: fileSystem.directory('/watchos')),
+                prebuiltApplication: true,
+                route: '/r',
+                debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
+              )
+              .then((LaunchResult launched) {
+                result = launched;
+                launchedAfter = time.elapsed;
+              }),
         );
       });
       for (var i = 0; i < 40; i++) {
@@ -603,6 +617,33 @@ void main() {
         time.flushMicrotasks();
       }
     }
+
+    // A release engine has no VM Service. The launch used to wait 30 s for
+    // one, then warn that hot reload and DevTools were unavailable and to
+    // check the Local Network permission.
+    testUsingContext(
+      'succeeds once the console starts, with no wait for a VM Service and no warning',
+      () async {
+        processManager.addCommands(<FakeCommand>[
+          ...upToTheLaunch(),
+          const FakeCommand(command: launchPrefix),
+        ]);
+
+        await launchInFakeTime();
+
+        expect(result?.started, isTrue);
+        expect(result?.vmServiceUri, isNull);
+        expect(launchedAfter, lessThan(const Duration(seconds: 2)));
+        expect(logger.warningText, isEmpty);
+        expect(logger.errorText, isEmpty);
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(environment: <String, String>{}),
+      },
+    );
 
     testUsingContext(
       'with no switch set, nothing follows the bundle id',
