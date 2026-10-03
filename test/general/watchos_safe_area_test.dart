@@ -32,7 +32,10 @@ void main() {
     final int report = hostView.indexOf('runner.reportSafeArea(');
     final int reader = hostView.lastIndexOf('GeometryReader', report);
     final int overlay = hostView.lastIndexOf('.overlay {', reader);
-    final int surface = hostView.lastIndexOf('.ignoresSafeArea()', overlay);
+    // The surface's own `.ignoresSafeArea()` is the last one before the
+    // overlay in the same modifier chain. The crown's layer, a `.background`
+    // between the two, has one of its own a level deeper.
+    final int surface = _lastAtDepth(hostView, '.ignoresSafeArea()', overlay);
 
     test('is found', () {
       expect(report, greaterThan(-1));
@@ -314,6 +317,17 @@ String _block(String source, int start, [String open = '{', String close = '}'])
 int _depthAt(String source, int offset) {
   final String prefix = source.substring(0, offset);
   return '{'.allMatches(prefix).length - '}'.allMatches(prefix).length;
+}
+
+/// The last [pattern] in [source] before [offset] that sits at the nesting
+/// depth of [offset], or -1.
+int _lastAtDepth(String source, String pattern, int offset) {
+  final int depth = _depthAt(source, offset);
+  int at = source.lastIndexOf(pattern, offset);
+  while (at > 0 && _depthAt(source, at) != depth) {
+    at = source.lastIndexOf(pattern, at - 1);
+  }
+  return at >= 0 && _depthAt(source, at) == depth ? at : -1;
 }
 
 /// Collapses every run of whitespace to one space, so an assertion does not
