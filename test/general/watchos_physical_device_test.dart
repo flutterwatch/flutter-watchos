@@ -411,7 +411,7 @@ void main() {
               'script', '-t', '0', '/dev/null', 'xcrun', 'devicectl', 'device', 'process', 'launch', //
               '--device', 'watch-1', '--console', '--terminate-existing', '--environment-variables',
               RegExp('.*'), bundleId, '--enable-dart-profiling', '--disable-service-auth-codes',
-              '--vm-service-host=127.0.0.1', '--start-paused', '--dart-flags="--baz"', //
+              '--vm-service-host=127.0.0.1', '--start-paused', '--dart-flags=--baz', //
               '--trace-systrace', '--route=/r', '--trace-startup', RegExp(r'^--vm-service-port=\d+$'),
             ],
             onRun: (List<String> command) => launch = command,
@@ -502,6 +502,44 @@ void main() {
         ),
       },
     );
+  });
+
+  // Stock quotes four values for ios-deploy, which splits its launch
+  // arguments like a shell line. devicectl passes each argument as it is, so
+  // the app gets them without the quotes, or the engine would stop on a Dart
+  // flag it does not allow.
+  group('physicalLaunchArguments', () {
+    testWithoutContext("passes stock's quoted values without the quotes", () {
+      final List<String> arguments = physicalLaunchArguments(
+        DebuggingOptions.enabled(
+          BuildInfo.profile,
+          dartFlags: '--max_profile_depth=8 --profile_period=500',
+          traceToFile: 'path/to/trace.binpb',
+          traceAllowlist: 'flutter,dart',
+          traceSkiaAllowlist: 'skia.a,skia.b',
+        ),
+      );
+
+      expect(
+        arguments,
+        containsAll(<String>[
+          '--dart-flags=--max_profile_depth=8 --profile_period=500',
+          '--trace-to-file=path/to/trace.binpb',
+          '--trace-allowlist=flutter,dart',
+          '--trace-skia-allowlist=skia.a,skia.b',
+        ]),
+      );
+      expect(arguments.where((String argument) => argument.contains('"')), isEmpty);
+    });
+
+    testWithoutContext('withoutStockQuotes removes only the quotes stock added', () {
+      expect(withoutStockQuotes('--dart-flags="--a=1"'), '--dart-flags=--a=1');
+      expect(withoutStockQuotes('--dart-flags="--a="b""'), '--dart-flags=--a="b"');
+      expect(withoutStockQuotes('--trace-to-file=""'), '--trace-to-file=');
+      expect(withoutStockQuotes('--route="/a"'), '--route="/a"');
+      expect(withoutStockQuotes('--dart-flags=--a'), '--dart-flags=--a');
+      expect(withoutStockQuotes('--dart-flags="'), '--dart-flags="');
+    });
   });
 
   // A release launch passes none of stock's options and no VM Service flag:

@@ -160,7 +160,8 @@ Map<String, String> launchOptionSwitches(DebuggingOptions options) => <String, S
 /// `--disable-service-auth-codes` (always, from [appLaunchArguments]),
 /// `--vm-service-host` (its bind address depends on the relay) and
 /// `--vm-service-port` (the relay's pinned port, or `--device-vmservice-port`).
-/// So each of those appears exactly once in the argv.
+/// So each of those appears exactly once in the argv. The values stock
+/// quotes reach the app without the quotes ([withoutStockQuotes]).
 @visibleForTesting
 List<String> physicalLaunchArguments(
   DebuggingOptions options, {
@@ -177,8 +178,37 @@ List<String> physicalLaunchArguments(
         argument != '--disable-service-auth-codes' &&
         !argument.startsWith('--vm-service-host=') &&
         !argument.startsWith('--vm-service-port='))
-      argument,
+      withoutStockQuotes(argument),
 ];
+
+/// The options whose value stock `getIOSLaunchArguments` wraps in literal
+/// double quotes for a physical device.
+const List<String> _quotedStockOptions = <String>[
+  '--dart-flags',
+  '--trace-to-file',
+  '--trace-allowlist',
+  '--trace-skia-allowlist',
+];
+
+/// [argument] without the double quotes stock puts around the value of the
+/// options in [_quotedStockOptions], as in `--dart-flags="--foo"`.
+///
+/// Stock adds them for ios-deploy, which passes the launch arguments as one
+/// string that is split like a shell line, quotes removed. devicectl passes
+/// each argument to the app as it is, and the engine keeps the quotes as part
+/// of the value: it would read `"--foo"` as the Dart flag, which no allowed
+/// flag matches, and stop the app, and a trace file or category name would
+/// keep its quotes. Quotes inside the value are kept.
+@visibleForTesting
+String withoutStockQuotes(String argument) {
+  for (final String option in _quotedStockOptions) {
+    final prefix = '$option="';
+    if (argument.length > prefix.length && argument.startsWith(prefix) && argument.endsWith('"')) {
+      return '$option=${argument.substring(prefix.length, argument.length - 1)}';
+    }
+  }
+  return argument;
+}
 
 /// What a debug launch on a watch Simulator passes to the app, and where it
 /// looks for the VM Service.
