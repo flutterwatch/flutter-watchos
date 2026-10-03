@@ -77,8 +77,9 @@ There is no public API that keeps a watch at full frame rate with the wrist
 down — `WKExtendedRuntimeSession` keeps your app from being *suspended*, but
 the display still dims and the rate still collapses. Practical options:
 
-- Rotate the Digital Crown or tap the screen during the run. Note crown input
-  is forwarded as gestures and carries a little cost of its own, so keep it
+- Rotate the Digital Crown or tap the screen during the run. Note crown
+  scrolling carries a little cost of its own (the host reports the native
+  scroll view's position every refresh and the list redraws), so keep it
   consistent across the runs you intend to compare.
 - Settings → Display & Brightness → **Wake Duration → 70 Seconds**, and keep
   the watch on its charger.

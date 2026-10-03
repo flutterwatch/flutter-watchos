@@ -665,8 +665,8 @@ const String kWatchosCrownRuntimeFile = 'watchos_crown_runtime.dart';
 /// into every watch app: the Digital Crown then scrolls the app the way it
 /// scrolls a native scroll view, with no code or package in the app (see
 /// `host/WatchCrownProxy.swift`). Returns false, and removes a stale copy,
-/// when this installation has no runtime; the crown then goes to the engine's
-/// own model.
+/// when this installation has no runtime; the crown then scrolls nothing, and
+/// only the raw crown (`WatchCrown` in package:flutter_watchos) still works.
 bool copyWatchosCrownRuntime(Directory toolRoot, Directory buildDir) {
   final File source = toolRoot
       .childDirectory('runtime')

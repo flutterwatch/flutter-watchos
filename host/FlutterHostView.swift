@@ -835,10 +835,4 @@ private struct SystemTimeHidden: ViewModifier {
         #endif
     }
 }
-extension View {
-    /// SPIKE ONLY: apply `transform` when `condition` holds.
-    @ViewBuilder func when<T: View>(_ condition: Bool, _ transform: (Self) -> T) -> some View {
-        if condition { transform(self) } else { self }
-    }
-}
 #endif  // !arch(arm64_32)
