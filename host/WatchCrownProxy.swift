@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // Native Digital Crown scrolling: the host half.
 //
 // A Flutter app on the watch is one rendered image, so nothing in it can own
