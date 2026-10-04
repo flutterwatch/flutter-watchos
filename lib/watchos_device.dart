@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/base/dds.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -782,6 +783,17 @@ class WatchosDevice extends Device {
 
   @override
   Future<bool> get isLocalEmulator async => isSimulator;
+
+  /// On the Simulator the app's container is a directory on this Mac, so the
+  /// files a hot reload or restart needs are written straight into it, as
+  /// stock Flutter does for the iOS Simulator. Written through the VM Service
+  /// instead, they depend on the VM's file system entry, which an `attach` to
+  /// the same app deletes when it ends, and the `run` session's next reload
+  /// then finds no files. A physical watch runs AOT builds only and takes no
+  /// such files.
+  @override
+  DevFSWriter? createDevFSWriter(ApplicationPackage? app, String? userIdentifier) =>
+      isSimulator ? LocalDevFSWriter(fileSystem: globals.fs) : null;
 
   @override
   Future<String?> get emulatorId async => isSimulator ? id : null;

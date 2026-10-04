@@ -16,8 +16,10 @@ run.devtools_url pass
 run.hot_reload pass
 run.hot_restart pass
 run.quit pass
-# r in the run session after attach to the same app is detached with d
-run.reload_after_detach xfail reload-after-detach the run session rejects hot reload once an attach to its app is detached
+# r in the run session after attach to the same app is detached with d.
+# Fixed: reload-after-detach. The Simulator's reload files go straight into
+# the app's container, as stock Flutter's iOS Simulator does.
+run.reload_after_detach pass
 
 # vmcheck through the printed URI
 vm.get_vm pass

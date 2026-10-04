@@ -45,6 +45,12 @@ not fit a watch.
   `--route` has no effect on watchOS, where an app starts at its home route,
   and `run` and `drive` now say so.
 
+- **Hot reload keeps working after an `attach` ends.** An `attach` to an
+  app that a `run` session was driving left that session unable to hot
+  reload or restart once it ended. On the Simulator the files a reload needs
+  now go straight into the app's container, as stock Flutter does for the
+  iOS Simulator.
+
 - **A Simulator launch that does not start says so.** A debug launch waited
   30 seconds for the Dart VM Service and then reported success without it,
   so `run` had nothing to connect to and `drive` stopped on an error. It now
@@ -155,9 +161,7 @@ not fit a watch.
   says to leave `ARCHS` unset and to expect one `arm64_32` linker warning.
   [doc/debug-app.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/debug-app.md)
   says breakpoints and expression evaluation work only on the Simulator,
-  where a watch's logs go, and that a `run` session can no longer hot reload
-  once an `attach` to its app is detached, so each app takes one session at
-  a time.
+  and where a watch's logs go.
   [doc/commands.md](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/commands.md)
   adds `test -d` for integration tests on the Simulator without a driver
   file, explains the `integration_test` warning under `drive`, drops

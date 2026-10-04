@@ -8,6 +8,7 @@ import 'dart:io' as io show ProcessSignal;
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_watchos/watchos_device.dart';
 import 'package:flutter_watchos/watchos_mode_guidance.dart';
@@ -508,6 +509,31 @@ void main() {
 
       expect(await device.isLocalEmulator, isFalse);
       expect(await device.emulatorId, isNull);
+    });
+
+    // Mirrors stock IOSSimulator.createDevFSWriter. Through the VM Service,
+    // the writes of a run session went nowhere once an attach to the same app
+    // had ended, and its next hot reload was rejected.
+    testUsingContext('a Simulator writes hot reload files straight into the app container', () {
+      final device = WatchosDevice(
+        'test-id',
+        name: 'Apple Watch Series 11 (46mm)',
+        logger: BufferLogger.test(),
+        isSimulator: true,
+      );
+
+      expect(device.createDevFSWriter(null, null), isA<LocalDevFSWriter>());
+    });
+
+    testWithoutContext('a physical watch leaves file writes to the VM Service', () {
+      final device = WatchosDevice(
+        'physical-id',
+        name: 'My Watch',
+        logger: BufferLogger.test(),
+        isSimulator: false,
+      );
+
+      expect(device.createDevFSWriter(null, null), isNull);
     });
 
     testWithoutContext('reports the osVersion in sdkNameAndVersion when present', () async {

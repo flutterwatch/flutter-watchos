@@ -149,11 +149,6 @@ flutter-watchos attach --debug-url <vm-service-uri>
 
 The URI is printed at engine startup and appears in the device console logs.
 
-Use one session per app. After `attach` connects to an app that a `run`
-session is already driving, and you detach with `d`, that `run` session can
-no longer hot reload or hot restart: the reload is rejected. Quit it with `q`
-and start `run` again.
-
 ## Logs
 
 On a watch Simulator, `logs` streams the running app's output, as it does for
