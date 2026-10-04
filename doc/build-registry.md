@@ -21,7 +21,7 @@ Four fields, in one HTTPS request, under your own account token:
 |---|---|---|
 | `bundle_id` | `com.example.watchface` | `CFBundleIdentifier` of the built `Runner.app` |
 | `app_version` | `1.4.0+27` | `CFBundleShortVersionString` + `CFBundleVersion` |
-| `engine_version` | `engine-a0d92ed11913` | the engine id this CLI is pinned to |
+| `engine_version` | `engine-779a2b7c61ba` | the engine id this CLI is pinned to |
 | `build_mode` | `release` | always `release` — other modes are never registered |
 
 ## What is not

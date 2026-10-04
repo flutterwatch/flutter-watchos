@@ -7,7 +7,11 @@ and fails plainly when the app does not start, and every command says,
 before it builds anything, when a mode, an option or a stock command does
 not fit a watch.
 
-- **A new engine, `engine-a0d92ed11913`.** It is built from the same
+Updated on 4 October 2026 with a newer engine, `engine-779a2b7c61ba`,
+which adds the two fixes below the engine's entry. `flutter-watchos upgrade`
+moves an earlier 0.1.1 checkout onto it.
+
+- **A new engine, `engine-779a2b7c61ba`.** It is built from the same
   Flutter 3.47.5, so the Flutter SDK does not change, and `upgrade`
   downloads the new engine once: about 25 MB signed out, about 66 MB
   signed in. On the watchOS Simulator, DevTools' CPU Profiler now records
@@ -15,6 +19,19 @@ not fit a watch.
   still empty, as
   [Profiling on a physical watch](https://github.com/flutterwatch/flutter-watchos/blob/main/doc/debug-app.md#profiling-on-a-physical-watch)
   says.
+
+- **Backdrop blurs and blend modes draw on the watch.** A frame with a
+  `BackdropFilter`, or with an advanced blend mode such as
+  `BlendMode.colorBurn`, never reached the screen: the Simulator showed
+  magenta, and a watch showed an older frame instead, so a screen with a
+  blurred backdrop flickered. Such frames now draw. Cupertino's dialogs and
+  translucent bars blur their backdrop, so they are among the screens this
+  fixes.
+
+- **A frame the GPU cannot keep up with slows down instead of breaking.**
+  Frames used to queue on the GPU until the screen drew corrupted shapes and
+  the app ran short of memory. The engine now waits for the GPU once two
+  frames are on it, as an iPhone's display does.
 
 - **Each mode runs where it can, and the tool says so before building.** The
   watchOS Simulator engine is JIT only and a physical watch has no JIT
