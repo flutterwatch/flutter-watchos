@@ -129,6 +129,14 @@ not fit a watch.
   package, `test` for one, no longer write app wiring into the plugin's
   `watchos/`.
 
+- **An app on a `flutter_watchos` too old for platform views is told.**
+  Since 0.1.0 a `WatchPlatformView` from a `flutter_watchos` published
+  before it can show nothing: a `video_player_watchos` video plays its
+  sound over a black frame. An app whose lock still holds one now gets a
+  warning from `run`, `build`, `attach`, `drive` and `test`, once per
+  command, with the command that fixes it:
+  `flutter-watchos pub upgrade flutter_watchos`.
+
 - **A missing watchOS plugin package is named.** When an app uses a plugin
   that has a published watchOS package, the tool names it with the command
   that adds it, for example

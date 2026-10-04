@@ -150,6 +150,14 @@ On an engine that predates the compositor (`WatchPlatformView.isComposited`
 false) the view is instead overlaid on, or underlaid beneath, the whole
 Flutter frame, and `layer:` picks which.
 
+The other way round does not work: a `flutter_watchos` that predates the
+compositor shows nothing on flutter-watchos 0.1.0 or later. The engine
+places a native view only from the layer tree, which such a package never
+paints into, so a `video_player_watchos` video plays its sound over a black
+frame. Every such package was published before 0.1.0. `run`, `build`,
+`attach`, `drive` and `test` warn when an app resolves one, and
+`flutter-watchos pub upgrade flutter_watchos` moves it to 0.1.0 or later.
+
 ### Linking an external native SDK
 
 A plugin's `watchos/Package.swift` can declare external SwiftPM

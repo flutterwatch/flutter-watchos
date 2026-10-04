@@ -17,11 +17,14 @@ import 'package:flutter_watchos/watchos_plugins.dart'
         copyWatchosCrownRuntime,
         ensureReadyForWatchosTooling,
         knownWatchosPluginNames,
+        oldFlutterWatchosWarning,
         recommendWatchosPluginsToInstall,
+        resetOldFlutterWatchosWarning,
         watchosDartPluginRegistrantSource;
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/forbidden_words.dart';
 import '../src/host_sources.dart';
 
 /// The table in the plugins repository's README.md ("List of plugins"), row
@@ -705,9 +708,42 @@ flutter:
     );
   });
 
+  // From 0.1.0 the engine shows a platform view only where a frame's layers
+  // place it, and a flutter_watchos older than the first composited version
+  // never paints it there: an app locked to one played a video's sound over a
+  // black frame.
+  group('oldFlutterWatchosWarning', () {
+    test('warns for a version before the first composited one', () {
+      for (final version in <String>['0.0.1', '0.1.0-beta.1', '0.1.0-beta.5', '0.1.0-beta.8']) {
+        expect(oldFlutterWatchosWarning(version), isNotNull, reason: version);
+      }
+    });
+
+    test('stays quiet from the first composited version on', () {
+      for (final version in <String>['0.1.0-beta.9', '0.1.0-beta.10', '0.1.0', '0.1.1', '1.0.0']) {
+        expect(oldFlutterWatchosWarning(version), isNull, reason: version);
+      }
+    });
+
+    test('stays quiet without a version it can read', () {
+      for (final version in <String?>[null, '', '0.1', 'latest']) {
+        expect(oldFlutterWatchosWarning(version), isNull, reason: '$version');
+      }
+    });
+
+    test('gives the command on its own line and names no version', () {
+      final String warning = oldFlutterWatchosWarning('0.1.0-beta.5')!;
+      expect(warning.split('\n').last, '  flutter-watchos pub upgrade flutter_watchos');
+      expect(warning, isNot(contains('0.1.0-')));
+      expect(forbiddenWordsIn(warning), isEmpty);
+    });
+  });
+
   // Through the tooling step itself: one warning, with the command, and no
   // second line for the same plugin.
   group('ensureReadyForWatchosTooling plugin warnings', () {
+    setUp(resetOldFlutterWatchosWarning);
+
     Directory appUsing(Map<String, String> pluginPubspecs) {
       final Directory projectDir = fileSystem.directory('/app')..createSync();
       projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
@@ -790,6 +826,121 @@ flutter:
         dartPluginClass: SharedPreferencesWatchos
 ''',
         });
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(testLogger.warningText, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    String flutterWatchos(String version) =>
+        '''
+name: flutter_watchos
+version: $version
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+''';
+
+    // Dates the app's pubspec.yaml and package config, so the config reads as
+    // written before (`pub get` pending) or after the last pubspec edit.
+    void datePubGet(Directory projectDir, {required bool pending}) {
+      final edited = DateTime(2026, 10, 4, 12);
+      projectDir.childFile('pubspec.yaml').setLastModifiedSync(edited);
+      projectDir
+          .childDirectory('.dart_tool')
+          .childFile('package_config.json')
+          .setLastModifiedSync(edited.add(Duration(minutes: pending ? -1 : 1)));
+    }
+
+    // A `run` goes through the tooling step twice: for the command, then in
+    // the build.
+    testUsingContext(
+      'warns once about a flutter_watchos too old for platform views',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'flutter_watchos': flutterWatchos('0.1.0-beta.5'),
+        });
+        datePubGet(projectDir, pending: false);
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        final String warnings = testLogger.warningText;
+        expect(
+          'flutter-watchos pub upgrade flutter_watchos'.allMatches(warnings),
+          hasLength(1),
+        );
+        expect(warnings, contains('WatchPlatformView'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    // The commands run the step before their `pub get`. Right after an edit
+    // to pubspec.yaml, the package config still holds the old resolution.
+    testUsingContext(
+      'waits for pub get after a pubspec edit, then warns',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'flutter_watchos': flutterWatchos('0.1.0-beta.5'),
+        });
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+
+        datePubGet(projectDir, pending: true);
+        await ensureReadyForWatchosTooling(project);
+        expect(testLogger.warningText, isEmpty);
+
+        datePubGet(projectDir, pending: false);
+        await ensureReadyForWatchosTooling(project);
+        expect(testLogger.warningText, contains('flutter-watchos pub upgrade flutter_watchos'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'says nothing about flutter_watchos 0.1.0',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'flutter_watchos': flutterWatchos('0.1.0'),
+        });
+        datePubGet(projectDir, pending: false);
+
+        await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
+
+        expect(testLogger.warningText, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'says nothing when the flutter_watchos pubspec has no version',
+      () async {
+        final Directory projectDir = appUsing(<String, String>{
+          'flutter_watchos': '''
+name: flutter_watchos
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+''',
+        });
+        datePubGet(projectDir, pending: false);
 
         await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
 
