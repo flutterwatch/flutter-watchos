@@ -7,7 +7,11 @@ on:
 
 jobs:
   analyze-and-test:
-    runs-on: macos-14
+    # The docs promise Xcode 26 or later. This image offers the first Xcode
+    # 26 release (26.0.1) and defaults to 26.6. The branch protection that
+    # .github/BRANCH_PROTECTION.md recommends names this job by its id, so
+    # keep the id.
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -29,5 +33,146 @@ jobs:
       - name: Analyze
         run: ./flutter/bin/dart analyze --fatal-infos
 
+      # Every test gets 2 s. A test that waits on a timer runs on fake time,
+      # so a slower one is a bug, and it fails here rather than slowing
+      # every run down.
       - name: Unit tests
-        run: ./flutter/bin/dart test test/general
+        run: ./flutter/bin/dart test --timeout 2s test/general
+
+      - name: Command tests
+        run: ./flutter/bin/dart test --timeout 2s test/commands.shard/hermetic
+
+      - name: Script tests
+        run: tool/check_untested_commits.sh --self-test
+
+  host-typecheck:
+    # The CLI compiles host/*.swift into every app, with the Xcode on the
+    # user's machine, for three targets and with up to two compile
+    # conditions: FLUTTER_WATCHOS_VM_BRIDGE (debug and profile) and
+    # FLUTTER_WATCHOS_STATUS_BAR_SPI (apps that use the flutter_watchos
+    # package). Typecheck every combination with the first Xcode 26 release
+    # and with the image default, so neither can break an app build unseen.
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      HOST_TYPECHECK_XCODES: >-
+        /Applications/Xcode_26.0.1.app/Contents/Developer
+        /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Typecheck host/*.swift (3 targets x 4 define sets per Xcode)
+        run: |
+          status=0
+          for developer_dir in $HOST_TYPECHECK_XCODES; do
+            if [ ! -d "$developer_dir" ]; then
+              echo "FAILED no Xcode at $developer_dir"
+              status=1
+              continue
+            fi
+            export DEVELOPER_DIR="$developer_dir"
+            xcode="$(xcodebuild -version | head -n 1)"
+            for target in \
+                watchos:arm64-apple-watchos26.0 \
+                watchos:arm64_32-apple-watchos26.0 \
+                watchsimulator:arm64-apple-watchos26.0-simulator; do
+              sdk="${target%%:*}"
+              triple="${target#*:}"
+              for defines in \
+                  "" \
+                  "-D FLUTTER_WATCHOS_VM_BRIDGE" \
+                  "-D FLUTTER_WATCHOS_STATUS_BAR_SPI" \
+                  "-D FLUTTER_WATCHOS_VM_BRIDGE -D FLUTTER_WATCHOS_STATUS_BAR_SPI"; do
+                # $defines is split into its words on purpose.
+                # shellcheck disable=SC2086
+                if output="$(xcrun -sdk "$sdk" swiftc -typecheck -target "$triple" \
+                    -parse-as-library -module-name FlutterWatchOS -I host \
+                    $defines host/*.swift 2>&1)" && ! grep -q 'warning:' <<< "$output"; then
+                  echo "ok     $xcode  $triple  [$defines]"
+                else
+                  echo "FAILED $xcode  $triple  [$defines]"
+                  echo "$output"
+                  status=1
+                fi
+              done
+            done
+          done
+          exit "$status"
+
+  package:
+    # The flutter_watchos package and its example, the crown runtime and the
+    # debug suite's verdict logic, with the pinned SDK. The CLI's own analyze
+    # leaves packages/ and runtime/ out (analysis_options.yaml), so this job
+    # is where they are analysed and tested.
+    runs-on: macos-26
+    timeout-minutes: 30
+    # Reports without blocking on the release push: by then the package is
+    # already on pub.dev, so a red run could stop nothing. The first commit
+    # after the release tag sets this to false, and the job blocks from then
+    # on.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pinned Flutter SDK
+        uses: actions/cache@v4
+        with:
+          path: flutter
+          key: flutter-sdk-${{ runner.os }}-${{ hashFiles('bin/internal/flutter.version') }}
+
+      - name: Bootstrap (pinned SDK + snapshot compile)
+        run: ./bin/flutter-watchos --version
+
+      - name: Package dependencies (from the lockfile)
+        working-directory: packages/flutter_watchos
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter pub get --enforce-lockfile
+
+      - name: Package analyze
+        working-directory: packages/flutter_watchos
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter analyze --fatal-infos
+
+      - name: Package tests
+        working-directory: packages/flutter_watchos
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter test
+
+      - name: Example analyze
+        working-directory: packages/flutter_watchos/example
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter analyze --fatal-infos
+
+      - name: Example tests
+        working-directory: packages/flutter_watchos/example
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter test
+
+      # The crown runtime, which the CLI compiles into every watch app: a
+      # Flutter package of its own, with its own lockfile.
+      - name: Runtime dependencies (from the lockfile)
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter pub get --enforce-lockfile
+
+      - name: Runtime analyze
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter analyze --fatal-infos
+
+      - name: Runtime tests
+        working-directory: runtime
+        run: $GITHUB_WORKSPACE/flutter/bin/flutter test
+
+      # Which results make a run of tool/debug_suite/run.sh green. The suite
+      # itself needs a watch Simulator, so CI runs only this.
+      - name: Debug suite verdict tests
+        run: ./flutter/bin/dart test tool/debug_suite/verdict_test.dart
+
+      # No command above may leave a change behind: a dirty tree would also
+      # put stray files into the package archive.
+      - name: Tree unchanged
+        run: |
+          git status --short
+          test -z "$(git status --short)"
+
+      # Validates the package as pub.dev would. It reads pub.dev, like
+      # fetching dependencies does; it is not a test, and it uploads nothing.
+      - name: Publish dry run
+        working-directory: packages/flutter_watchos
+        run: |
+          "$GITHUB_WORKSPACE/flutter/bin/flutter" pub publish --dry-run 2>&1 | tee "$RUNNER_TEMP/dry-run.txt"
+          grep -qxF 'Package has 0 warnings.' "$RUNNER_TEMP/dry-run.txt"

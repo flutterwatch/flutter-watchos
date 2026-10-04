@@ -52,9 +52,13 @@ class WatchosBuildRegistryCommand extends FlutterCommand {
       'engine id and the build mode. Nothing else leaves your machine, nothing is added\n'
       'to your app, and the app itself never contacts flutterwatch.dev.\n'
       '\n'
-      '  flutter-watchos build-registry --disable         turn it off on this machine\n'
-      '  $kBuildRegistryEnv=0                 turn it off for one shell or a CI job\n'
-      '  flutter-watchos build watchos --no-register-build   skip it for one build\n'
+      // Each command stands alone on its line, so it runs as pasted.
+      'To turn it off on this machine:\n'
+      '  flutter-watchos build-registry --disable\n'
+      "For this shell only (on CI, set the variable in the job's environment):\n"
+      '  export $kBuildRegistryEnv=0\n'
+      'For one build:\n'
+      '  flutter-watchos build watchos --release --no-register-build\n'
       '\n'
       'Details: $kBuildRegistryDocUrl',
     );

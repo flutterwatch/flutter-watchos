@@ -99,23 +99,41 @@ void main() {
       expect(devices.first.osVersion ?? '', contains('watchOS 11.0'));
     });
 
-    testWithoutContext('includes Shutdown sims when includeShutdown is set', () async {
+    // `devices` stays booted-only, as stock; `-d <exact UDID>` also finds a
+    // shut-down watch Simulator, so run can boot it.
+    const shutDownJson = '''
+{"devices":{"com.apple.CoreSimulator.SimRuntime.watchOS-26-5":[
+  {"udid":"AAAA-BBBB-CCCC","name":"Apple Watch Series 11 (46mm)","state":"Shutdown","isAvailable":true},
+  {"udid":"DDDD-EEEE-FFFF","name":"Apple Watch SE","state":"Booted","isAvailable":true}
+]}}''';
+
+    Future<List<WatchosDevice>> simulators({String? shutDownUdid}) {
       processManager.addCommand(
         const FakeCommand(
           command: <String>['xcrun', 'simctl', 'list', 'devices', '--json'],
-          stdout:
-              '{"devices":{"com.apple.CoreSimulator.SimRuntime.watchOS-11-0":[{"udid":"AAAA-BBBB-CCCC","name":"Apple Watch Series 11 (46mm)","state":"Shutdown","isAvailable":true}]}}',
+          stdout: shutDownJson,
         ),
       );
-
-      final List<WatchosDevice> devices = await WatchosEmulator.getConnectedSimulators(
+      return WatchosEmulator.getConnectedSimulators(
         logger,
         processUtils: processUtils,
-        includeShutdown: true,
+        shutDownUdid: shutDownUdid,
       );
+    }
 
-      expect(devices, hasLength(1));
-      expect(devices.first.id, equals('AAAA-BBBB-CCCC'));
+    testWithoutContext('lists a shut-down Simulator only for its exact UDID', () async {
+      final List<WatchosDevice> byUdid = await simulators(shutDownUdid: 'aaaa-bbbb-cccc');
+      expect(byUdid.map((WatchosDevice d) => d.id), <String>['AAAA-BBBB-CCCC', 'DDDD-EEEE-FFFF']);
+      expect(byUdid.first.isShutDown, isTrue);
+      expect(byUdid.last.isShutDown, isFalse);
+
+      for (final other in <String?>[null, 'Apple Watch Series 11 (46mm)', 'AAAA']) {
+        final List<WatchosDevice> devices = await simulators(shutDownUdid: other);
+        expect(devices.map((WatchosDevice d) => d.id), <String>[
+          'DDDD-EEEE-FFFF',
+        ], reason: '$other');
+      }
+      expect(processManager, hasNoRemainingExpectations);
     });
   });
 
@@ -158,6 +176,37 @@ void main() {
 }]}}''';
 
       expect(WatchosEmulator.parseDevicectlOutput(json, logger), isEmpty);
+    });
+
+    // Xcode 27 lists this capability for a connected watch that can take
+    // screenshots.
+    testWithoutContext('reads the capture-screenshot capability', () {
+      const json = '''
+{"result":{"devices":[{
+  "identifier":"w-able",
+  "capabilities":[
+    {"featureIdentifier":"com.apple.coredevice.feature.launchapplication","name":"Launch Application"},
+    {"featureIdentifier":"com.apple.coredevice.feature.capturescreenshot","name":"Capture Screenshot"}
+  ],
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"Able Watch"},
+  "connectionProperties":{"tunnelState":"connected"}
+},{
+  "identifier":"w-unable",
+  "capabilities":[{"featureIdentifier":"com.apple.coredevice.feature.launchapplication"}],
+  "hardwareProperties":{"platform":"watchOS","reality":"physical"},
+  "deviceProperties":{"name":"Unable Watch"},
+  "connectionProperties":{"tunnelState":"connected"}
+}]}}''';
+
+      final List<WatchosDevice> devices = WatchosEmulator.parseDevicectlOutput(json, logger);
+
+      expect(
+        devices.first.coreDeviceCapabilities,
+        contains(WatchosDevice.captureScreenshotCapability),
+      );
+      expect(devices.first.supportsScreenshot, isTrue);
+      expect(devices.last.supportsScreenshot, isFalse);
     });
 
     testWithoutContext('returns empty on missing result / devices keys', () {

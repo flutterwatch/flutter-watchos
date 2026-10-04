@@ -1,13 +1,15 @@
 # Publish an app
 
 A standalone (watch-only) app ships to the App Store with the same commands
-you already use, plus Xcode's Archive/Organizer for the final signing step:
+you already use, plus Xcode's Archive/Organizer for the final signing step.
+First make a release build of the watch app:
 
 ```sh
-flutter-watchos build watchos --release   # release build of the watch app
-# then in Xcode: open watchos/Runner.xcodeproj →
-#   Product → Archive → Distribute App → App Store Connect
+flutter-watchos build watchos --release
 ```
+
+Then, in Xcode, open `watchos/Runner.xcodeproj` and choose Product → Archive
+→ Distribute App → App Store Connect.
 
 The version comes from `pubspec.yaml` (`version: 1.2.0+3` → `1.2.0` /
 build `3`), so a release is: bump the pubspec, `build watchos --release`,
@@ -74,9 +76,16 @@ rather script it, export an `.ipa` from the Organizer (or `xcodebuild
 
 ## Test before you ship
 
+Run a release build on a real watch:
+
 ```sh
-flutter-watchos run -d <watch-id> --release   # release build on a real watch
-flutter-watchos upload --validate-only        # App Store checks, no upload
+flutter-watchos run -d <watch-id> --release
+```
+
+Then run the App Store checks without uploading:
+
+```sh
+flutter-watchos upload --validate-only
 ```
 
 ## Companion apps (iOS app + watch app)
@@ -106,15 +115,31 @@ what the rest of this guide covers.
 
 The App Store requires an `arm64_32` slice in the watch executable when
 `WATCHOS_DEPLOYMENT_TARGET < 27.0`. The Flutter engine is arm64-only
-(Apple Watch Series 9 / Ultra 2 and later), so the template handles this
-with a stub `arm64_32` slice that shows a "Requires Apple Watch Series 9 or
-later" screen on older hardware. You have two options:
+(Apple Watch Series 9 or later, Ultra 2 or later, or SE 3, on watchOS 26.0
+or later), so the template handles this with a stub `arm64_32` slice that
+shows a "Requires Apple Watch Series 9 or later" screen on older hardware.
+
+Leave `ARCHS` unset. With Xcode 27, the Standard Architectures build
+`arm64_32` only when the deployment target is below 27.0, which is exactly
+when the slice is needed.
+
+Below 27.0, a device build in Xcode (an archive, for example) shows this
+linker warning. It is expected: it is how the stub slice links without the
+engine.
+
+```text
+ld: warning: ignoring file '…/Flutter.framework/Flutter': found architecture 'arm64', required architecture 'arm64_32'
+```
+
+You have two options:
 
 1. **Keep the default** (deployment target < 27.0 + stub): the app installs
    on older watches but shows the fallback screen there. Say so in your App
    Store description.
 2. **Set `WATCHOS_DEPLOYMENT_TARGET` to 27.0+**: no stub needed; the App
-   Store simply won't offer the app to unsupported watches.
+   Store simply won't offer the app to unsupported watches. It also leaves
+   out owners of a supported watch who have not updated to watchOS 27. A
+   27.0 target was built and checked with Xcode 27, so use Xcode 27 for it.
 
 Only the watch *executable* needs the fat slice — embedded frameworks stay
 arm64-only either way.

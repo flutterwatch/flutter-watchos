@@ -9,6 +9,7 @@
 
 import 'dart:convert';
 import 'dart:io' as io;
+import 'dart:isolate';
 
 import 'package:args/command_runner.dart';
 import 'package:file/memory.dart';
@@ -19,10 +20,12 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/flutter_project_metadata.dart' show FlutterTemplateType;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
 import 'package:flutter_watchos/commands/create.dart';
+import 'package:flutter_watchos/watchos_platform_args.dart';
 import 'package:test/fake.dart';
 
 import '../../flutter/packages/flutter_tools/test/src/fakes.dart' show TestFeatureFlags;
@@ -117,6 +120,26 @@ void main() {
     FeatureFlags: () => TestFeatureFlags(isLinuxEnabled: true),
     TemplatePathProvider: () => _NoImagesTemplatePathProvider(),
   };
+
+  // An incomplete checkout used to write the shared app, leave watchos/ out
+  // and say it had created a watchOS project.
+  testUsingContext(
+    'a watch-only create without the watchos/ template stops before it writes anything',
+    () async {
+      fileSystem.directory(cliRootPath('templates')).deleteSync(recursive: true);
+
+      await expectLater(
+        create(WatchosCreateCommand(verboseHelp: false), <String>[
+          '--watchos-only',
+          '/projects/watch',
+        ]),
+        throwsToolExit(message: 'The flutter-watchos checkout looks incomplete.'),
+      );
+
+      expect(project('watch').existsSync(), isFalse);
+    },
+    overrides: overrides,
+  );
 
   testUsingContext(
     'a watch-only create writes the files stock create writes, unmodified',
@@ -235,6 +258,144 @@ void main() {
       overrides: overrides,
     );
   }
+
+  // Stock create writes the samples list before it asks for a directory, so
+  // the refusal comes first with a directory or without one.
+  for (final (String label, List<String> directory) in <(String, List<String>)>[
+    ('with a directory', <String>['/projects/watch']),
+    ('without a directory', <String>[]),
+  ]) {
+    testUsingContext(
+      'refuses --list-samples $label before writing anything',
+      () async {
+        await expectLater(
+          create(WatchosCreateCommand(verboseHelp: false), <String>[
+            '--watchos-only',
+            '--list-samples=/projects/samples.json',
+            ...directory,
+          ]),
+          throwsToolExit(message: 'does not take --list-samples'),
+        );
+        expect(fileSystem.directory('/projects').existsSync(), isFalse);
+      },
+      overrides: overrides,
+    );
+  }
+
+  // With other platforms, stock create makes the project. A package or a
+  // module has no app to run on a watch: it gets no watchos/, and one line
+  // says so.
+  for (final (String template, String what) in <(String, String)>[
+    ('package', 'a package'),
+    ('module', 'a module'),
+  ]) {
+    testUsingContext(
+      'adds no watchos/ to $what made by stock create, and says so',
+      () async {
+        await create(WatchosCreateCommand(verboseHelp: false), <String>[
+          '--template=$template',
+          '/projects/$template',
+        ]);
+
+        expect(project(template).childFile('pubspec.yaml').existsSync(), isTrue);
+        expect(project(template).childDirectory('watchos').existsSync(), isFalse);
+        final List<String> watchosLines = testLogger.statusText
+            .split('\n')
+            .where((String line) => line.contains('watchos'))
+            .toList();
+        expect(watchosLines, <String>[
+          'No watchos/ was added: $what has no app to run on a watch.',
+        ]);
+      },
+      overrides: overrides,
+    );
+  }
+
+  testUsingContext(
+    'adds no watchos/ to an existing package that create . recreates',
+    () async {
+      await create(CreateCommand(), <String>['--template=package', '/projects/package']);
+      testLogger.clear();
+
+      // No --template: stock create finds the package's type in .metadata.
+      await create(WatchosCreateCommand(verboseHelp: false), <String>['/projects/package']);
+
+      expect(project('package').childDirectory('watchos').existsSync(), isFalse);
+      expect(
+        testLogger.statusText,
+        contains('No watchos/ was added: a package has no app to run on a watch.'),
+      );
+    },
+    overrides: overrides,
+  );
+
+  // A plugin is not an app either, and its watchos/ is where a watchOS
+  // implementation goes. `create .` in one, with no --template, used to write
+  // a watch app runner there.
+  for (final (String template, String what) in <(String, String)>[
+    ('plugin', 'a plugin'),
+    ('plugin_ffi', 'an FFI plugin'),
+  ]) {
+    for (final platforms in <List<String>>[
+      <String>[],
+      <String>['--platforms=ios,watchos'],
+    ]) {
+      final String typed = <String>['create', ...platforms, '.'].join(' ');
+      testUsingContext('$typed in $what adds no watch app, and names plugin port', () async {
+        await create(CreateCommand(), <String>['--template=$template', '/projects/plugin']);
+        testLogger.clear();
+        fileSystem.currentDirectory = project('plugin');
+
+        // The arguments as flutter-watchos passes them on: watchos is dropped
+        // from --platforms, the other platforms stay.
+        final List<String> args = expandWatchosPlatformArgs(<String>[
+          'create',
+          ...platforms,
+          '.',
+        ]).sublist(1);
+        await create(WatchosCreateCommand(verboseHelp: false), args);
+
+        if (platforms.isNotEmpty) {
+          expect(project('plugin').childDirectory('ios').existsSync(), isTrue);
+        }
+        expect(project('plugin').childDirectory('watchos').existsSync(), isFalse);
+        final List<String> watchosLines = testLogger.statusText
+            .split('\n')
+            .where((String line) => line.contains('watchos'))
+            .toList();
+        expect(
+          watchosLines.single,
+          'No watchos/ was added: $what has no app to run on a watch. flutter-watchos plugin '
+          'port makes a watchOS implementation of a plugin.',
+        );
+      }, overrides: <Type, Generator>{...overrides, TemplatePathProvider: _TemplateImages.new});
+    }
+  }
+
+  testWithoutContext('only an app, or a project of unknown type, gets the watch app runner', () {
+    expect(watchosCreateNoAppMessage(FlutterTemplateType.app), isNull);
+    expect(watchosCreateNoAppMessage(null), isNull);
+    for (final FlutterTemplateType type in FlutterTemplateType.values) {
+      if (type != FlutterTemplateType.app) {
+        expect(watchosCreateNoAppMessage(type), startsWith('No watchos/ was added: '));
+      }
+    }
+  });
+
+  testUsingContext(
+    'adds watchos/ beside an app made by stock create',
+    () async {
+      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+        '--platforms=linux',
+        '/projects/app',
+      ]);
+
+      expect(project('app').childDirectory('linux').existsSync(), isTrue);
+      expect(project('app').childFile('watchos/Runner/Info.plist').existsSync(), isTrue);
+      expect(testLogger.statusText, isNot(contains('No watchos/ was added')));
+    },
+    overrides: overrides,
+  );
 }
 
 /// Copies the file or directory at [path] on disk to the same path in
@@ -261,6 +422,28 @@ class _NoImagesTemplatePathProvider extends TemplatePathProvider {
   @override
   Future<Directory> imageDirectory(String? name, FileSystem fileSystem, Logger logger) async =>
       fileSystem.directory('/no-template-images');
+}
+
+/// The template images of the pinned SDK's flutter_template_images package,
+/// copied from disk into the test's memory file system the first time a
+/// template asks for them: an iOS project needs its app icons.
+class _TemplateImages extends TemplatePathProvider {
+  @override
+  Future<Directory> imageDirectory(String? name, FileSystem fileSystem, Logger logger) async {
+    final Uri? lib = await Isolate.resolvePackageUri(Uri.parse('package:flutter_template_images/'));
+    final templates = io.Directory.fromUri(lib!.resolve('../templates/'));
+    final Directory images = fileSystem.directory('/template-images');
+    if (!images.existsSync()) {
+      for (final io.FileSystemEntity entity in templates.listSync(recursive: true)) {
+        if (entity is io.File) {
+          images.childFile(entity.uri.path.substring(templates.uri.path.length))
+            ..parent.createSync(recursive: true)
+            ..writeAsBytesSync(entity.readAsBytesSync());
+        }
+      }
+    }
+    return name == null ? images : images.childDirectory(name);
+  }
 }
 
 /// A `pub get` that fails as the real one does when pub exits non-zero.

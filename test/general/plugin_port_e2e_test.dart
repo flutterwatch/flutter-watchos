@@ -165,6 +165,16 @@ flutter:
       expect(report, contains('## Checklist'));
     });
 
+    // The report describes how the symbols really survive the link.
+    testWithoutContext('says the plugin archive is force-loaded', () {
+      final String report = const ReportEmitter().render(
+        source: fakeSource(),
+        findings: const <PortingFinding>[],
+      );
+      expect(report, isNot(contains('force-referenc')));
+      expect(report, contains("links the plugin's archive with `-force_load`"));
+    });
+
     testWithoutContext('separates unsupported APIs from available-but-review', () {
       final PortingResult r = analyze(_kGadgetSwift);
       final String report =

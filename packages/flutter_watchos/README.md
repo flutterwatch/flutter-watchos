@@ -266,11 +266,19 @@ model where `layer:` also picks the composition side (see the API docs).
 
 This is an **FFI plugin** (`ffiPlugin: true`). The native C functions in
 `watchos/Classes/flutter_watchos_ffi.{h,m}` are statically linked into the
-watch app. Because FFI symbols have no compile-time caller, each one is listed
-under `flutter.plugin.platforms.watchos.ffiSymbols` in `pubspec.yaml`, marked
-`used` + default-visibility in the header, force-loaded into the app by the
-flutter-watchos CLI, and kept through the App Store strip, so they survive
-`-dead_strip` and remain resolvable via `DynamicLibrary.process()`.
+watch app. FFI symbols have no compile-time caller, so three things together
+keep them in the app, where `DynamicLibrary.process()` resolves them:
+
+- the flutter-watchos CLI force-loads the plugin archive into the app, so the
+  linker takes every object in it;
+- each export is marked `used`, with default visibility, in the header, so it
+  survives `-dead_strip` and stays in the app's symbol table;
+- the CLI keeps global symbols through the App Store strip
+  (`STRIP_STYLE = non-global`).
+
+`flutter.plugin.platforms.watchos.ffiSymbols` in `pubspec.yaml` lists the
+exports. It documents which symbols that contract covers; it does not keep
+them itself.
 
 On non-Apple platforms (Web, Android, desktop) every API returns a safe
 default and performs no FFI lookup.

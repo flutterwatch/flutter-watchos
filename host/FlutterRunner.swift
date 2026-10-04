@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // The FlutterWatchOS host module — generic glue around the Flutter engine,
 // identical for every app. The flutter-watchos CLI compiles this module at
 // build time and stages it into the app's `watchos/Flutter/` directory; the
@@ -228,21 +232,6 @@ final class WatchPlatformViews: ObservableObject {
     }
 }
 
-/// Content scale: how large the app's LOGICAL coordinate space is relative
-/// to the watch screen. `1.0` (the default) maps one Flutter logical pixel
-/// to one SwiftUI point. Smaller values lay the app out in a proportionally
-/// LARGER logical space rendered smaller — same layout ratio, smaller
-/// components — which lets phone-designed UIs (e.g. a plugin's upstream
-/// example app) fit the watch screen without touching their Dart code.
-///
-/// Set it in the app's Info.plist:
-///
-///     <key>FlutterWatchOSContentScale</key>
-///     <real>0.6</real>
-///
-/// Physical sharpness is unchanged (the rendered pixel count is identical);
-/// only the logical density changes. Touches, the Digital Crown, and the
-/// native overlays (text input, platform views) are converted automatically.
 /// The display's rounded-corner radius, and what it costs to stay clear of it.
 ///
 /// watchOS exposes no corner-radius API — `WKInterfaceGroup.setCornerRadius`
@@ -256,14 +245,14 @@ final class WatchPlatformViews: ObservableObject {
 /// the LARGER 198x242 has 42.5pt — newer displays are rounder, not bigger.
 enum WatchDisplayCorner {
     private static let radiusByScreenSize: [String: Double] = [
-        "162x197": 28,     // SE 40mm, Series 4-6 40mm
+        "162x197": 28,     // SE and SE 3 40mm, Series 4-6 40mm
         "176x215": 38.5,   // Series 7-9 41mm
-        "184x224": 34,     // SE 44mm, Series 4-6 44mm
-        "187x223": 44,     // Series 10/11 42mm
+        "184x224": 34,     // SE and SE 3 44mm, Series 4-6 44mm
+        "187x223": 44,     // Series 10-12 42mm
         "198x242": 42.5,   // Series 7-9 45mm
         "205x251": 54,     // Ultra, Ultra 2
-        "208x248": 50,     // Series 10/11 46mm
-        "211x257": 57,     // Ultra 3
+        "208x248": 50,     // Series 10-12 46mm
+        "211x257": 57,     // Ultra 3, Ultra 4
     ]
 
     /// Radius in points for this watch, or nil on a model that shipped after
@@ -327,6 +316,22 @@ enum WatchSafeAreaMode {
     }()
 }
 
+/// Content scale: how large the app's LOGICAL coordinate space is relative
+/// to the watch screen. `1.0` (the default) maps one Flutter logical pixel
+/// to one SwiftUI point. Smaller values lay the app out in a proportionally
+/// LARGER logical space rendered smaller — same layout ratio, smaller
+/// components — which lets phone-designed UIs (e.g. a plugin's upstream
+/// example app) fit the watch screen without touching their Dart code.
+///
+/// Set it in the app's Info.plist:
+///
+///     <key>FlutterWatchOSContentScale</key>
+///     <real>0.6</real>
+///
+/// Physical sharpness is unchanged (the rendered pixel count is identical);
+/// only the logical density changes. Touches, the Digital Crown, the safe
+/// area and the native overlays (text input, platform views) are converted
+/// automatically.
 enum WatchContentScale {
     /// Parsed once; clamped to a sane range (below ~0.3 text is unreadable).
     static let value: Double = {
@@ -352,8 +357,12 @@ enum WatchContentScale {
 ///     <key>FlutterWatchOSPresent</key>
 ///     <string>texture</string>
 ///
-/// (`FLUTTER_WATCHOS_PRESENT=texture` in the environment does the same for a
-/// `run`, so an app can be compared without editing its Info.plist.)
+/// `FLUTTER_WATCHOS_PRESENT=texture` in the app's environment does the same,
+/// so an app can be compared without editing its Info.plist. It is a host
+/// switch, read here and not by the engine, as `FLUTTER_WATCHOS_DISPLAY_CLOCK`
+/// and `FLUTTER_WATCHOS_CPU_LOG` are: `flutter-watchos run` forwards all three
+/// to the app, with the engine's own switches (`engineSwitchEnvironment` in
+/// the CLI's `lib/watchos_device.dart`).
 ///
 /// `image` (the default) shows each frame as a CGImage in a SwiftUI `Image`:
 /// the engine reads its Metal render target back through a shared buffer and
@@ -963,9 +972,9 @@ final class FlutterRunner: ObservableObject {
     /// The engine renders a frame only if it asked for one, so a tick with
     /// nothing pending costs a call and returns. Without this the engine has
     /// no display clock at all on watchOS (`CADisplayLink` is
-    /// `API_UNAVAILABLE`) and falls back to a free-running 60 Hz timer whose
-    /// phase drifts against the panel's — judder even with the frame budget
-    /// half empty.
+    /// `API_UNAVAILABLE`) and falls back to its own 60 Hz timer, whose phase
+    /// drifts against the panel's — judder even with the frame budget half
+    /// empty.
     func notifyVsync() {
         // The crown's position goes out first, so the frame this tick starts
         // already shows it (see CrownProxyModel).

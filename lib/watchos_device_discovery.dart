@@ -39,22 +39,42 @@ class WatchosDeviceManager extends FlutterDeviceManager {
 
   final WatchosWorkflow watchosWorkflow;
 
-  @override
-  List<DeviceDiscovery> get deviceDiscoverers => <DeviceDiscovery>[
+  /// Stock's discoverers and the watch's, made once: each discoverer caches
+  /// the devices it finds, so a command that looks its device up more than
+  /// once lists them once.
+  late final List<DeviceDiscovery> _deviceDiscoverers = <DeviceDiscovery>[
     ...super.deviceDiscoverers,
-    WatchosDeviceDiscovery(watchosWorkflow: watchosWorkflow, logger: globals.logger),
+    WatchosDeviceDiscovery(
+      watchosWorkflow: watchosWorkflow,
+      logger: globals.logger,
+      requestedDeviceId: () => specifiedDeviceId,
+    ),
   ];
+
+  @override
+  List<DeviceDiscovery> get deviceDiscoverers => _deviceDiscoverers;
 }
 
 /// Discovers watchOS devices and simulators via `xcrun simctl` / `devicectl`.
+///
+/// Like stock, it lists booted Simulators only. The exception is a shut-down
+/// Simulator whose UDID is exactly the one `-d` names, so `run -d <UDID>` can
+/// boot it.
 class WatchosDeviceDiscovery extends PollingDeviceDiscovery {
-  WatchosDeviceDiscovery({required WatchosWorkflow watchosWorkflow, required Logger logger})
-    : _watchosWorkflow = watchosWorkflow,
-      _logger = logger,
-      super('watchOS devices');
+  /// Creates the discoverer. [requestedDeviceId] returns the `-d` value, if
+  /// any, each time the devices are polled.
+  WatchosDeviceDiscovery({
+    required WatchosWorkflow watchosWorkflow,
+    required Logger logger,
+    String? Function()? requestedDeviceId,
+  }) : _watchosWorkflow = watchosWorkflow,
+       _logger = logger,
+       _requestedDeviceId = requestedDeviceId,
+       super('watchOS devices');
 
   final WatchosWorkflow _watchosWorkflow;
   final Logger _logger;
+  final String? Function()? _requestedDeviceId;
 
   @override
   bool get supportsPlatform => _watchosWorkflow.canListDevices;
@@ -73,7 +93,12 @@ class WatchosDeviceDiscovery extends PollingDeviceDiscovery {
     final devices = <Device>[];
 
     try {
-      devices.addAll(await WatchosEmulator.getConnectedSimulators(_logger));
+      devices.addAll(
+        await WatchosEmulator.getConnectedSimulators(
+          _logger,
+          shutDownUdid: _requestedDeviceId?.call(),
+        ),
+      );
     } on Exception catch (err) {
       _logger.printTrace('Failed to discover watchOS simulators: $err');
     }

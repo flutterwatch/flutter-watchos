@@ -1,0 +1,162 @@
+name: Smoke
+
+# A released CLI against the production artifact service, the way a new
+# user meets it: a fresh clone of a release tag, a fresh HOME with no
+# account, the anonymous engine download, both ways to create an app, a
+# Simulator build, and a run on a booted watchOS Simulator until the Dart VM
+# Service is up. It builds nothing that needs an account.
+#
+# It tests a release tag, never a branch: the pushed tag, or on a manual run
+# the tag `flutter-watchos upgrade` would pick, unless the run names one.
+on:
+  push:
+    tags: ['v*-watchos.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test. Empty picks the one `flutter-watchos upgrade` picks.
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      # The watchOS Simulator runtime the app runs on.
+      SIMULATOR_RUNTIME: '26.5'
+    steps:
+      # The CLI runs with FRESH_HOME as its HOME: no account, no earlier
+      # download, no settings. The Simulator steps keep the runner's HOME.
+      - name: Set up fresh directories
+        run: |
+          {
+            echo "CLONE=$RUNNER_TEMP/flutter-watchos"
+            echo "FRESH_HOME=$RUNNER_TEMP/home"
+            echo "APPS=$RUNNER_TEMP/apps"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/home" "$RUNNER_TEMP/apps"
+
+      - name: Pick the release tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          # The rule of `flutter-watchos upgrade` (lib/commands/upgrade.dart):
+          # the first tag, newest first, that matches its release tag pattern.
+          release_tag='^v[0-9]+\.[0-9]+\.[0-9]+-watchos\.[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'
+          git clone --quiet --bare --filter=blob:none \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/tags"
+          cd "$RUNNER_TEMP/tags"
+          git fetch --quiet --tags --force
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tag="$GITHUB_REF_NAME"
+            named=no
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+            named=yes
+          else
+            tag="$(git -c versionsort.suffix=-alpha -c versionsort.suffix=-beta -c versionsort.suffix=-rc \
+              tag -l --sort=-v:refname | grep -E -m 1 "$release_tag" || true)"
+            named=no
+          fi
+          if ! grep -qE "$release_tag" <<< "$tag"; then
+            echo "Not a release tag: '$tag'."
+            exit 1
+          fi
+          if ! git rev-parse --quiet --verify "refs/tags/$tag^{commit}" > /dev/null; then
+            echo "No tag $tag in $GITHUB_REPOSITORY."
+            exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "TAG_NAMED=$named" >> "$GITHUB_ENV"
+
+      - name: Clone the tag into a fresh directory
+        run: |
+          git clone --quiet --branch "$TAG" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$CLONE"
+          echo "Testing $TAG at $(git -C "$CLONE" rev-parse HEAD)"
+          echo "$CLONE/bin" >> "$GITHUB_PATH"
+
+      # Also sets up the clone's pinned Flutter SDK, as a user's first
+      # command does.
+      - name: Upgrade picks the same tag
+        if: env.TAG_NAMED == 'no'
+        working-directory: ${{ env.CLONE }}
+        run: |
+          HOME="$FRESH_HOME" flutter-watchos upgrade --verify-only | tee "$RUNNER_TEMP/upgrade.txt"
+          grep -qxF "flutter-watchos is already up to date at $TAG." "$RUNNER_TEMP/upgrade.txt"
+
+      - name: Download the engine with no account
+        run: HOME="$FRESH_HOME" flutter-watchos precache
+
+      - name: Create a watch-only app
+        working-directory: ${{ env.APPS }}
+        run: |
+          HOME="$FRESH_HOME" flutter-watchos create --platforms=watchos hello_watch
+          test -d hello_watch/watchos/Runner.xcodeproj
+          test ! -e hello_watch/ios
+
+      - name: Create an app with the stock platforms
+        working-directory: ${{ env.APPS }}
+        run: |
+          HOME="$FRESH_HOME" flutter-watchos create hello_stock
+          test -d hello_stock/watchos/Runner.xcodeproj
+          test -d hello_stock/ios/Runner.xcodeproj
+
+      - name: Build for the Simulator
+        working-directory: ${{ env.APPS }}/hello_watch
+        run: |
+          HOME="$FRESH_HOME" flutter-watchos build watchos --simulator
+          test -d build/watchos/Debug-watchsimulator/Runner.app
+
+      - name: Boot a watchOS Simulator
+        timeout-minutes: 15
+        run: |
+          picked="$(xcrun simctl list runtimes --json | python3 -c '
+          import json, re, sys
+          want = sys.argv[1]
+          runtimes = [r for r in json.load(sys.stdin)["runtimes"]
+                      if r.get("platform") == "watchOS" and r.get("isAvailable") and r.get("version") == want]
+          if not runtimes:
+              sys.exit(1)
+          runtime = runtimes[0]
+          types = runtime.get("supportedDeviceTypes") or []
+          series = [t for t in types if re.fullmatch(r"Apple Watch Series \d+ \(4[456]mm\)", t["name"])]
+          series.sort(key=lambda t: [int(n) for n in re.findall(r"\d+", t["name"])])
+          device = (series or types)[-1]
+          print(runtime["identifier"], device["identifier"])
+          ' "$SIMULATOR_RUNTIME")" || {
+            echo "No watchOS $SIMULATOR_RUNTIME Simulator runtime on this image. watchOS runtimes here:"
+            xcrun simctl list runtimes | grep -i watchos || true
+            exit 1
+          }
+          read -r runtime device <<< "$picked"
+          udid="$(xcrun simctl create fw-smoke "$device" "$runtime")"
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          echo "Simulator $udid: $device on $runtime"
+          xcrun simctl bootstatus "$udid" -b
+
+      - name: Run until the Dart VM Service is up
+        timeout-minutes: 15
+        working-directory: ${{ env.APPS }}/hello_watch
+        run: |
+          log="$RUNNER_TEMP/run.txt"
+          HOME="$FRESH_HOME" flutter-watchos run -d "$UDID" < /dev/null > "$log" 2>&1 &
+          pid=$!
+          for _ in $(seq 600); do
+            if grep -q 'Dart VM Service on .* is available at' "$log" || ! kill -0 "$pid" 2> /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat "$log"
+          kill "$pid" 2> /dev/null || true
+          grep -q 'Dart VM Service on .* is available at' "$log"
+
+      - name: Delete the Simulator
+        if: always() && env.UDID != ''
+        run: |
+          xcrun simctl shutdown "$UDID" || true
+          xcrun simctl delete "$UDID"

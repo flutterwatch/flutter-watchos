@@ -9,7 +9,8 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/dart/pub.dart';
-import 'package:flutter_tools/src/flutter_project_metadata.dart' show FlutterTemplateType;
+import 'package:flutter_tools/src/flutter_project_metadata.dart'
+    show FlutterProjectMetadata, FlutterTemplateType;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -42,6 +43,31 @@ String? watchosCreateTemplateError(String templateType) {
       '  * Author one from scratch following AUTHORING.md in\n'
       '    https://github.com/flutterwatch/plugins\n'
       'For plugins that target other platforms, use stock `flutter create`.';
+}
+
+/// What `create` says, instead of adding `watchos/`, for a project of type
+/// [type] that is not an app, or null for an app.
+///
+/// Only an app gets the watch app runner in `watchos/`. A package or a module
+/// has nothing to run on a watch. A plugin has no app either, and its
+/// `watchos/` folder, if it has one, holds its own watchOS implementation; a
+/// stock plugin gets one through `flutter-watchos plugin port`. A type that
+/// cannot be read is taken as an app, as before.
+String? watchosCreateNoAppMessage(FlutterTemplateType? type) {
+  final String? what = switch (type) {
+    FlutterTemplateType.app || null => null,
+    FlutterTemplateType.package => 'a package',
+    FlutterTemplateType.packageFfi => 'an FFI package',
+    FlutterTemplateType.module => 'a module',
+    FlutterTemplateType.plugin => 'a plugin',
+    FlutterTemplateType.pluginFfi => 'an FFI plugin',
+  };
+  if (what == null) {
+    return null;
+  }
+  final bool plugin = type == FlutterTemplateType.plugin || type == FlutterTemplateType.pluginFfi;
+  return 'No watchos/ was added: $what has no app to run on a watch.'
+      '${plugin ? ' flutter-watchos plugin port makes a watchOS implementation of a plugin.' : ''}';
 }
 
 // The two guides a companion app's watch layout needs, by absolute URL, as the
@@ -97,6 +123,15 @@ class WatchosCreateCommand extends CreateCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // A watch-only create makes stock's app only. Stock `flutter create` writes
+    // the samples list before it asks for a project directory, so this is
+    // refused before then, and nothing is written.
+    if (boolArg('watchos-only') && stringArg('list-samples') != null) {
+      throwToolExit(
+        'flutter-watchos create --platforms=watchos does not take --list-samples. '
+        'List the samples with stock `flutter create --list-samples=<path>`.',
+      );
+    }
     // Mirror stock `flutter create`: print the friendly usage message and exit
     // (code 2) when no output directory is given — or more than one — instead
     // of crashing on `rest.first`.
@@ -125,6 +160,9 @@ class WatchosCreateCommand extends CreateCommand {
     if (boolArg('watchos-only')) {
       _checkWatchOnlyArgs(templateType, projectDirPath);
       validateProjectDir(overwrite: boolArg('overwrite'));
+      // Without the watchos/ template there is no watch app to make: stop
+      // before the shared app is written.
+      watchosRunnerTemplate(globals.fs);
       globals.logger.printStatus('Generating the app and watchos/...');
       await _generateStockApp(projectDirPath, name);
       await _renderWatchosRunner(projectDirPath, name);
@@ -154,6 +192,18 @@ class WatchosCreateCommand extends CreateCommand {
     final FlutterCommandResult exitCode = await super.runCommand();
     if (exitCode != FlutterCommandResult.success()) {
       return exitCode;
+    }
+    // Only an app gets the watch app runner. The type is the one stock create
+    // just wrote to .metadata, so `create .` in an existing package, module or
+    // plugin, which names no --template, gets no runner either.
+    final FlutterTemplateType? made = FlutterProjectMetadata(
+      globals.fs.directory(projectDirPath).childFile('.metadata'),
+      globals.logger,
+    ).projectType;
+    final String? noApp = watchosCreateNoAppMessage(made);
+    if (noApp != null) {
+      globals.logger.printStatus(noApp);
+      return FlutterCommandResult.success();
     }
     await _renderWatchosRunner(projectDirPath, name);
     final WatchosHostMode? mode = await _adoptHostMode(projectDirPath);

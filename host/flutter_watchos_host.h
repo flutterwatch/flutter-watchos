@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #ifndef FLUTTER_WATCHOS_HOST_H_
 #define FLUTTER_WATCHOS_HOST_H_
 
@@ -190,8 +194,8 @@ void FlutterWatchOSHostSetFirstFrameCallback(
 // is a no-op, so calling it every refresh is both correct and cheap.
 //
 // MUST be on the main thread (the one that called FlutterWatchOSHostRun).
-// Without it the engine falls back to a free-running 60 Hz timer whose phase
-// is unrelated to the display, which is judder even with the frame budget half
+// Without it the engine falls back to its own 60 Hz timer, whose phase is
+// unrelated to the display, which is judder even with the frame budget half
 // empty.
 void FlutterWatchOSHostNotifyVsync(void);
 
@@ -210,16 +214,36 @@ typedef struct {
 
 typedef void (*FlutterWatchOSChangeCallback)(void* context);
 
+// Copies up to `max` fields into `out`, a buffer the caller owns, and returns
+// how many it wrote; with `out` NULL it returns how many there are. Call on
+// the main thread.
 int32_t FlutterWatchOSTextInputCopyFields(FlutterWatchOSProxyField* out,
                                           int32_t max);
+// A counter that grows whenever the field list or any field's text changes.
+// Safe to read on any thread.
 uint64_t FlutterWatchOSTextInputGeneration(void);
+// Sets the callback the engine invokes, with `context`, whenever the
+// generation changes. It may run on any thread, usually the engine's
+// platform thread; hop to the main thread before touching UI. The engine keeps
+// `context` without retaining it, so the host keeps it alive while it is set.
 void FlutterWatchOSTextInputSetChangeCallback(
     FlutterWatchOSChangeCallback callback,
     void* context);
+// The field's current UTF-8 text. The engine owns the returned string, which
+// stays valid until the next call from the same thread; copy it to keep it.
+// Call on the main thread.
 const char* FlutterWatchOSTextInputGetText(int32_t node_id);
+// The user focused the proxy for `node_id`; the engine focuses the Flutter
+// field behind it. Call on the main thread.
 void FlutterWatchOSTextInputBeginEditing(int32_t node_id);
+// The user typed into the proxy for `node_id`. `utf8` stays the caller's: the
+// engine copies it before returning. Call on the main thread.
 void FlutterWatchOSTextInputSetText(int32_t node_id, const char* utf8);
+// The keyboard's Done key; the engine sends the field's input action to the
+// framework. Call on the main thread.
 void FlutterWatchOSTextInputSubmitEditing(void);
+// The user tapped outside every proxy; the Flutter field gives up focus. Call
+// on the main thread.
 void FlutterWatchOSTextInputEndEditing(void);
 
 // -----------------------------------------------------------------------------
@@ -239,9 +263,18 @@ typedef struct {
 
 typedef void (*FlutterWatchOSPlatformViewsChangeCallback)(void* context);
 
+// Copies up to `max` slots into `out`, a buffer the caller owns, in ascending
+// `view_id` order, and returns how many it wrote; with `out` NULL it returns
+// how many there are. Call on the main thread.
 int32_t FlutterWatchOSPlatformViewsCopy(FlutterWatchOSPlatformViewSlot* out,
                                         int32_t max);
+// A counter that grows whenever the view list, a rect, or a view's type or
+// params change. Safe to read on any thread.
 uint64_t FlutterWatchOSPlatformViewsGeneration(void);
+// Sets the callback the engine invokes, with `context`, whenever the
+// generation changes. It runs on whichever thread changed the views, usually
+// the Dart UI thread; hop to the main thread before touching UI. The engine keeps
+// `context` without retaining it, so the host keeps it alive while it is set.
 void FlutterWatchOSPlatformViewsSetChangeCallback(
     FlutterWatchOSPlatformViewsChangeCallback callback,
     void* context);
@@ -312,9 +345,18 @@ typedef struct {
 
 typedef void (*FlutterWatchOSA11yChangeCallback)(void* context);
 
+// Copies up to `max` elements into `out`, a buffer the caller owns, in
+// traversal order, and returns how many it wrote; with `out` NULL it returns
+// how many there are. Call on the main thread.
 int32_t FlutterWatchOSA11yCopyElements(FlutterWatchOSA11yElement* out,
                                        int32_t max);
+// A counter that grows whenever the element list changes. Safe to read on any
+// thread.
 uint64_t FlutterWatchOSA11yGeneration(void);
+// Sets the callback the engine invokes, with `context`, whenever the
+// generation changes. It runs on the engine's platform thread; hop to the
+// main thread before touching UI. The engine keeps `context` without
+// retaining it, so the host keeps it alive while it is set.
 void FlutterWatchOSA11ySetChangeCallback(
     FlutterWatchOSA11yChangeCallback callback,
     void* context);
@@ -328,9 +370,16 @@ const char* FlutterWatchOSA11yGetCustomActionLabel(int32_t node_id,
 // The engine detects VoiceOver itself (WKAccessibility notifications); this is
 // the override a host or a test uses to report a reader WatchKit cannot see.
 void FlutterWatchOSA11ySetScreenReaderRunning(bool running);
+// VoiceOver focus moved onto the element for `node_id`. Call on the main
+// thread.
 void FlutterWatchOSA11yFocusGained(int32_t node_id);
+// VoiceOver focus left the element for `node_id`. Call on the main thread.
 void FlutterWatchOSA11yFocusLost(int32_t node_id);
+// Performs `action`, one kFlutterWatchOSA11yAction value, on the element;
+// returns false when the element no longer offers it. Call on the main thread.
 bool FlutterWatchOSA11yPerformAction(int32_t node_id, int32_t action);
+// Performs the element's custom action at `index`; returns false when the
+// element has none there. Call on the main thread.
 bool FlutterWatchOSA11yPerformCustomAction(int32_t node_id, int32_t index);
 
 #endif  // FLUTTER_WATCHOS_HOST_H_

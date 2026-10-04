@@ -15,7 +15,8 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
   ```
 
 - A watchOS Simulator runtime (Xcode → Settings → Components), or a paired
-  physical Apple Watch (Series 9 / Ultra 2 or later) for on-device runs.
+  physical Apple Watch for on-device runs: Series 9 or later, Ultra 2 or
+  later, or SE 3, on watchOS 26.0 or later.
 - A [flutterwatch.dev](https://flutterwatch.dev) account, for anything beyond
   the Simulator. The Simulator engine downloads without one; the engines for a
   physical watch and for release builds need you to be signed in.
@@ -24,10 +25,22 @@ engine — you don't need (and shouldn't mix in) a custom Flutter checkout.
 
 ## 1. Install the CLI
 
+Clone the repository and put its `bin/` on your `PATH`. The `export` line
+lasts for this shell:
+
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
-export PATH="$PATH:$PWD/bin"     # add to ~/.zshrc to make it permanent
+export PATH="$PWD/bin:$PATH"
+```
+
+To make it permanent, run this in the same directory. It adds a line with the
+checkout's full path to `~/.zshrc`, so every new terminal finds this
+`flutter-watchos` first. (A line with `$PWD` in `~/.zshrc` would name whatever
+directory a new terminal starts in.)
+
+```sh
+echo "export PATH=\"$(pwd)/bin:\$PATH\"" >> ~/.zshrc
 ```
 
 The first run bootstraps everything (downloads the pinned Flutter SDK and
@@ -35,11 +48,14 @@ compiles the tool); later runs start instantly.
 
 ## 2. Sign in and check your setup
 
+`login` connects this machine to your flutterwatch.dev account; skip it if the
+Simulator is all you need for now. `precache` downloads the watchOS engine
+artifacts, and `doctor` verifies Xcode, SDKs, simulators, and engine.
+
 ```sh
-flutter-watchos login    # connects this machine to your flutterwatch.dev account
-                         # (skip it if the Simulator is all you need for now)
-flutter-watchos precache # downloads the watchOS engine artifacts
-flutter-watchos doctor   # verifies Xcode, SDKs, simulators, and engine
+flutter-watchos login
+flutter-watchos precache
+flutter-watchos doctor
 ```
 
 `login` prints a URL and a short code — open the URL, sign in with GitHub, and
@@ -82,8 +98,17 @@ in Xcode:
 3. Set **Simulator Type** to an Apple Watch (e.g. *Apple Watch Series 11
    (46mm)*) and pick a watchOS runtime (26.0 or later).
 
-Once booted, it appears in `flutter-watchos devices`. No code signing is needed
-for simulator builds; a physical watch needs a `DEVELOPMENT_TEAM` set in Xcode.
+Once booted, it appears in `flutter-watchos devices`. A simulator that is shut
+down does not, but `flutter-watchos run -d <UDID>` boots it, then opens Device
+Hub on Xcode 27, or Simulator on Xcode 26, to show it. This lists every
+simulator with its UDID:
+
+```sh
+xcrun simctl list devices
+```
+
+No code signing is needed for simulator builds; a physical watch needs a
+`DEVELOPMENT_TEAM` set in Xcode.
 
 ## 4. Create an app
 
@@ -99,18 +124,27 @@ like any Flutter app.
 
 ## 5. Run it
 
+`devices` lists watch simulators and paired watches. `run` on a simulator is
+debug (JIT) with hot reload:
+
 ```sh
-flutter-watchos devices                 # list watch simulators + paired watches
-flutter-watchos run -d <simulator-id>   # debug (JIT) with hot reload
+flutter-watchos devices
+flutter-watchos run -d <simulator-id>
 ```
 
 For a physical watch, build in profile or release mode — debug requires a JIT
 engine, which watchOS devices cannot run (see
-[commands.md](commands.md#build-watchos)):
+[commands.md](commands.md#build-watchos)). Profile is AOT with logging and
+DevTools:
 
 ```sh
-flutter-watchos run -d <watch-id> --profile   # AOT, with logging + DevTools
-flutter-watchos run -d <watch-id> --release   # AOT, fastest
+flutter-watchos run -d <watch-id> --profile
+```
+
+Release is AOT and fastest:
+
+```sh
+flutter-watchos run -d <watch-id> --release
 ```
 
 ## 6. Try hot reload

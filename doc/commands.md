@@ -31,18 +31,36 @@ where possible; watchOS-specific behaviour is called out per command.
   The VM Service URI is printed when the app is launched via
   `flutter-watchos run`; it is also visible in the device console logs.
 
+  On a physical watch, `attach` cannot find the app by itself: give it the
+  URI with `--debug-url`, or its port with `--debug-port`. Without either it
+  stops and points to `run --profile`, which starts the app on the watch and
+  prints a DevTools link:
+
+  ```sh
+  flutter-watchos run -d <watch-id> --profile
+  ```
+
 - ### `build watchos`
 
   Build the watch app bundle (`Runner.app`).
 
-  ```sh
-  # Simulator — always a debug (JIT) build; the default mode is lowered
-  # automatically (an explicit --release/--profile with --simulator errors,
-  # because there is no AOT Simulator engine)
-  flutter-watchos build watchos --simulator
+  For the Simulator it is always a debug (JIT) build. The default mode is
+  lowered automatically, and an explicit `--release` or `--profile` with
+  `--simulator` is an error, because there is no AOT Simulator engine:
 
-  # Physical watch, AOT
+  ```sh
+  flutter-watchos build watchos --simulator
+  ```
+
+  For a physical watch, build AOT. Profile mode keeps logging and DevTools:
+
+  ```sh
   flutter-watchos build watchos --profile
+  ```
+
+  Release mode is the fastest, and the one you ship:
+
+  ```sh
   flutter-watchos build watchos --release
   ```
 
@@ -56,6 +74,11 @@ where possible; watchOS-specific behaviour is called out per command.
   Xcode (Product → Archive) and distribute from the Organizer — see
   [publish-app.md](publish-app.md).
 
+  `build` offers only `watchos`. `build apk`, `build ipa` and the other stock
+  targets stop and name the stock `flutter build` command to use instead.
+  `--analyze-size` and `--code-size-directory` are not available for a watch
+  build.
+
 - ### `clean`
 
   Remove the project's build artifacts and intermediates.
@@ -68,11 +91,16 @@ where possible; watchOS-specific behaviour is called out per command.
 
   Create a new Flutter project with a watchOS runner.
 
-  ```sh
-  # New app
-  flutter-watchos create my_app --platforms=watchos
+  A new app:
 
-  # Add watchOS to an existing Flutter project (run in the project dir)
+  ```sh
+  flutter-watchos create my_app --platforms=watchos
+  ```
+
+  To add watchOS to an existing Flutter project, run this in the project
+  directory:
+
+  ```sh
   flutter-watchos create . --platforms=watchos
   ```
 
@@ -84,6 +112,9 @@ where possible; watchOS-specific behaviour is called out per command.
   native-assets) code, and neither model runs on watchOS. To create a
   watchOS plugin, port an existing one (`flutter-watchos plugin port`) or
   author an FFI package by hand — see [plugins.md](plugins.md).
+
+  Only an app gets `watchos/`. A package, a module or a plugin, made by
+  `create` or recreated with `create .`, gets none, and one line says so.
 
   `create` also wires up the app's **host mode** from the project shape: a
   watchOS-only project is *standalone* (watch-only app inside a thin iOS
@@ -108,6 +139,11 @@ where possible; watchOS-specific behaviour is called out per command.
   It reads local files only. The `Flutter` entry shows the SDK flutter-watchos
   pins; leave that SDK off your PATH and keep your own `flutter` there.
 
+  When `flutter-watchos` on your PATH is another checkout than the one
+  running, for example an older clone that comes first, the `Flutter` entry
+  warns and names both. Put this checkout's `bin/` at the front of PATH, as
+  [Getting started](get-started.md) does.
+
   ```sh
   flutter-watchos doctor -v
   ```
@@ -126,6 +162,14 @@ where possible; watchOS-specific behaviour is called out per command.
   fails with "Test file not found" — the convention in this repo's examples is
   a single `test_driver/integration_test.dart` shared by every target.
 
+  Near the end of a run the app prints this warning:
+  `Warning: integration_test plugin was not detected.` It is expected: the
+  `integration_test` plugin has no watchOS registration, and the test
+  results still arrive. For the same reason `binding.takeScreenshot` does
+  not work on watchOS, under `drive` or under `test`.
+
+  To run the same tests without a driver file, see [`test`](#test).
+
 - ### `host`
 
   Report how the watch app ships to the App Store, and heal the wiring if
@@ -140,8 +184,10 @@ where possible; watchOS-specific behaviour is called out per command.
     it: the iOS Runner gets an "Embed Prebuilt watchOS App" build phase and
     the watch Info.plist declares `WKCompanionAppBundleIdentifier`.
 
+  `host` reports the mode and reconciles the wiring:
+
   ```sh
-  flutter-watchos host    # report the mode + reconcile the wiring
+  flutter-watchos host
   ```
 
   There is nothing to configure: add an iOS app (`flutter create
@@ -159,9 +205,21 @@ where possible; watchOS-specific behaviour is called out per command.
   Show or change whether release builds are registered with your
   flutterwatch.dev account (what fills "My apps" in the console).
 
+  On its own, the command shows the current state and what is sent:
+
   ```sh
-  flutter-watchos build-registry            # show the current state, and what is sent
-  flutter-watchos build-registry --disable  # never register builds from this machine
+  flutter-watchos build-registry
+  ```
+
+  `--disable` stops registering builds from this machine:
+
+  ```sh
+  flutter-watchos build-registry --disable
+  ```
+
+  `--enable` turns it back on:
+
+  ```sh
   flutter-watchos build-registry --enable
   ```
 
@@ -180,14 +238,21 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos login
+  ```
+
+  `login` prints a URL plus a short code; confirm the code in a browser and
+  the CLI finishes automatically. Credentials are stored in
+  `~/.flutter-watchos/credentials.json`, and the next build downloads the
+  engines the machine was missing.
+
+  `logout` revokes this machine's sign-in on the service, then removes the
+  file:
+
+  ```sh
   flutter-watchos logout
   ```
 
-  `login` prints a URL plus a short code; approve it in a browser and the
-  CLI finishes automatically. Credentials are stored in
-  `~/.flutter-watchos/credentials.json`, and the next build downloads the
-  engines the machine was missing. `logout` revokes this machine's sign-in
-  on the service, then removes the file. See [accounts.md](accounts.md).
+  See [accounts.md](accounts.md).
 
 - ### `precache`
 
@@ -201,12 +266,11 @@ where possible; watchOS-specific behaviour is called out per command.
 
 - ### `plugin`
 
-  Inspect the plugins a project uses and their watchOS support, or
-  scaffold a `*_watchos` FFI package from an existing iOS/macOS plugin
-  (see [plugin-porting.md](plugin-porting.md)).
+  Authoring helpers for watchOS plugins. Today the only one is `port`, which
+  scaffolds a federated `*_watchos` FFI package from an existing iOS or
+  macOS plugin (see [plugin-porting.md](plugin-porting.md)).
 
   ```sh
-  flutter-watchos plugin list
   flutter-watchos plugin port --from-pub url_launcher_ios
   ```
 
@@ -215,15 +279,31 @@ where possible; watchOS-specific behaviour is called out per command.
   Build, install, and launch. On a simulator this is the full debug
   experience: hot reload (`r`), hot restart (`R`), DevTools.
 
+  On a simulator, debug with hot reload:
+
   ```sh
-  flutter-watchos run -d <simulator-id>            # debug + hot reload
-  flutter-watchos run -d <watch-id> --profile      # AOT on a physical watch
+  flutter-watchos run -d <simulator-id>
+  ```
+
+  On a physical watch, AOT:
+
+  ```sh
+  flutter-watchos run -d <watch-id> --profile
   ```
 
   Mode and target must agree: a physical watch needs `--profile` or
   `--release` (there is no device debug/JIT engine), and a simulator run is
   always debug (its engine is JIT-only). The tool rejects the impossible
   combinations with guidance instead of attempting the build.
+
+  `devices` lists booted simulators only. Given the UDID of a watch simulator
+  that is shut down, `run` boots it, then opens Device Hub on Xcode 27, or
+  Simulator on Xcode 26, to show it.
+
+  `--route` has no effect on watchOS: the app starts at its home route, and
+  `run` says so. `--use-application-binary` is refused for a watch or a
+  watch simulator: flutter-watchos installs the app it builds from the
+  project.
 
   Physical-watch installs go through `devicectl` to the paired watch; see
   [debug-app.md](debug-app.md) for pairing/tunnel troubleshooting.
@@ -235,6 +315,16 @@ where possible; watchOS-specific behaviour is called out per command.
   ```sh
   flutter-watchos test
   ```
+
+  With a device id, `test` runs an integration test in the app on a watch
+  Simulator, with no `test_driver/` file. This works on the Simulator only.
+
+  ```sh
+  flutter-watchos test integration_test/<file>.dart -d <simulator-id>
+  ```
+
+  `binding.takeScreenshot` does not work on watchOS here either (see
+  [`drive`](#drive)).
 
 - ### `upgrade`
 
@@ -256,7 +346,12 @@ where possible; watchOS-specific behaviour is called out per command.
 
   ```sh
   flutter-watchos upload --api-key-id ABC123XYZ --api-issuer 12345678-...
-  flutter-watchos upload --validate-only    # App Store checks, no upload
+  ```
+
+  `--validate-only` runs the App Store checks without uploading:
+
+  ```sh
+  flutter-watchos upload --validate-only
   ```
 
   The key id/issuer can also come from `APP_STORE_CONNECT_API_KEY_ID` /
@@ -266,7 +361,28 @@ where possible; watchOS-specific behaviour is called out per command.
 
 ## Forwarded commands
 
-These stock Flutter commands work unchanged: `assemble`, `channel`,
-`config`, `daemon`, `downgrade`, `emulators`, `generate`, `gen-l10n`,
-`install`, `logs`, `pub` / `packages`, `screenshot`, `shell-completion`,
-`symbolize`.
+These stock Flutter commands work unchanged: `analyze`, `bash-completion`
+(or `zsh-completion`), `config`, `emulators`, `gen-l10n`, `pub` (or
+`packages`) and `symbolize`. So do `assemble`, `daemon` and `generate`,
+which `flutter-watchos -h` does not list.
+
+These work as in stock Flutter, with a watch in mind:
+
+- `install`, `logs` and `screenshot` work on a watch simulator as on an iOS
+  simulator. On a simulator that is shut down they stop and point to `run`,
+  which boots it.
+- `logs` on a physical watch stops and says where its output goes instead:
+  to the console of `run --profile`, or to a file in the app's container
+  (see [debug-app.md](debug-app.md#logs-from-a-physical-watch)).
+- `screenshot` on a physical watch works when the watch can take one, which
+  needs Xcode 27 or later; other watches are refused, as in stock.
+- `install` refuses `--flavor` for a watch, whose build has no flavors, and
+  `--use-application-binary`, since a watch gets the app built from the
+  project.
+- `channel` shows the Flutter version flutter-watchos pins, which follows no
+  Flutter channel. `channel <name>` and `downgrade` refuse: they would move
+  the pinned SDK, and the next run would put it back. `upgrade` moves to the
+  next release.
+
+`update-packages` is not offered: it maintains the Flutter repository
+itself.

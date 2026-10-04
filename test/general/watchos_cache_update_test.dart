@@ -359,11 +359,12 @@ void main() {
 
       final Directory location = fs.directory(_location);
       expect(readPendingEngineZips(location), <String>[release, hostRelease]);
-      expect(logger.statusText, contains('not available to this account, skipped'));
+      expect(logger.statusText, contains('not available, skipped'));
       expect(logger.statusText, isNot(contains('flutter-watchos login')));
       // What the account has is the service's to describe, whatever it is
-      // called this month; the tool does not name a programme.
+      // called this month; the tool names no programme and no access level.
       expect(logger.statusText.toLowerCase(), isNot(contains('beta')));
+      expect(logger.statusText, isNot(contains('to this account')));
     },
     overrides: overrides,
   );

@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/commands/drive.dart';
+import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/project.dart';
 
 import '../watchos_cache.dart';
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
+import 'port_help.dart';
 
-class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts {
+class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts, UnusedPortHelp {
   WatchosDriveCommand({
     required super.verboseHelp,
     required super.fileSystem,
@@ -21,8 +26,28 @@ class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts {
 
   @override
   Future<void> validateCommand() async {
+    await refuseFlavorForWatch(this);
+    await refuseApplicationBinaryForWatch(this);
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // Stock drive finds its device only in runCommand. Find it here, with the
+    // same lookup, so that a watch that cannot run the mode stops before
+    // anything is built; the device list is cached for runCommand.
+    final Device? device = await targetedDevice;
+    if (device == null) {
+      throwToolExit(null);
+    }
+    throwIfWatchCannotRunMode(
+      command: WatchosModeCommand.drive,
+      mode: getBuildMode(),
+      devices: <Device>[device],
+    );
+    warnIfWatchIgnoresDefaultFlavor(
+      cliFlavor: stringArg('flavor'),
+      defaultFlavor: project.manifest.defaultFlavor,
+      devices: <Device>[device],
+    );
+    warnIfWatchIgnoresRoute(route: route, devices: <Device>[device]);
   }
 }

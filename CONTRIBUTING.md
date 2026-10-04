@@ -46,24 +46,38 @@ pub.dev before pushing `main` (`cd packages/flutter_watchos &&
 `main` tells people to add it from pub.dev, so it has to resolve as soon as
 `main` is public.
 
+Start from an up-to-date `main`:
+
 ```bash
 git checkout main
 git pull --ff-only origin main
+```
 
-# --no-ff is the point: one merge commit per release.
+Merge `dev` with `--no-ff`. That is the point: one merge commit per release.
+
+```bash
 git merge --no-ff dev -m "Release <version>: <summary>"
+```
 
-# The tag is what `flutter-watchos upgrade` looks for, so it must have this
-# exact shape: v<flutter version>-watchos.<X.Y.Z>, e.g. v3.47.4-watchos.0.1.0.
-# `upgrade` ignores any other tag.
+Tag the merge. The tag is what `flutter-watchos upgrade` looks for, so it
+must have this exact shape: `v<flutter version>-watchos.<X.Y.Z>`, e.g.
+`v3.47.4-watchos.0.1.0`. `upgrade` ignores any other tag.
+
+```bash
 git tag -a v<flutter>-watchos.<X.Y.Z> -m "flutter-watchos <X.Y.Z>"
+```
 
-# Push main and that one tag, by name, in one go. Never --tags or
-# --follow-tags: they push every local tag reachable from main, including
-# ones that were never meant to be released.
+Push `main` and that one tag, by name, in one go. Never use `--tags` or
+`--follow-tags`: they push every local tag reachable from `main`, including
+ones that were never meant to be released.
+
+```bash
 git push --atomic origin main refs/tags/v<flutter>-watchos.<X.Y.Z>
+```
 
-# Only released tags belong on GitHub: this lists what is there.
+Only released tags belong on GitHub. This lists what is there:
+
+```bash
 git ls-remote --tags origin
 ```
 
@@ -79,16 +93,25 @@ exists to preserve. See [.github/BRANCH_PROTECTION.md](.github/BRANCH_PROTECTION
 ## Running tests
 
 The pinned Flutter SDK is bootstrapped into `flutter/` the first time you
-run any `flutter-watchos` command. Then, from the repo root:
+run any `flutter-watchos` command. Then, from the repo root, run what CI's
+`analyze-and-test` job runs:
 
 ```bash
-flutter/bin/dart analyze --fatal-warnings
-flutter/bin/dart test test/general
+flutter/bin/dart analyze --fatal-infos
+flutter/bin/dart test --timeout 2s test/general
+flutter/bin/dart test --timeout 2s test/commands.shard/hermetic
+tool/check_untested_commits.sh --self-test
 ```
 
 The tests use Flutter's own test infrastructure (`FakeProcessManager`,
 `testWithoutContext`, `testUsingContext`) and need no device or simulator.
-CI runs exactly these two commands.
+Each test gets 2 seconds; a test that waits on a timer runs on fake time.
+
+CI also typechecks `host/*.swift` with Xcode 26.0.1 and 26.6, and its
+`package` job analyses and tests `packages/flutter_watchos`, its example and
+`runtime/`, runs the debug suite's verdict tests and makes a publish dry run
+of the package. [test/README.md](test/README.md) shows how to run those
+tests yourself; `.github/workflows/ci.yml` has every step.
 
 ## Code style
 

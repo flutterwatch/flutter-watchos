@@ -2,7 +2,7 @@
 
 A Flutter toolchain for building and running Flutter apps on **Apple Watch (watchOS)**.
 
-`flutter-watchos` is a drop-in CLI companion to the Flutter SDK — same commands, same hot reload (on the Simulator), same DevTools — targeting watchOS instead of iOS.
+`flutter-watchos` is a CLI companion to the Flutter SDK that targets watchOS instead of iOS: the Flutter commands you know, hot reload on the Simulator, and DevTools.
 
 > **Apple Silicon Mac only.** Xcode is required. The watchOS engine tools are arm64-only, so an Intel Mac, or a terminal running under Rosetta, cannot build for the watch.
 
@@ -10,18 +10,20 @@ A Flutter toolchain for building and running Flutter apps on **Apple Watch (watc
 
 ## Current version
 
-- flutter-watchos: `0.1.0`
+- flutter-watchos: `0.1.1`
 - Flutter SDK: `3.47.5` (`6a19cca56475dbfba1478ee68d7bd0c2ef891da1`)
-- watchOS engine artifacts: `engine-31ccab0d37ab`
+- watchOS engine artifacts: `engine-a0d92ed11913`
 
 ## Installation
+
+Clone the repository and put its `bin/` on your `PATH`. `login` connects your flutterwatch.dev account, which the Simulator does not need. `precache` downloads the watchOS engine, and `doctor` checks the setup.
 
 ```sh
 git clone https://github.com/flutterwatch/flutter-watchos.git
 cd flutter-watchos
-export PATH="$PATH:$PWD/bin"
-flutter-watchos login      # your flutterwatch.dev account — optional for the Simulator
-flutter-watchos precache   # download the watchOS engine
+export PATH="$PWD/bin:$PATH"
+flutter-watchos login
+flutter-watchos precache
 flutter-watchos doctor
 ```
 
@@ -31,20 +33,35 @@ See [Getting started](doc/get-started.md) for the full setup guide.
 
 `flutter-watchos` substitutes the original [`flutter`](https://docs.flutter.dev/reference/flutter-cli) CLI command.
 
+Check the installed tooling and list all connected devices:
+
 ```sh
-# Check the installed tooling and list all connected devices.
 flutter-watchos doctor -v
 flutter-watchos devices
+```
 
-# Create a new app project.
+Create a new app project:
+
+```sh
 flutter-watchos create my_watch_app --platforms=watchos
 cd my_watch_app
+```
 
-# Build and run on a watchOS Simulator (debug — hot reload + DevTools).
+Build and run on a watchOS Simulator (debug, with hot reload and DevTools):
+
+```sh
 flutter-watchos run -d <simulator_id>
+```
 
-# Build and run on a paired Apple Watch (AOT — profile has logging + DevTools).
+Build and run on a paired Apple Watch in profile mode (AOT, with logging and DevTools):
+
+```sh
 flutter-watchos run -d <watch_id> --profile
+```
+
+Or in release mode (AOT, and fastest):
+
+```sh
 flutter-watchos run -d <watch_id> --release
 ```
 
@@ -127,7 +144,7 @@ if (FlutterWatchosPlatform.isAppleMobile) {// iPhone, iPad, OR Apple Watch
 
 ### Known limitations
 
-- **Apple Watch Series 9 / Ultra 2 or later** for on-device runs. The engine is arm64-only; when `WATCHOS_DEPLOYMENT_TARGET < 27.0` the executable needs an arm64_32 slice, so the template ships a stub slice and a "Requires Apple Watch Series 9 or later" fallback screen for older watches.
+- **Apple Watch Series 9 or later, Ultra 2 or later, or SE 3, on watchOS 26.0 or later** for on-device runs. The engine is arm64-only; when `WATCHOS_DEPLOYMENT_TARGET < 27.0` the executable needs an arm64_32 slice, so the template ships a stub slice and a "Requires Apple Watch Series 9 or later" fallback screen for older watches.
 - **No debug (JIT) on a physical watch.** The watchOS device SDK removes the Mach APIs the Dart JIT VM needs, so device-debug cannot even be built. **Debug + hot reload run on the Simulator; a physical watch runs AOT** (`--profile` for logging/DevTools, `--release` for shipping).
 - **Profile on a physical watch.** The Simulator does not reflect real on-device performance — always validate on an actual Apple Watch before shipping.
 - **iOS plugins don't automatically work.** Packages need a watchOS implementation (see the plugin key above); pure-Dart packages are unaffected.
@@ -139,6 +156,11 @@ Text input (the system keyboard), Digital Crown scrolling and haptics, and app-l
 Apps render with **Impeller on Metal**, the same renderer Flutter uses on iOS — no opt-in required. If a watch cannot open a Metal device the engine falls back to Skia's software rasterizer on its own, and an app can ask for that path explicitly with `FLTEnableImpeller` set to `false` in `watchos/Runner/Info.plist`.
 
 Each frame reaches the screen as an image the engine hands to SwiftUI. An **experimental** zero-copy alternative shows the engine's render target directly through a SceneKit material (`FlutterWatchOSPresent` set to `texture` in `Info.plist`, or `FLUTTER_WATCHOS_PRESENT=texture` in the environment for a `run`). It covers frames with platform views too. It is off by default and untested with App Review; on a Series 10 it cut raster time by about two thirds for frames without platform views. Treat it as something to evaluate, not to ship.
+
+Two more switches of the app's host help when measuring it, set in the environment for a `run` the same way:
+
+- `FLUTTER_WATCHOS_DISPLAY_CLOCK=continuous` keeps the display clock ticking while nothing on screen changes. By default it pauses after about half a second with nothing to draw, so a still app is not woken on every refresh.
+- `FLUTTER_WATCHOS_CPU_LOG=<seconds>` writes the app's CPU use, as a percentage, to the system log once per window of that many seconds (at least 1).
 
 ## Docs
 
@@ -167,8 +189,9 @@ Each frame reaches the screen as an image the engine hands to SwiftUI. An **expe
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
+To run the tests:
+
 ```sh
-# Run tests
 flutter/bin/dart test test/general
 ```
 

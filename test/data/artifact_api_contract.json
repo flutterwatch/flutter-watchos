@@ -1,0 +1,41 @@
+{
+  "artifacts": {
+    "path": "/v1/artifacts/{tag}/{zip}",
+    "tag": "^[A-Za-z0-9._-]{1,100}$",
+    "zips": [
+      { "name": "watchos_debug_sim_arm64.zip", "access": "anonymous" },
+      { "name": "watchos_profile_arm64.zip", "access": "account" },
+      { "name": "watchos_release_arm64.zip", "access": "account" },
+      { "name": "host_debug_unopt.zip", "access": "account" },
+      { "name": "host_release.zip", "access": "account" }
+    ],
+    "keys": {
+      "tag": ["valid", "invalid"],
+      "zip": ["anonymous", "account", "unlisted"],
+      "token": ["none", "active", "inactive", "revoked"],
+      "stored": [true, false]
+    },
+    "answers": [
+      { "tag": ["invalid"], "zip": ["anonymous", "account", "unlisted"],
+        "token": ["none", "active", "inactive", "revoked"], "stored": [true, false],
+        "status": 404, "error": "not_found" },
+      { "tag": ["valid"], "zip": ["unlisted"],
+        "token": ["none", "active", "inactive", "revoked"], "stored": [true, false],
+        "status": 404, "error": "unknown_artifact" },
+      { "tag": ["valid"], "zip": ["anonymous"],
+        "token": ["none", "active", "inactive", "revoked"], "stored": [true],
+        "status": 200 },
+      { "tag": ["valid"], "zip": ["anonymous"],
+        "token": ["none", "active", "inactive", "revoked"], "stored": [false],
+        "status": 404, "error": "not_found" },
+      { "tag": ["valid"], "zip": ["account"], "token": ["none", "revoked"],
+        "stored": [true, false], "status": 401, "error": "auth_required" },
+      { "tag": ["valid"], "zip": ["account"], "token": ["inactive"],
+        "stored": [true, false], "status": 403, "error": "access_inactive" },
+      { "tag": ["valid"], "zip": ["account"], "token": ["active"], "stored": [true],
+        "status": 200 },
+      { "tag": ["valid"], "zip": ["account"], "token": ["active"], "stored": [false],
+        "status": 404, "error": "not_found" }
+    ]
+  }
+}

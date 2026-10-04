@@ -3,13 +3,56 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io' as io show ProcessSignal;
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_watchos/watchos_device.dart';
+import 'package:flutter_watchos/watchos_mode_guidance.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
+import '../src/fake_process_manager.dart';
+
+/// A `log stream` process whose output the test writes line by line, and
+/// which runs until the test ends it or the reader kills it.
+class _LogStreamProcess extends FakeProcess {
+  final _stdout = StreamController<List<int>>();
+  final _exit = Completer<int>();
+
+  /// Whether the reader killed this process.
+  bool killed = false;
+
+  @override
+  Stream<List<int>> get stdout => _stdout.stream;
+
+  @override
+  Stream<List<int>> get stderr => const Stream<List<int>>.empty();
+
+  @override
+  Future<int> get exitCode => _exit.future;
+
+  void emit(String line) => _stdout.add(utf8.encode('$line\n'));
+
+  void end([int code = 0]) {
+    if (!_exit.isCompleted) {
+      _exit.complete(code);
+      unawaited(_stdout.close());
+    }
+  }
+
+  @override
+  bool kill([io.ProcessSignal signal = io.ProcessSignal.sigterm]) {
+    killed = true;
+    end(-15);
+    return true;
+  }
+}
+
+const _preamble = 'Filtering the log data using "eventType = logEvent"';
 
 void main() {
   // These arguments reach the Dart VM for real as of engine v0.1.2, so a
@@ -38,6 +81,24 @@ void main() {
           'FLUTTER_WATCHOS_SEMANTICS': '0',
         },
       );
+    });
+
+    // The host reads these three (host/FlutterRunner.swift); the app inherits
+    // nothing from this Mac, so they travel like the engine's.
+    testWithoutContext('carries the host switches: present, display clock, CPU log', () {
+      expect(
+        engineSwitchesFromEnvironment(const <String, String>{
+          'FLUTTER_WATCHOS_PRESENT': 'texture',
+          'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+          'FLUTTER_WATCHOS_CPU_LOG': '2',
+        }),
+        <String, String>{
+          'FLUTTER_WATCHOS_PRESENT': 'texture',
+          'FLUTTER_WATCHOS_DISPLAY_CLOCK': 'continuous',
+          'FLUTTER_WATCHOS_CPU_LOG': '2',
+        },
+      );
+      expect(engineSwitchEnvironment.toSet(), hasLength(engineSwitchEnvironment.length));
     });
 
     testWithoutContext('ignores unrelated and empty variables', () {
@@ -203,6 +264,225 @@ void main() {
     });
   });
 
+  // The unified-log predicate, as stock's (simulators_test.dart 'unified
+  // logging with app name'), with the watch app's name, without stock's three
+  // UIScene clauses and with the [flutter: clause.
+  const expectedPredicate =
+      'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND '
+      '(senderImagePath ENDSWITH "/Flutter" OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
+      'OR processImageUUID == senderImageUUID OR eventMessage CONTAINS "[flutter:") AND '
+      'NOT(eventMessage CONTAINS ": could not find icon for representation -> com.apple.") AND '
+      'NOT(eventMessage BEGINSWITH "assertion failed: ") AND '
+      'NOT(eventMessage CONTAINS " libxpc.dylib ")';
+
+  FakeCommand logStream({FakeProcess? process, String stdout = ''}) => FakeCommand(
+    command: const <String>[
+      'xcrun',
+      'simctl',
+      'spawn',
+      'sim-1',
+      'log',
+      'stream',
+      '--style',
+      'json',
+      '--predicate',
+      expectedPredicate,
+    ],
+    process: process,
+    stdout: stdout,
+  );
+
+  Future<void> pump() async {
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  group('WatchosSimulatorLogReader stream', () {
+    late FakeProcessManager processManager;
+    late BufferLogger logger;
+
+    setUp(() {
+      processManager = FakeProcessManager.empty();
+      logger = BufferLogger.test();
+    });
+
+    WatchosSimulatorLogReader reader() => WatchosSimulatorLogReader(
+      'Apple Watch Series 11 (46mm)',
+      deviceId: 'sim-1',
+      logger: logger,
+    );
+
+    testWithoutContext("the predicate has no UIScene clause and keeps stock's filters", () {
+      expect(WatchosSimulatorLogReader.predicate, expectedPredicate);
+      expect(WatchosSimulatorLogReader.predicate, isNot(contains('UIScene')));
+    });
+
+    testWithoutContext('toString is the device name, for both readers', () {
+      expect(reader().toString(), 'Apple Watch Series 11 (46mm)');
+      expect(WatchosPhysicalDeviceLogReader('My Watch').toString(), 'My Watch');
+    });
+
+    testUsingContext('starts on the first listen, not before', () async {
+      final logProcess = _LogStreamProcess();
+      processManager.addCommand(logStream(process: logProcess));
+      final WatchosSimulatorLogReader subject = reader();
+      await pump();
+      expect(processManager, isNot(hasNoRemainingExpectations));
+
+      subject.logLines.listen(null);
+      await pump();
+      expect(processManager, hasNoRemainingExpectations);
+      subject.dispose();
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+
+    // Mirrors stock simulators_test.dart 'log reader handles escaped
+    // multiline messages', plus an escaped quote, which a lazy capture cut.
+    testUsingContext('escaped quotes and multi-line messages decode', () async {
+      processManager.addCommand(
+        logStream(
+          stdout: r'''
+},{
+  "traceID" : 37579774151491588,
+  "eventMessage" : "Single line message",
+  "eventType" : "logEvent"
+},{
+  "traceID" : 37579774151491588,
+  "eventMessage" : "Multi line message\n  continues...\n  continues..."
+},{
+  "traceID" : 37579774151491588,
+  "eventMessage" : "[flutter:flutter] A \"quoted\" word, then more",
+  "eventType" : "logEvent"
+},{
+''',
+        ),
+      );
+      final lines = <String>[];
+      final WatchosSimulatorLogReader subject = reader();
+      subject.logLines.listen(lines.add);
+      await pump();
+
+      expect(lines, <String>[
+        'Single line message',
+        'Multi line message\n  continues...\n  continues...',
+        'flutter: A "quoted" word, then more',
+      ]);
+      subject.dispose();
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+
+    testUsingContext(
+      'a stream that dies is restarted once, and a second death ends the lines',
+      () async {
+        final first = _LogStreamProcess();
+        final second = _LogStreamProcess();
+        processManager.addCommands(<FakeCommand>[
+          logStream(process: first),
+          logStream(process: second),
+        ]);
+        final WatchosSimulatorLogReader subject = reader();
+        var done = false;
+        subject.logLines.listen(null, onDone: () => done = true);
+        await pump();
+        first.emit(_preamble);
+        await pump();
+        final Future<void> firstReady = subject.ready;
+
+        first.end(1);
+        await pump();
+        expect(logger.traceText, contains('restarting it once'));
+        // ready is re-armed for the new process.
+        expect(identical(subject.ready, firstReady), isFalse);
+        var ready = false;
+        unawaited(subject.ready.then((_) => ready = true));
+        await pump();
+        expect(ready, isFalse);
+        second.emit(_preamble);
+        await pump();
+        expect(ready, isTrue);
+
+        expect(done, isFalse);
+        second.end(1);
+        await pump();
+        expect(logger.traceText, contains('not restarting it'));
+        expect(logger.traceText, isNot(contains('Could not start')));
+        // Nothing more will come: listeners such as `logs` are told so.
+        expect(done, isTrue);
+        expect(processManager, hasNoRemainingExpectations);
+        subject.dispose();
+      },
+      overrides: <Type, Generator>{ProcessManager: () => processManager},
+    );
+
+    testUsingContext('a stream that ends before it goes live is not restarted', () async {
+      processManager.addCommand(
+        FakeCommand(
+          command: logStream().command,
+          exitCode: 149,
+          stderr: 'Unable to lookup in current state: Shutdown',
+        ),
+      );
+      final WatchosSimulatorLogReader subject = reader();
+      subject.logLines.listen(null);
+      await pump();
+
+      expect(logger.traceText, contains('ended before it went live'));
+      expect(processManager, hasNoRemainingExpectations);
+      subject.dispose();
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+
+    testUsingContext('ensureStarted reuses a live stream', () async {
+      final first = _LogStreamProcess();
+      final second = _LogStreamProcess();
+      processManager.addCommands(<FakeCommand>[
+        logStream(process: first),
+        logStream(process: second),
+      ]);
+      final WatchosSimulatorLogReader subject = reader();
+      subject.logLines.listen(null);
+      await pump();
+      first.emit(_preamble);
+      await subject.ensureStarted();
+      await pump();
+      expect(processManager, isNot(hasNoRemainingExpectations));
+
+      first.end(1);
+      await pump(); // The one restart.
+      expect(processManager, hasNoRemainingExpectations);
+      subject.dispose();
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+
+    testUsingContext('the last cancel stops the stream', () async {
+      final logProcess = _LogStreamProcess();
+      processManager.addCommand(logStream(process: logProcess));
+      final WatchosSimulatorLogReader subject = reader();
+      final StreamSubscription<String> a = subject.logLines.listen(null);
+      final StreamSubscription<String> b = subject.logLines.listen(null);
+      await pump();
+
+      await a.cancel();
+      expect(logProcess.killed, isFalse);
+      await b.cancel();
+      expect(logProcess.killed, isTrue);
+      // Stopped on purpose: no restart.
+      await pump();
+      expect(logger.traceText, isNot(contains('restarting')));
+      subject.dispose();
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+
+    testUsingContext('dispose stops the stream and ends the lines', () async {
+      final logProcess = _LogStreamProcess();
+      processManager.addCommand(logStream(process: logProcess));
+      final WatchosSimulatorLogReader subject = reader();
+      final done = Completer<void>();
+      subject.logLines.listen(null, onDone: done.complete);
+      await pump();
+
+      subject.dispose();
+      await done.future;
+      expect(logProcess.killed, isTrue);
+    }, overrides: <Type, Generator>{ProcessManager: () => processManager});
+  });
+
   group('WatchosDevice', () {
     testWithoutContext('a simulator reports iOS-family platform and emulator identity', () async {
       final device = WatchosDevice(
@@ -231,6 +511,31 @@ void main() {
       expect(await device.emulatorId, isNull);
     });
 
+    // Mirrors stock IOSSimulator.createDevFSWriter. Through the VM Service,
+    // the writes of a run session went nowhere once an attach to the same app
+    // had ended, and its next hot reload was rejected.
+    testUsingContext('a Simulator writes hot reload files straight into the app container', () {
+      final device = WatchosDevice(
+        'test-id',
+        name: 'Apple Watch Series 11 (46mm)',
+        logger: BufferLogger.test(),
+        isSimulator: true,
+      );
+
+      expect(device.createDevFSWriter(null, null), isA<LocalDevFSWriter>());
+    });
+
+    testWithoutContext('a physical watch leaves file writes to the VM Service', () {
+      final device = WatchosDevice(
+        'physical-id',
+        name: 'My Watch',
+        logger: BufferLogger.test(),
+        isSimulator: false,
+      );
+
+      expect(device.createDevFSWriter(null, null), isNull);
+    });
+
     testWithoutContext('reports the osVersion in sdkNameAndVersion when present', () async {
       final device = WatchosDevice(
         'test-id',
@@ -242,7 +547,9 @@ void main() {
       expect(await device.sdkNameAndVersion, equals('watchOS 11.0'));
     });
 
-    testWithoutContext('supports debug/profile/release but not jitRelease', () {
+    // Mirrors stock simulators_test.dart 'simulators only support debug mode':
+    // the Simulator engine is JIT-only.
+    testWithoutContext('a Simulator only supports debug mode', () {
       final device = WatchosDevice(
         'test-id',
         name: 'Apple Watch Series 11 (46mm)',
@@ -251,46 +558,118 @@ void main() {
       );
 
       expect(device.supportsRuntimeMode(BuildMode.debug), isTrue);
-      expect(device.supportsRuntimeMode(BuildMode.profile), isTrue);
-      expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
+      expect(device.supportsRuntimeMode(BuildMode.profile), isFalse);
+      expect(device.supportsRuntimeMode(BuildMode.release), isFalse);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
     });
 
     // There is no device debug engine (the watchOS device SDK removes the
     // Mach APIs the Dart JIT VM needs) and no Simulator AOT engine, so
     // startApp must reject the two impossible mode/target combinations with
-    // guidance — BEFORE building, where the failure would otherwise surface
-    // as a bare "libflutter_engine.dylib not found → run precache".
+    // guidance, before building, where the failure would otherwise surface
+    // as a bare "libflutter_engine.dylib not found → run precache". The
+    // guidance is an error line and a failed launch, not a tool exit: the
+    // runners print an exception from startApp with its stack trace.
     testWithoutContext('startApp rejects debug mode on a physical watch with guidance', () async {
+      final logger = BufferLogger.test();
       final device = WatchosDevice(
         'physical-id',
         name: 'My Watch',
-        logger: BufferLogger.test(),
+        logger: logger,
         isSimulator: false,
       );
 
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug)),
-        throwsToolExit(message: RegExp(r'Debug mode is not supported on a physical Apple Watch[\s\S]*--profile[\s\S]*--release[\s\S]*Simulator')),
+      final LaunchResult result = await device.startApp(
+        null,
+        debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
       );
+
+      expect(result.started, isFalse);
+      expect(
+        logger.errorText,
+        matches(RegExp(r'Debug mode is not supported on a physical Apple Watch[\s\S]*--profile[\s\S]*--release[\s\S]*Simulator')),
+      );
+      expect(logger.errorText, isNot(contains('#0')));
     });
 
     testWithoutContext('startApp rejects AOT modes on the Simulator with guidance', () async {
+      for (final mode in <BuildInfo>[BuildInfo.release, BuildInfo.profile]) {
+        final logger = BufferLogger.test();
+        final device = WatchosDevice(
+          'sim-id',
+          name: 'Apple Watch Series 11 (46mm)',
+          logger: logger,
+          isSimulator: true,
+        );
+
+        final LaunchResult result = await device.startApp(
+          null,
+          debuggingOptions: DebuggingOptions.disabled(mode),
+        );
+
+        expect(result.started, isFalse);
+        expect(
+          logger.errorText,
+          matches(RegExp('--${mode.mode.cliName} is not supported on the watchOS Simulator[\\s\\S]*JIT-only[\\s\\S]*physical watch')),
+        );
+        expect(logger.errorText, isNot(contains('#0')));
+      }
+    });
+
+    testWithoutContext('a prebuilt AOT app is refused on the Simulator too', () async {
+      final logger = BufferLogger.test();
       final device = WatchosDevice(
         'sim-id',
         name: 'Apple Watch Series 11 (46mm)',
-        logger: BufferLogger.test(),
+        logger: logger,
         isSimulator: true,
       );
 
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.release)),
-        throwsToolExit(message: RegExp(r'--release is not supported on the watchOS Simulator[\s\S]*JIT-only[\s\S]*physical watch')),
+      final LaunchResult result = await device.startApp(
+        null,
+        prebuiltApplication: true,
+        debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
       );
-      await expectLater(
-        device.startApp(null, debuggingOptions: DebuggingOptions.disabled(BuildInfo.profile)),
-        throwsToolExit(message: RegExp(r'--profile is not supported on the watchOS Simulator')),
-      );
+
+      expect(result.started, isFalse);
+      expect(logger.errorText, contains('--release is not supported on the watchOS Simulator'));
+    });
+
+    testWithoutContext('unsupportedModeGuidance is null for the modes a target runs', () {
+      final simulator = WatchosDevice('s', name: 'S', logger: BufferLogger.test(), isSimulator: true);
+      final watch = WatchosDevice('w', name: 'W', logger: BufferLogger.test(), isSimulator: false);
+
+      expect(simulator.unsupportedModeGuidance(BuildMode.debug), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.profile), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.release), isNull);
+      expect(watch.unsupportedModeGuidance(BuildMode.debug), startsWith('Debug mode is not supported'));
+    });
+
+    // One source for the mode guidance: what startApp prints is run's
+    // guidance, so no second text with comments after its commands exists.
+    testWithoutContext("unsupportedModeGuidance is run's guidance, with bare command lines", () {
+      for (final simulator in <bool>[true, false]) {
+        final device = WatchosDevice(
+          'id-1',
+          name: 'W',
+          logger: BufferLogger.test(),
+          isSimulator: simulator,
+        );
+        for (final BuildMode mode in BuildMode.values) {
+          final String? guidance = device.unsupportedModeGuidance(mode);
+          expect(
+            guidance,
+            watchosModeRefusal(
+              command: WatchosModeCommand.run,
+              mode: mode,
+              simulator: simulator,
+              deviceId: 'id-1',
+            ),
+            reason: '${simulator ? 'Simulator' : 'watch'} ${mode.cliName}',
+          );
+          expect(guidance ?? '', isNot(contains('#')));
+        }
+      }
     });
   });
 }

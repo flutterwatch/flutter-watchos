@@ -6,8 +6,9 @@ import 'package:flutter_tools/src/commands/test.dart';
 import 'package:flutter_tools/src/project.dart';
 
 import '../watchos_plugins.dart';
+import 'port_help.dart';
 
-class WatchosTestCommand extends TestCommand {
+class WatchosTestCommand extends TestCommand with UnusedPortHelp {
   WatchosTestCommand({required super.verboseHelp});
 
   @override

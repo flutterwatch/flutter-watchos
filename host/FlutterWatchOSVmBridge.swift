@@ -1,3 +1,7 @@
+// Copyright 2026 The FlutterWatch Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 // FLUTTER_WATCHOS_VM_BRIDGE is defined by the CLI for debug and profile builds
 // only (see kVmBridgeSwiftDefine in lib/build_targets/watchos_host_module.dart).
 // A release build compiles the stub at the bottom of this file instead, so a
@@ -224,7 +228,7 @@ import Foundation
     }
 
     /// Largest batch of frames to put in one POST. Big enough that a bulk reply
-    /// (a CPU profile is megabytes) is not paid for one round trip per 32KB
+    /// (a CPU profile is megabytes) does not cost one round trip per 32KB
     /// read, small enough that a single request stays bounded.
     private static let maxPushBytes = 512 * 1024
 
@@ -726,6 +730,7 @@ import Foundation
 /// has to exist in every configuration — but in a shipping app it does
 /// nothing, and no URLSession, socket or compression code is linked in.
 @objc public final class FlutterWatchOSVmBridge: NSObject {
+    /// Does nothing: a release build has no VM Service bridge.
     @objc public static func startIfConfigured() {}
 }
 

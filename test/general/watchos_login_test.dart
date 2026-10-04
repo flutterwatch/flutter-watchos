@@ -2,10 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+import 'dart:io' show ContentType, HttpRequest, HttpServer, InternetAddress;
+
+import 'package:file/file.dart';
+import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_watchos/commands/login.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/test_flutter_command_runner.dart';
 
 void main() {
   // `--help` is the first thing a new user reads. It used to say an account
@@ -48,5 +56,75 @@ void main() {
         contains('`flutter-watchos login` again'),
       );
     });
+  });
+
+  // What the person does in the browser is confirm the code `login` printed.
+  // The command used to say it was "waiting for approval", and that the code
+  // "expired before it was approved", as if someone else had to say yes.
+  group('login, against a local service whose code expires', () {
+    late HttpServer server;
+    late List<String> requests;
+
+    // The command runner locks the SDK's cache before any command; there is
+    // no SDK in the memory file system.
+    setUpAll(Cache.disableLocking);
+    tearDownAll(Cache.enableLocking);
+
+    setUp(() async {
+      requests = <String>[];
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((HttpRequest request) async {
+        requests.add('${request.method} ${request.uri.path}');
+        await request.drain<void>();
+        request.response.headers.contentType = ContentType.json;
+        if (request.uri.path == '/v1/auth/device') {
+          request.response.write(
+            jsonEncode(<String, Object?>{
+              'device_code': 'device-code',
+              'user_code': 'ABCD-2345',
+              'verification_uri': 'http://127.0.0.1:${server.port}/activate',
+              'interval': 0,
+              'expires_in': 60,
+            }),
+          );
+        } else {
+          request.response
+            ..statusCode = 400
+            ..write(jsonEncode(<String, Object?>{'error': 'expired_token'}));
+        }
+        await request.response.close();
+      });
+    });
+
+    tearDown(() => server.close(force: true));
+
+    testUsingContext(
+      'asks the person to confirm the code, and says it expired before they did',
+      () async {
+        await expectLater(
+          createTestCommandRunner(WatchosLoginCommand()).run(<String>['login']),
+          throwsToolExit(message: 'The sign-in code expired before it was confirmed.'),
+        );
+
+        expect(requests, <String>['POST /v1/auth/device', 'POST /v1/auth/device/token']);
+        expect(testLogger.statusText, contains('and confirm the code: ABCD-2345'));
+        expect(
+          testLogger.statusText,
+          contains('Waiting for you to confirm the code in the browser (Ctrl-C to cancel)...'),
+        );
+        expect(kLoginWaitingNote, isNot(contains('approv')));
+        expect(testLogger.statusText.toLowerCase(), isNot(contains('approv')));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => MemoryFileSystem.test(),
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => FakePlatform(
+          environment: <String, String>{
+            'HOME': '/home/u',
+            'WATCHOS_ARTIFACTS_API': 'http://127.0.0.1:${server.port}',
+          },
+        ),
+      },
+    );
   });
 }

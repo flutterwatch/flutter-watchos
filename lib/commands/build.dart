@@ -9,41 +9,82 @@ import 'package:flutter_tools/src/commands/build.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:meta/meta.dart';
 
 import '../watchos_build_info.dart';
 import '../watchos_build_registry.dart';
 import '../watchos_builder.dart';
 import '../watchos_cache.dart';
+import '../watchos_mode_guidance.dart';
 import '../watchos_plugins.dart';
+import 'launch_checks.dart';
+import 'stock_build_stub.dart';
 
-class WatchosBuildCommand extends BuildCommand {
+/// Builds the watchOS app bundle for `build watchos`.
+///
+/// [WatchosBuilder.buildBundle] outside tests; command tests pass a fake, so
+/// the command runs without Xcode or an engine.
+typedef WatchosBundleBuilder =
+    Future<void> Function({
+      required FlutterProject project,
+      required WatchosBuildInfo watchosBuildInfo,
+      required String targetFile,
+    });
+
+/// What `build watchos` says when asked for a size analysis.
+const String kWatchosSizeAnalysisRefusal =
+    'Size analysis is not available for watchOS builds: --analyze-size and '
+    '--code-size-directory make no report for a watch app.\n'
+    'Run the build without them:\n'
+    '  flutter-watchos build watchos --release';
+
+/// `build`: the watchOS build, `build watchos`.
+///
+/// Stock `BuildCommand` adds a subcommand for every stock target, which would
+/// run under the watchOS overrides, untested. This command has `watchos`, and
+/// a hidden [StockBuildStubCommand] for each stock target name, which says to
+/// use stock `flutter build <name>`.
+class WatchosBuildCommand extends FlutterCommand {
+  /// The `build` command; the seams are passed on to `build watchos`.
   WatchosBuildCommand({
-    required super.artifacts,
-    required super.cache,
-    required super.fileSystem,
-    required super.flutterVersion,
-    required super.buildSystem,
-    required super.osUtils,
     required Logger logger,
-    required super.androidSdk,
-    required super.config,
-    required super.platform,
-    required super.processUtils,
-    required super.processManager,
-    required super.fileSystemUtils,
-    required super.templateRenderer,
-    required super.terminal,
-    required super.plistParser,
-    required super.xcode,
     required bool verboseHelp,
-  }) : super(logger: logger, verboseHelp: verboseHelp) {
-    addSubcommand(BuildWatchosCommand(logger: logger, verboseHelp: verboseHelp));
+    @visibleForTesting WatchosBundleBuilder? bundleBuilder,
+    @visibleForTesting BuildRegistryPost? registryPost,
+  }) {
+    addSubcommand(
+      BuildWatchosCommand(
+        logger: logger,
+        verboseHelp: verboseHelp,
+        bundleBuilder: bundleBuilder,
+        registryPost: registryPost,
+      ),
+    );
+    kStockBuildSubcommands.map(StockBuildStubCommand.new).forEach(addSubcommand);
   }
+
+  @override
+  final String name = 'build';
+
+  @override
+  final String description = 'Build the watchOS app.';
+
+  @override
+  String get category => FlutterCommandCategory.project;
+
+  @override
+  Future<FlutterCommandResult> runCommand() async => FlutterCommandResult.fail();
 }
 
 class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts {
-  BuildWatchosCommand({required super.logger, required bool verboseHelp})
-    : super(verboseHelp: verboseHelp) {
+  BuildWatchosCommand({
+    required super.logger,
+    required bool verboseHelp,
+    @visibleForTesting WatchosBundleBuilder? bundleBuilder,
+    @visibleForTesting BuildRegistryPost? registryPost,
+  }) : _bundleBuilder = bundleBuilder ?? WatchosBuilder.buildBundle,
+       _registryPost = registryPost,
+       super(verboseHelp: verboseHelp) {
     addCommonDesktopBuildOptions(verboseHelp: verboseHelp);
     argParser.addFlag(
       'simulator',
@@ -58,17 +99,51 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
     );
   }
 
+  final WatchosBundleBuilder _bundleBuilder;
+
+  /// How a registration is sent; null sends it over HTTP.
+  final BuildRegistryPost? _registryPost;
+
   @override
   final String name = 'watchos';
 
   @override
   final String description = 'Build an Apple watchOS application.';
 
+  /// Adds `--analyze-size` and `--code-size-directory` hidden.
+  ///
+  /// Stock `addCommonDesktopBuildOptions` adds them for every build, but no
+  /// size report is made for a watchOS build, so [validateCommand] refuses
+  /// them. They stay parsable, so a script that passes one gets that refusal
+  /// rather than a usage error.
+  @override
+  void usesAnalyzeSizeFlag() {
+    argParser.addFlag(FlutterOptions.kAnalyzeSize, hide: true);
+    argParser.addOption(FlutterOptions.kCodeSizeDirectory, hide: true);
+  }
+
   @override
   Future<void> validateCommand() async {
+    // Before the tooling check, which can rewrite the host-mode wiring: a
+    // refused build changes nothing.
+    if (boolArg(FlutterOptions.kAnalyzeSize) ||
+        stringArg(FlutterOptions.kCodeSizeDirectory) != null) {
+      throwToolExit(kWatchosSizeAnalysisRefusal);
+    }
     final FlutterProject project = FlutterProject.current();
     await ensureReadyForWatchosTooling(project);
-    return super.validateCommand();
+    await super.validateCommand();
+    // build watchos has no --flavor; a pubspec default-flavor still reaches
+    // FLUTTER_APP_FLAVOR, but not the watch build.
+    final String? defaultFlavor = project.manifest.defaultFlavor;
+    final WatchosFlavorCheck flavorCheck = watchosFlavorCheck(
+      cliFlavor: null,
+      defaultFlavor: defaultFlavor,
+      watchTarget: true,
+    );
+    if (flavorCheck == WatchosFlavorCheck.warn) {
+      globals.printWarning(watchosDefaultFlavorWarning(defaultFlavor!));
+    }
   }
 
   @override
@@ -80,29 +155,33 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
     // artifact), so a simulator build is ALWAYS a debug (JIT) build: the app
     // must ship kernel_blob.bin, which only the debug bundle contains. The
     // `build` subcommand defaults to release, so quietly lower the default;
-    // an EXPLICIT AOT mode with --simulator is a contradiction — fail with
-    // guidance. Without this, a release+simulator build produced an app whose
-    // AOT App.dylib the JIT engine ignores, silently running whatever stale
-    // kernel was last staged into watchos/Flutter/flutter_assets.
+    // an EXPLICIT AOT mode with --simulator is a contradiction, which the
+    // guidance below refuses. Without this, a release+simulator build produced
+    // an app whose AOT App.dylib the JIT engine ignores, silently running
+    // whatever stale kernel was last staged into watchos/Flutter/flutter_assets.
     BuildInfo buildInfo = await getBuildInfo();
     if (simulator && buildInfo.mode != BuildMode.debug) {
       final bool explicitMode = argResults!.wasParsed('release') ||
           argResults!.wasParsed('profile') ||
           (argParser.options.containsKey('jit-release') &&
               argResults!.wasParsed('jit-release'));
-      if (explicitMode) {
-        throwToolExit(
-          '--${buildInfo.mode.cliName} is not supported with --simulator: the '
-          'watchOS Simulator engine is JIT-only, so simulator builds are '
-          'always debug. AOT (profile/release) builds target a physical '
-          'watch.\n'
-          'Use one of:\n'
-          '  flutter-watchos build watchos --simulator   # debug, on the Simulator\n'
-          '  flutter-watchos build watchos --profile     # AOT, on a physical watch\n'
-          '  flutter-watchos build watchos --release     # AOT, on a physical watch',
-        );
+      if (!explicitMode) {
+        buildInfo = await getBuildInfo(forcedBuildMode: BuildMode.debug);
       }
-      buildInfo = await getBuildInfo(forcedBuildMode: BuildMode.debug);
+    }
+
+    // Debug on a physical watch would need a JIT engine, but the Dart JIT VM
+    // cannot be built against the watchOS device SDK (Mach exception-port APIs
+    // like thread_set_exception_ports are unavailable there). There is no
+    // watchos_debug device artifact, so fail early with guidance instead of a
+    // generic "engine not found". The Simulator debug build is the debug path.
+    final String? refusal = watchosModeRefusal(
+      command: WatchosModeCommand.build,
+      mode: buildInfo.mode,
+      simulator: simulator,
+    );
+    if (refusal != null) {
+      throwToolExit(refusal);
     }
 
     final watchosBuildInfo = WatchosBuildInfo(
@@ -111,24 +190,7 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
       simulator: simulator,
     );
 
-    // Debug on a physical watch would need a JIT engine, but the Dart JIT VM
-    // cannot be built against the watchOS device SDK (Mach exception-port APIs
-    // like thread_set_exception_ports are unavailable there). There is no
-    // watchos_debug device artifact, so fail early with guidance instead of a
-    // generic "engine not found". The Simulator debug build is the debug path.
-    if (!simulator && watchosBuildInfo.buildInfo.mode == BuildMode.debug) {
-      throwToolExit(
-        'Debug mode is not supported on a physical Apple Watch: it requires a '
-        'JIT engine, which cannot be built for watchOS (the device SDK removes '
-        'the Mach APIs the Dart JIT VM relies on).\n'
-        'Use one of:\n'
-        '  flutter-watchos build watchos --simulator   # debug, on the Simulator\n'
-        '  flutter-watchos build watchos --profile      # AOT, on a physical watch\n'
-        '  flutter-watchos build watchos --release      # AOT, on a physical watch',
-      );
-    }
-
-    await WatchosBuilder.buildBundle(
+    await _bundleBuilder(
       project: project,
       watchosBuildInfo: watchosBuildInfo,
       targetFile: targetFile,
@@ -154,6 +216,7 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
           platform: globals.platform,
           logger: globals.logger,
           build: build,
+          post: _registryPost,
         );
       }
     }

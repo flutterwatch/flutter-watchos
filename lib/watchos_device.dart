@@ -8,19 +8,14 @@ import 'dart:io' show InternetAddress, InternetAddressType, Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
-import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/dds.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/ios/device_support.dart';
-import 'package:flutter_tools/src/ios/lldb.dart';
-import 'package:flutter_tools/src/ios/xcode_debug.dart';
-import 'package:flutter_tools/src/ios/xcodeproj.dart';
-import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/protocol_discovery.dart';
@@ -31,14 +26,18 @@ import 'watchos_application_package.dart';
 import 'watchos_build_info.dart';
 import 'watchos_builder.dart';
 import 'watchos_dds.dart';
+import 'watchos_mode_guidance.dart';
 import 'watchos_vm_relay.dart';
 
-/// Engine switches the host reads at startup, and the environment variable
-/// each is spelled as on the command line that launches `run`.
+/// Switches a watch app reads from its environment at startup, each spelled
+/// as the environment variable given to the `run` that launches it.
 ///
-/// The engine reads most of these from its own environment already, but the
-/// app runs on the watch and inherits nothing from this Mac, so they have to
-/// be carried across deliberately. Forwarding them here is what makes
+/// Two readers consume them: the engine (the renderer, vsync and semantics
+/// switches) and the host, the Swift code linked into the app (the present
+/// path, the display clock and the CPU log; see `host/FlutterRunner.swift`).
+/// Either way the app runs on the watch or in the Simulator and inherits
+/// nothing from this Mac, so they have to be carried across deliberately.
+/// Forwarding them here is what makes
 ///
 ///   FLUTTER_WATCHOS_RENDERER=software flutter-watchos run --profile -d `<id>`
 ///
@@ -47,20 +46,30 @@ import 'watchos_vm_relay.dart';
 /// otherwise could not do at all: `--dart-entrypoint-args` is desktop-only and
 /// goes to Dart's `main`, not to the embedder.
 ///
-/// Values are passed through untouched; the engine is the only validator.
+/// Values are passed through untouched; the engine or the host is the only
+/// validator.
 @visibleForTesting
 const engineSwitchEnvironment = <String>[
-  // Renderer selection. Impeller on Metal is the engine's default, so the
-  // value that changes anything is "software" — "metal" only forces back what
-  // an app already gets, which is what a renderer A/B's Metal arm wants to say
-  // out loud. Note the empty string never travels (see below), so an A/B arm
-  // has to name its renderer rather than leaving it unset.
+  // Engine: renderer selection. Impeller on Metal is the engine's default, so
+  // the value that changes anything is "software" — "metal" only forces back
+  // what an app already gets, which is what a renderer A/B's Metal arm wants
+  // to say out loud. Note the empty string never travels (see below), so an
+  // A/B arm has to name its renderer rather than leaving it unset.
   'FLUTTER_WATCHOS_RENDERER',
-  // "fallback" restores the engine's free-running 60 Hz timer instead of the
-  // display clock. The A/B switch behind scripts/scroll_vsync_ab.sh.
+  // Engine: "fallback" restores the engine's own 60 Hz timer, which ticks
+  // whether or not a frame is due, instead of the display clock. The A/B
+  // switch behind scripts/scroll_vsync_ab.sh.
   'FLUTTER_WATCHOS_VSYNC',
-  // "0" turns the semantics bridge off.
+  // Engine: "0" turns the semantics bridge off.
   'FLUTTER_WATCHOS_SEMANTICS',
+  // Host: "texture" selects the experimental zero-copy present path, as
+  // FlutterWatchOSPresent does in Info.plist.
+  'FLUTTER_WATCHOS_PRESENT',
+  // Host: "continuous" keeps the display clock ticking while idle, for A/B
+  // measurements.
+  'FLUTTER_WATCHOS_DISPLAY_CLOCK',
+  // Host: a number of seconds; logs the app's CPU time over each such window.
+  'FLUTTER_WATCHOS_CPU_LOG',
 ];
 
 /// The subset of [engineSwitchEnvironment] this process was given, ready to
@@ -119,6 +128,172 @@ List<String> appLaunchArguments({
   ];
 }
 
+/// Whether [argument], from stock `getIOSLaunchArguments`, never reaches a
+/// watch app.
+///
+/// - `--enable-checked-mode` and `--verify-entry-points`: no watch launch ever
+///   passed them, and entry-point checks could stop code that works today.
+/// - `--enable-impeller=true|false`: the engine turns Impeller on itself when
+///   it opens a Metal surface, and a second value would fight that choice.
+/// - `--enable-flutter-gpu`: an app opts in through `FLTEnableFlutterGPU` in
+///   its Info.plist.
+/// - `--enable-software-rendering`: it selects the software renderer through
+///   `FLUTTER_WATCHOS_RENDERER=software` instead, the switch the engine reads.
+bool isFilteredLaunchArgument(String argument) =>
+    argument == '--enable-checked-mode' ||
+    argument == '--verify-entry-points' ||
+    argument.startsWith('--enable-impeller') ||
+    argument == '--enable-flutter-gpu' ||
+    argument == '--enable-software-rendering';
+
+/// The switches [options] turn on through the environment rather than the
+/// argv: `--enable-software-rendering` becomes `FLUTTER_WATCHOS_RENDERER=software`.
+Map<String, String> launchOptionSwitches(DebuggingOptions options) => <String, String>{
+  if (options.enableSoftwareRendering) 'FLUTTER_WATCHOS_RENDERER': 'software',
+};
+
+/// Stock's launch options for a profile launch on a physical watch, as
+/// arguments after the bundle id and [appLaunchArguments]' own.
+///
+/// These are stock `getIOSLaunchArguments` for a physical device, without
+/// the flags [isFilteredLaunchArgument] names, and without the ones the watch
+/// launch sets itself: `--enable-dart-profiling` and
+/// `--disable-service-auth-codes` (always, from [appLaunchArguments]),
+/// `--vm-service-host` (its bind address depends on the relay) and
+/// `--vm-service-port` (the relay's pinned port, or `--device-vmservice-port`).
+/// So each of those appears exactly once in the argv. The values stock
+/// quotes reach the app without the quotes ([withoutStockQuotes]).
+@visibleForTesting
+List<String> physicalLaunchArguments(
+  DebuggingOptions options, {
+  String? route,
+  Map<String, Object?> platformArgs = const <String, Object?>{},
+}) => <String>[
+  for (final String argument in options.getIOSLaunchArguments(
+    EnvironmentType.physical,
+    route,
+    platformArgs,
+  ))
+    if (!isFilteredLaunchArgument(argument) &&
+        argument != '--enable-dart-profiling' &&
+        argument != '--disable-service-auth-codes' &&
+        !argument.startsWith('--vm-service-host=') &&
+        !argument.startsWith('--vm-service-port='))
+      withoutStockQuotes(argument),
+];
+
+/// The options whose value stock `getIOSLaunchArguments` wraps in literal
+/// double quotes: all four for a physical device, all but `--dart-flags` for
+/// a Simulator.
+const List<String> _quotedStockOptions = <String>[
+  '--dart-flags',
+  '--trace-to-file',
+  '--trace-allowlist',
+  '--trace-skia-allowlist',
+];
+
+/// [argument] without the double quotes stock puts around the value of the
+/// options in [_quotedStockOptions], as in `--dart-flags="--foo"`.
+///
+/// Stock adds them for ios-deploy, which passes the launch arguments as one
+/// string that is split like a shell line, quotes removed. devicectl and
+/// simctl pass each argument to the app as it is, and the engine keeps the
+/// quotes as part of the value: it would read `"--foo"` as the Dart flag,
+/// which no allowed flag matches, and stop the app, and a trace file or
+/// category name would keep its quotes. Quotes inside the value are kept.
+@visibleForTesting
+String withoutStockQuotes(String argument) {
+  for (final String option in _quotedStockOptions) {
+    final prefix = '$option="';
+    if (argument.length > prefix.length && argument.startsWith(prefix) && argument.endsWith('"')) {
+      return '$option=${argument.substring(prefix.length, argument.length - 1)}';
+    }
+  }
+  return argument;
+}
+
+/// What a debug launch on a watch Simulator passes to the app, and where it
+/// looks for the VM Service.
+@immutable
+class SimulatorLaunchOptions {
+  /// Works out the launch for [options], with the [route] and [platformArgs]
+  /// `run` passes.
+  ///
+  /// The argv is stock `getIOSLaunchArguments` for a Simulator, without the
+  /// flags [isFilteredLaunchArgument] names, and with the values stock quotes
+  /// passed without the quotes ([withoutStockQuotes]). On a Simulator the app and the
+  /// tool share one host, so `--device-vmservice-port Q` binds the VM to Q,
+  /// and wins over a host port P that would bind it too: the argv then
+  /// carries `--vm-service-port=Q` once, and [warning] says that P is
+  /// ignored. Stock passes no device port to a Simulator app, and then waits
+  /// for a port the VM never uses.
+  factory SimulatorLaunchOptions(
+    DebuggingOptions options, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) {
+    final int? devicePort = options.deviceVmServicePort;
+    final int? hostPort = options.hostVmServicePort;
+    final int? boundPort = devicePort ?? hostPort;
+    return SimulatorLaunchOptions._(
+      arguments: <String>[
+        for (final String argument in options.getIOSLaunchArguments(
+          EnvironmentType.simulator,
+          route,
+          platformArgs,
+        ))
+          if (!isFilteredLaunchArgument(argument) && !argument.startsWith('--vm-service-port='))
+            withoutStockQuotes(argument),
+        if (boundPort != null) '--vm-service-port=$boundPort',
+      ],
+      environment: launchOptionSwitches(options),
+      discoveryHostPort: devicePort == null ? hostPort : null,
+      discoveryDevicePort: devicePort,
+      warning: devicePort != null && hostPort != null && hostPort != devicePort
+          ? '--host-vmservice-port $hostPort is ignored: on the watchOS Simulator the app '
+                'shares this Mac, and --device-vmservice-port $devicePort binds its VM Service.'
+          : null,
+    );
+  }
+
+  const SimulatorLaunchOptions._({
+    required this.arguments,
+    required this.environment,
+    required this.discoveryHostPort,
+    required this.discoveryDevicePort,
+    required this.warning,
+  });
+
+  /// The arguments after `simctl launch <id> <bundle>`, before the engine
+  /// switch arguments.
+  final List<String> arguments;
+
+  /// Switches for the app's environment, before the `SIMCTL_CHILD_` prefix.
+  final Map<String, String> environment;
+
+  /// The host port for `ProtocolDiscovery`, when no device port is given.
+  final int? discoveryHostPort;
+
+  /// The only port `ProtocolDiscovery` accepts a VM Service on, if any.
+  final int? discoveryDevicePort;
+
+  /// A warning to print before the launch, if the ports conflict.
+  final String? warning;
+}
+
+/// Why a screenshot of a physical watch failed; `screenshot` prints it and
+/// exits non-zero.
+class WatchScreenshotException implements Exception {
+  /// Creates the exception with devicectl's [message].
+  const WatchScreenshotException(this.message);
+
+  /// devicectl's message, then what to check.
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// A log reader that captures logs from a physical Apple Watch via devicectl.
 class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   /// Creates a log reader for a physical watchOS device.
@@ -147,41 +322,14 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
   @override
   Stream<String> get logLines => _linesController.stream;
 
-  /// Starts streaming logs from the physical device using devicectl.
-  Future<void> startLogStream(String deviceId) async {
-    _logProcess = await globals.processManager.start(<String>[
-      'xcrun',
-      'devicectl',
-      'device',
-      'process',
-      'launch',
-      '--terminate-existing',
-      '--device',
-      deviceId,
-      '--console',
-    ]);
+  @override
+  String toString() => name;
 
-    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _processLine(line);
-    });
-
-    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _processLine(line);
-    });
-  }
-
-  /// Launches the app on device (optionally paused with --start-stopped) and
-  /// streams its console output as log lines. When `startStopped` is true the
-  /// caller attaches a debugger (lldb) to resume the process — JIT debug on a
-  /// physical watch requires this.
+  /// Launches the app on the watch and streams its console output as log
+  /// lines.
   Future<void> startLogStreamForBundle(
     String deviceId,
     String bundleId, {
-    bool startStopped = false,
     List<String> extraLaunchArguments = const <String>[],
     Map<String, String> environment = const <String, String>{},
     bool enableVmService = true,
@@ -199,7 +347,6 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
       '--terminate-existing',
       '--environment-variables',
       jsonEncode(<String, String>{'OS_ACTIVITY_DT_MODE': 'enable', ...environment}),
-      if (startStopped) '--start-stopped',
       bundleId,
       ...appLaunchArguments(
         enableVmService: enableVmService,
@@ -332,20 +479,52 @@ class WatchosPhysicalDeviceLogReader implements DeviceLogReader {
 
 /// A log reader that captures logs from a watchOS simulator app via unified
 /// logging (`xcrun simctl spawn <device> log stream --style json`).
+///
+/// As stock's Simulator reader does, it starts its `log stream` when the first
+/// listener subscribes and stops it when the last one cancels. `run` listens
+/// before `startApp` has built the app and booted the Simulator, so that first
+/// start can fail; [ensureStarted] starts the stream again after the boot.
 class WatchosSimulatorLogReader implements DeviceLogReader {
-  WatchosSimulatorLogReader(this.name);
+  /// Creates a reader for the Simulator [deviceId], named [name].
+  ///
+  /// Without a [deviceId] the reader never starts a stream; lines can still be
+  /// fed to it with [processLogLine].
+  WatchosSimulatorLogReader(this.name, {String? deviceId, Logger? logger})
+    : _deviceId = deviceId,
+      _logger = logger;
 
-  final StreamController<String> _linesController = StreamController<String>.broadcast();
+  final String? _deviceId;
+  final Logger? _logger;
+  Logger get _log => _logger ?? globals.logger;
 
+  late final _linesController = StreamController<String>.broadcast(
+    onListen: _onListen,
+    onCancel: _stop,
+  );
+
+  /// The running `log stream` process, if any.
   Process? _logProcess;
 
-  final Completer<void> _readyCompleter = Completer<void>();
+  /// A start in progress, so a second caller joins it instead of starting
+  /// another process.
+  Future<void>? _starting;
 
-  /// Completes once `simctl log stream` has emitted its `Filtering the log
-  /// data using …` preamble, i.e. it is actually live and will capture
-  /// subsequent events. Callers must await this (with a timeout) before
-  /// launching the app, otherwise the VM-service banner — printed by the
-  /// embedder within ~40ms of launch — races ahead of the stream and is lost.
+  /// Whether the current process has printed its preamble.
+  bool _live = false;
+
+  /// Whether the current stream was already restarted once after it died.
+  bool _restarted = false;
+
+  bool _disposed = false;
+
+  Completer<void> _readyCompleter = Completer<void>();
+
+  /// Completes once the current `log stream` process has emitted its
+  /// `Filtering the log data using …` preamble, i.e. it is actually live and
+  /// will capture subsequent events. Each process gets its own completer.
+  /// Callers must await this (with a timeout) before launching the app,
+  /// otherwise the VM Service line, printed by the embedder within about 40 ms
+  /// of launch, races ahead of the stream and is lost.
   Future<void> get ready => _readyCompleter.future;
 
   @override
@@ -354,62 +533,139 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
   @override
   Stream<String> get logLines => _linesController.stream;
 
-  /// Starts streaming unified logs from the simulator, filtered for the app.
-  Future<void> startLogStream(String deviceId) async {
-    // Mirror the class of logs `flutter run` surfaces on iOS (see
-    // launchDeviceUnifiedLogging in flutter_tools' ios/simulators.dart), adapted
-    // to the watchOS embedder. iOS keys off `senderImagePath ENDSWITH "/Flutter"`
-    // because the framework logs via os_log from the Flutter.framework image. The
-    // watchOS embedder instead routes engine + Dart logs through
-    // `log_message_callback` → `NSLog("[flutter:<tag>] ...")` inside the watch
-    // app's `Runner` process (sender = Foundation), so we match the flutter tag
-    // in the message text, plus Swift fatal/assertion errors and anything the
-    // Runner binary itself emits — while excluding the watchOS/UIKit system
-    // spam that shares the `Runner` process. Same structure and noise filters as
-    // iOS.
-    const predicate =
-        'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND ( '
-        'eventMessage CONTAINS "[flutter:" '
-        'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
-        'OR processImageUUID == senderImageUUID '
-        ') AND NOT(eventMessage CONTAINS " libxpc.dylib ") '
-        'AND NOT(eventMessage BEGINSWITH "assertion failed: ")';
+  @override
+  String toString() => name;
 
-    _logProcess = await globals.processManager.start(<String>[
-      'xcrun',
-      'simctl',
-      'spawn',
-      deviceId,
-      'log',
-      'stream',
-      '--style',
-      'json',
-      '--predicate',
-      predicate,
-    ]);
+  /// The unified-log predicate: stock's (`launchDeviceUnifiedLogging` in
+  /// flutter_tools' `ios/simulators.dart`), with the watch app's process name
+  /// and without stock's three UIScene clauses, which a watch app never logs,
+  /// plus the `[flutter:` clause.
+  ///
+  /// Measured on 2026-09-29: Dart output reaches the unified log through the
+  /// embedder's `NSLog("[flutter:<tag>] …")` in the `Runner` process, and
+  /// engine lines such as `Unhandled Exception` come untagged from
+  /// `Flutter.framework/Flutter`, which the sender clause keeps. The sender of
+  /// the host module's own `NSLog` lines (app code, in `Runner.debug.dylib`
+  /// in a debug build) has not been measured, and no clause names it yet.
+  @visibleForTesting
+  static const predicate =
+      'eventType = logEvent AND processImagePath ENDSWITH "/Runner" AND '
+      '(senderImagePath ENDSWITH "/Flutter" '
+      'OR senderImagePath ENDSWITH "/libswiftCore.dylib" '
+      'OR processImageUUID == senderImageUUID '
+      'OR eventMessage CONTAINS "[flutter:") AND '
+      'NOT(eventMessage CONTAINS ": could not find icon for representation -> com.apple.") AND '
+      'NOT(eventMessage BEGINSWITH "assertion failed: ") AND '
+      'NOT(eventMessage CONTAINS " libxpc.dylib ")';
 
-    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _markReadyIfPreamble(line);
-      _onUnifiedLoggingLine(line);
-    });
-
-    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
-      String line,
-    ) {
-      _markReadyIfPreamble(line);
-      _onUnifiedLoggingLine(line);
-    });
-  }
-
-  void _markReadyIfPreamble(String line) {
-    if (!_readyCompleter.isCompleted && line.contains('Filtering the log data')) {
-      _readyCompleter.complete();
+  void _onListen() {
+    if (_deviceId != null) {
+      unawaited(_startIfIdle());
     }
   }
 
-  static final RegExp _eventMessageRegex = RegExp(r'"eventMessage"\s*:\s*(".*?")');
+  /// Starts the `log stream` unless one is running or starting, and re-arms
+  /// [ready] for the new process. `startApp` calls this after the boot.
+  Future<void> ensureStarted() => _startIfIdle();
+
+  Future<void> _startIfIdle() {
+    if (_disposed || _deviceId == null) {
+      return Future<void>.value();
+    }
+    if (_starting case final Future<void> starting) {
+      return starting;
+    }
+    if (_logProcess != null) {
+      return Future<void>.value();
+    }
+    _restarted = false;
+    return _starting = _launch().whenComplete(() => _starting = null);
+  }
+
+  Future<void> _launch() async {
+    if (_readyCompleter.isCompleted) {
+      _readyCompleter = Completer<void>();
+    }
+    _live = false;
+    final Process process;
+    try {
+      process = await globals.processManager.start(<String>[
+        'xcrun',
+        'simctl',
+        'spawn',
+        _deviceId!,
+        'log',
+        'stream',
+        '--style',
+        'json',
+        '--predicate',
+        predicate,
+      ]);
+    } on Exception catch (error) {
+      _log.printTrace('Could not start the Simulator log stream: $error');
+      return;
+    }
+    if (_disposed || !_linesController.hasListener) {
+      // Everyone left while the process was starting.
+      process.kill();
+      return;
+    }
+    _logProcess = process;
+    process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLine);
+    process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(_onLine);
+    unawaited(process.exitCode.then((int code) => _onExit(process, code)));
+  }
+
+  void _onLine(String line) {
+    if (!_live && line.contains('Filtering the log data')) {
+      _live = true;
+      if (!_readyCompleter.isCompleted) {
+        _readyCompleter.complete();
+      }
+    }
+    _onUnifiedLoggingLine(line);
+  }
+
+  void _onExit(Process process, int code) {
+    if (!identical(process, _logProcess)) {
+      return; // Stopped on purpose.
+    }
+    _logProcess = null;
+    final bool wasLive = _live;
+    _live = false;
+    if (_disposed || !_linesController.hasListener) {
+      return;
+    }
+    if (!wasLive) {
+      // A Simulator that is still shut down refuses `spawn`. The stream
+      // starts again once startApp has booted it.
+      _log.printTrace('The Simulator log stream ended before it went live (exit $code).');
+      return;
+    }
+    if (_restarted) {
+      _log.printTrace('The Simulator log stream ended again (exit $code); not restarting it.');
+      // End the lines, as stock's reader does when its process ends, so a
+      // listener such as `logs` stops instead of waiting for lines that will
+      // not come.
+      unawaited(_linesController.close());
+      return;
+    }
+    _restarted = true;
+    _log.printTrace('The Simulator log stream ended (exit $code); restarting it once.');
+    _starting = _launch().whenComplete(() => _starting = null);
+  }
+
+  void _stop() {
+    final Process? process = _logProcess;
+    _logProcess = null;
+    _live = false;
+    process?.kill();
+  }
+
+  // Greedy, as stock's (`simulators.dart`): `log stream --style json` prints
+  // one field per line, so the message runs to the line's last quote, and an
+  // escaped quote inside it is not the end.
+  static final RegExp _eventMessageRegex = RegExp(r'.*"eventMessage"\s*:\s*(".*")');
 
   /// Processes a single line from the unified log stream.
   @visibleForTesting
@@ -441,7 +697,8 @@ class WatchosSimulatorLogReader implements DeviceLogReader {
 
   @override
   void dispose() {
-    _logProcess?.kill();
+    _disposed = true;
+    _stop();
     if (!_linesController.isClosed) {
       _linesController.close();
     }
@@ -458,6 +715,8 @@ class WatchosDevice extends Device {
     required this.logger,
     required this.isSimulator,
     this.osVersion,
+    this.coreDeviceCapabilities = const <String>{},
+    this.isShutDown = false,
   }) : super(
          category: Category.mobile,
          platformType: PlatformType.custom,
@@ -474,6 +733,19 @@ class WatchosDevice extends Device {
   /// `watchOS 11.0` (simulator).
   final String? osVersion;
 
+  /// The CoreDevice feature identifiers `devicectl list devices` lists for a
+  /// physical watch, such as [captureScreenshotCapability]. Empty for a
+  /// Simulator, and for a watch that is not connected.
+  final Set<String> coreDeviceCapabilities;
+
+  /// Whether this Simulator was shut down when it was discovered. Only a
+  /// Simulator that `-d` names by its exact UDID is listed shut down; `run`
+  /// boots it, while `logs` has nothing to read from it.
+  final bool isShutDown;
+
+  /// The CoreDevice capability behind `devicectl device capture screenshot`.
+  static const captureScreenshotCapability = 'com.apple.coredevice.feature.capturescreenshot';
+
   /// DDS has to bind on the same address family as the watch's Dart VM Service,
   /// which `DebuggingOptions.ipv6` (i.e. `--ipv6`) does not know about.
   @override
@@ -481,29 +753,10 @@ class WatchosDevice extends Device {
   late final DartDevelopmentService _dds = WatchosDartDevelopmentService(logger: logger);
 
   DeviceLogReader? _logReader;
-  LLDB? _lldb;
-  LLDBLogForwarder? _lldbLogForwarder;
 
-  /// What LLDB (since Flutter 3.47.4) reports against when an attach takes
-  /// longer than a minute: the iOS DeviceSupport symbols for this device. A
-  /// paired watch has no such folder of its own, so this carries the device id
-  /// and leaves model, OS version and architecture unknown — the warning then
-  /// stays generic instead of naming a folder that cannot exist.
-  IOSDeviceSupport? _deviceSupport;
-  IOSDeviceSupport get _lldbDeviceSupport => _deviceSupport ??= IOSDeviceSupport(
-    logger: logger,
-    processUtils: globals.processUtils,
-    xcode: globals.xcode,
-    deviceId: id,
-    homeDirectory: globals.fsUtils.homeDirPath == null
-        ? null
-        : globals.fs.directory(globals.fsUtils.homeDirPath),
-    modelCode: null,
-    operatingSystemVersion: null,
-    cpuArchitectureString: null,
-  );
-
-  XcodeDebug? _xcodeDebug;
+  /// startApp's own subscription to the Simulator log stream, held from the
+  /// launch until the app is stopped or the device is disposed.
+  StreamSubscription<String>? _launchHold;
 
   /// Mac half of the VM Service relay for a profile run on a physical watch.
   WatchosVmRelay? _vmRelay;
@@ -515,16 +768,6 @@ class WatchosDevice extends Device {
 
   /// Port the VM Service is pinned to on the watch for this run.
   int _deviceVmServicePort = 0;
-
-  /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
-  /// tunnel before giving up. Apple Watch has no USB data port, so the lldb
-  /// attach always goes through the network tunnel. Override with
-  /// `FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS` for slow networks.
-  Duration get _lldbAttachTimeout {
-    final String? raw = globals.platform.environment['FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
-    final int? seconds = raw == null ? null : int.tryParse(raw);
-    return Duration(seconds: seconds != null && seconds > 0 ? seconds : 180);
-  }
 
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
@@ -541,14 +784,43 @@ class WatchosDevice extends Device {
   @override
   Future<bool> get isLocalEmulator async => isSimulator;
 
+  /// On the Simulator the app's container is a directory on this Mac, so the
+  /// files a hot reload or restart needs are written straight into it, as
+  /// stock Flutter does for the iOS Simulator. Written through the VM Service
+  /// instead, they depend on the VM's file system entry, which an `attach` to
+  /// the same app deletes when it ends, and the `run` session's next reload
+  /// then finds no files. A physical watch runs AOT builds only and takes no
+  /// such files.
+  @override
+  DevFSWriter? createDevFSWriter(ApplicationPackage? app, String? userIdentifier) =>
+      isSimulator ? LocalDevFSWriter(fileSystem: globals.fs) : null;
+
   @override
   Future<String?> get emulatorId async => isSimulator ? id : null;
 
   @override
   Future<String> get sdkNameAndVersion async => osVersion ?? 'watchOS';
 
+  /// The modes this target can run: debug only on the Simulator, whose
+  /// engine is JIT-only (as stock iOS Simulators), and profile or release on
+  /// a physical watch, which has no JIT engine.
   @override
-  bool supportsRuntimeMode(BuildMode buildMode) => buildMode != BuildMode.jitRelease;
+  bool supportsRuntimeMode(BuildMode buildMode) =>
+      watchosTargetRunsMode(buildMode, simulator: isSimulator);
+
+  /// The guidance for a [mode] this target cannot run, or null when it can.
+  ///
+  /// It is `run`'s guidance from [watchosModeRefusal], the one source of the
+  /// mode guidance: each offered command alone on its line, with no comment.
+  /// `run`, `drive` and `attach` refuse such a mode in validateCommand, before
+  /// they build; [startApp] prints this for a caller that starts the app
+  /// directly instead.
+  String? unsupportedModeGuidance(BuildMode mode) => watchosModeRefusal(
+    command: WatchosModeCommand.run,
+    mode: mode,
+    simulator: isSimulator,
+    deviceId: id,
+  );
 
   @override
   Future<bool> isAppInstalled(covariant ApplicationPackage app, {String? userIdentifier}) async =>
@@ -672,37 +944,24 @@ class WatchosDevice extends Device {
     String? userIdentifier,
   }) async {
     // Mode/target contradictions fail here, with guidance, before anything is
-    // built: debug needs the JIT engine, which exists only for the Simulator
-    // (the watchOS device SDK removes the Mach APIs the Dart JIT VM relies
-    // on), and the Simulator engine is JIT-only, so AOT modes need a physical
-    // watch. Without this check the engine lookup fails mid-build with a bare
-    // "libflutter_engine.dylib not found — run precache", which cannot help.
-    // `build watchos` enforces the same rules; `run` must too, because the
-    // daemon (IDE) path skips RunCommand's supportsRuntimeMode check.
-    if (!prebuiltApplication) {
-      final BuildMode mode = debuggingOptions.buildInfo.mode;
-      if (!isSimulator && mode == BuildMode.debug) {
-        throwToolExit(
-          'Debug mode is not supported on a physical Apple Watch: it needs a '
-          'JIT engine, which cannot be built for watchOS (the device SDK '
-          'removes the Mach APIs the Dart JIT VM relies on).\n'
-          'Use one of:\n'
-          '  flutter-watchos run -d $id --profile   # AOT, with logging and DevTools\n'
-          '  flutter-watchos run -d $id --release   # AOT, fastest\n'
-          'For hot reload and fast iteration, run on the watchOS Simulator, '
-          'where debug (JIT) mode works.',
-        );
-      }
-      if (isSimulator && mode != BuildMode.debug) {
-        throwToolExit(
-          '--${mode.cliName} is not supported on the watchOS Simulator: its '
-          'engine is JIT-only, so Simulator runs are always debug. AOT '
-          '(profile/release) runs target a physical watch.\n'
-          'Use one of:\n'
-          '  flutter-watchos run -d $id             # debug, on the Simulator\n'
-          '  flutter-watchos run -d <watch> --${mode.cliName}',
-        );
-      }
+    // built or installed: debug needs the JIT engine, which exists only for
+    // the Simulator (the watchOS device SDK removes the Mach APIs the Dart JIT
+    // VM relies on), and the Simulator engine is JIT-only, so AOT modes need a
+    // physical watch. Without this check the engine lookup fails mid-build
+    // with a bare "libflutter_engine.dylib not found — run precache", which
+    // cannot help. `run`, `drive` and `attach` refuse earlier, and `run` and
+    // `drive` refuse a prebuilt app outright; the daemon's app.start checks
+    // supportsRuntimeMode itself.
+    // This covers a caller that starts the app directly: stock's integration
+    // test device, behind `test integration_test -d <watch>`, which always
+    // runs debug.
+    //
+    // The guidance is printed and the launch fails, rather than a tool exit:
+    // the runners print an exception from startApp with its stack trace.
+    final String? refusal = unsupportedModeGuidance(debuggingOptions.buildInfo.mode);
+    if (refusal != null) {
+      logger.printError(refusal);
+      return LaunchResult.failed();
     }
 
     final FlutterProject project = FlutterProject.current();
@@ -724,17 +983,31 @@ class WatchosDevice extends Device {
     }
 
     if (isSimulator) {
-      return _startAppOnSimulator(project, package, debuggingOptions);
+      return _startAppOnSimulator(
+        project,
+        package,
+        debuggingOptions,
+        route: route,
+        platformArgs: platformArgs,
+      );
     } else {
-      return _startAppOnDevice(project, package, debuggingOptions);
+      return _startAppOnDevice(
+        project,
+        package,
+        debuggingOptions,
+        route: route,
+        platformArgs: platformArgs,
+      );
     }
   }
 
   Future<LaunchResult> _startAppOnSimulator(
     FlutterProject project,
     ApplicationPackage? package,
-    DebuggingOptions debuggingOptions,
-  ) async {
+    DebuggingOptions debuggingOptions, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) async {
     final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
@@ -749,9 +1022,9 @@ class WatchosDevice extends Device {
       return LaunchResult.failed();
     }
 
-    // Boot simulator and open Simulator.app window.
+    // Boot the Simulator and open the window that shows it.
     await globals.processUtils.run(<String>['xcrun', 'simctl', 'boot', id]);
-    await globals.processUtils.run(<String>['open', '-a', 'Simulator']);
+    await _openSimulatorWindow();
 
     logger.printStatus('Installing and launching...');
     logger.printTrace('Installing on Apple Watch simulator ($id)...');
@@ -775,18 +1048,49 @@ class WatchosDevice extends Device {
     // VM-service banner that the log stream below is waiting to capture.
     await globals.processUtils.run(<String>['xcrun', 'simctl', 'terminate', id, bundleId]);
 
-    final logReader = (_logReader ??= WatchosSimulatorLogReader(name)) as WatchosSimulatorLogReader;
-    await logReader.startLogStream(id);
+    final logReader = await getLogReader() as WatchosSimulatorLogReader;
+    // Hold the stream from here until the app is stopped, so that neither
+    // discovery's cancel below nor a late listener such as drive's ever meets
+    // a stopped stream.
+    _launchHold ??= logReader.logLines.listen(null);
+    // A reader that started on run's early listen, before the boot, may have
+    // failed; start it again now. A live stream is reused.
+    await logReader.ensureStarted();
 
     // Wait until the log stream is actually live before launching, otherwise the
     // embedder prints the VM-service URI (~40ms after launch) before the stream
     // is listening and protocol discovery times out.
+    var streamWentLive = true;
     await logReader.ready.timeout(
       const Duration(seconds: 10),
       onTimeout: () {
+        streamWentLive = false;
         logger.printTrace('Timed out waiting for simctl log stream to go live; launching anyway.');
       },
     );
+
+    final launchOptions = SimulatorLaunchOptions(
+      debuggingOptions,
+      route: route,
+      platformArgs: platformArgs,
+    );
+    if (launchOptions.warning case final String warning) {
+      logger.printWarning(warning);
+    }
+
+    // Listen for the VM Service line before the launch, as stock does, so a
+    // line printed while simctl is still returning is not missed. The URI is
+    // used as the app prints it: with ipv6 set, discovery would turn its
+    // 127.0.0.1 into ::1, where the app, which binds IPv4, does not listen.
+    final ProtocolDiscovery? discovery = debuggingOptions.debuggingEnabled
+        ? ProtocolDiscovery.vmService(
+            logReader,
+            ipv6: false,
+            hostPort: launchOptions.discoveryHostPort,
+            devicePort: launchOptions.discoveryDevicePort,
+            logger: logger,
+          )
+        : null;
 
     final RunResult launchResult = await globals.processUtils.run(
       <String>[
@@ -795,25 +1099,33 @@ class WatchosDevice extends Device {
         'launch',
         id,
         bundleId,
+        ...launchOptions.arguments,
         ...engineSwitchArguments(),
       ],
       // simctl gives the launched app any variable it sees prefixed
       // SIMCTL_CHILD_, which is how the same switch reaches the simulator that
       // devicectl's --environment-variables carries to a watch.
       environment: <String, String>{
-        for (final MapEntry<String, String> e in engineSwitchesFromEnvironment().entries)
+        for (final MapEntry<String, String> e in <String, String>{
+          ...engineSwitchesFromEnvironment(),
+          ...launchOptions.environment,
+        }.entries)
           'SIMCTL_CHILD_${e.key}': e.value,
       },
     );
     if (launchResult.exitCode != 0) {
+      await discovery?.cancel();
+      await _stopLaunchLogStream();
       logger.printError('simctl launch failed: ${launchResult.stderr}');
       return LaunchResult.failed();
     }
-
-    final discovery = ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger);
+    if (discovery == null) {
+      // Nothing to connect to, so nothing to wait for.
+      return LaunchResult.succeeded();
+    }
 
     final Uri? vmServiceUri = await discovery.uri.timeout(
-      const Duration(seconds: 30),
+      simulatorVmServiceTimeout,
       onTimeout: () => null,
     );
     await discovery.cancel();
@@ -823,14 +1135,71 @@ class WatchosDevice extends Device {
       return LaunchResult.succeeded(vmServiceUri: vmServiceUri);
     }
 
-    return LaunchResult.succeeded();
+    // A debug launch without a VM Service has nothing for run, drive or
+    // attach to connect to. Fail, and say what was seen, rather than report
+    // a start that callers then trip over.
+    final String? pid = RegExp(r':\s*(\d+)\s*$').firstMatch(launchResult.stdout.trim())?.group(1);
+    bool? running;
+    if (pid != null) {
+      final RunResult ps = await globals.processUtils.run(<String>['ps', '-p', pid, '-o', 'pid=']);
+      running = ps.exitCode == 0;
+    }
+    logger.printError(
+      'The app printed no Dart VM Service address within '
+      '${simulatorVmServiceTimeout.inSeconds} seconds, so there is nothing to connect to. '
+      '${streamWentLive ? 'The Simulator log stream was live before the launch' : 'The Simulator log stream never went live, so the address may have been missed'}; '
+      '${switch (running) {
+        null => 'whether the app is still running is not known',
+        true => 'the app is still running (pid $pid)',
+        false => 'the app is no longer running (pid $pid): it may have crashed at startup',
+      }}. Run with -v to see the log stream.',
+    );
+    await _stopLaunchLogStream();
+    return LaunchResult.failed();
+  }
+
+  /// Ends startApp's hold on the Simulator log stream and stops the reader,
+  /// after a launch that failed. Nothing else would: no app is running for
+  /// [stopApp] to stop, so the `log stream` process would outlive the tool.
+  /// A later launch gets a new reader.
+  Future<void> _stopLaunchLogStream() async {
+    await _launchHold?.cancel();
+    _launchHold = null;
+    _logReader?.dispose();
+    _logReader = null;
+  }
+
+  /// How long a debug Simulator launch waits for the app's VM Service line
+  /// before it fails. Stock waits with no limit.
+  static const simulatorVmServiceTimeout = Duration(seconds: 60);
+
+  /// Opens the selected Xcode's Simulator viewer: Device Hub with Xcode 27,
+  /// Simulator.app with Xcode 26 (stock `Xcode.getSimulatorPath`, which
+  /// follows `xcode-select` and `DEVELOPER_DIR`). The window is a
+  /// convenience, so when it cannot open, one hint is printed and the launch
+  /// goes on; stock `emulators --launch` stops instead.
+  Future<void> _openSimulatorWindow() async {
+    final String? path = globals.xcode?.getSimulatorPath();
+    if (path != null) {
+      final RunResult result = await globals.processUtils.run(<String>['open', '-a', path]);
+      if (result.exitCode == 0) {
+        return;
+      }
+      logger.printTrace('open -a $path failed: ${result.stderr}');
+    }
+    logger.printStatus(
+      'Could not open the Simulator window. The app still installs and runs; to see it, '
+      'open Device Hub (Xcode 27) or Simulator (Xcode 26) from Xcode.',
+    );
   }
 
   Future<LaunchResult> _startAppOnDevice(
     FlutterProject project,
     ApplicationPackage? package,
-    DebuggingOptions debuggingOptions,
-  ) async {
+    DebuggingOptions debuggingOptions, {
+    String? route,
+    Map<String, Object?> platformArgs = const <String, Object?>{},
+  }) async {
     final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
@@ -865,154 +1234,51 @@ class WatchosDevice extends Device {
       return LaunchResult.failed();
     }
 
-    // Debug builds need JIT, which a physical watch only allows when a debugger
-    // is attached. Launch `--start-stopped`, then attach lldb and resume.
-    final bool needsDebugger = debuggingOptions.buildInfo.isDebug;
     logger.printTrace('Launching $bundleId on Apple Watch...');
     final logReader =
         (_logReader ??= WatchosPhysicalDeviceLogReader(name)) as WatchosPhysicalDeviceLogReader;
 
+    // A release engine has no Dart VM Service, and a release app should not
+    // be launched asking for one, nor with any of stock's debugging options.
+    // A launch with debugging off asks for none either.
+    final bool enableVmService =
+        debuggingOptions.buildInfo.mode != BuildMode.release && debuggingOptions.debuggingEnabled;
     // Live DevTools on a physical watch rides the relay: the app cannot be
     // dialled into, but it can dial out over URLSession. Start the Mac half
     // first so the bridge has something to reach the moment the app launches.
-    final wantsRelay = debuggingOptions.buildInfo.mode == BuildMode.profile;
+    final bool wantsRelay = enableVmService && debuggingOptions.buildInfo.mode == BuildMode.profile;
     var relayEnvironment = <String, String>{};
     if (wantsRelay) {
-      relayEnvironment = await _startVmRelay();
+      relayEnvironment = await _startVmRelay(debuggingOptions.deviceVmServicePort);
     }
+    // Pin the port so the in-app bridge knows where the VM Service is without
+    // having to discover it; --device-vmservice-port chooses the pinned port.
+    final int? vmServicePort = relayEnvironment.isNotEmpty
+        ? _deviceVmServicePort
+        : debuggingOptions.deviceVmServicePort;
 
     await logReader.startLogStreamForBundle(
       id,
       bundleId,
-      startStopped: needsDebugger,
       extraLaunchArguments: <String>[
-        // Pin the port so the in-app bridge knows where the VM Service is
-        // without having to discover it.
-        if (relayEnvironment.isNotEmpty) '--vm-service-port=$_deviceVmServicePort',
+        if (enableVmService) ...<String>[
+          ...physicalLaunchArguments(debuggingOptions, route: route, platformArgs: platformArgs),
+          if (vmServicePort != null) '--vm-service-port=$vmServicePort',
+        ],
         ...engineSwitchArguments(),
       ],
-      environment: <String, String>{...relayEnvironment, ...engineSwitchesFromEnvironment()},
-      // A release engine has no Dart VM Service, and a release app should not
-      // be launched asking for one.
-      enableVmService: debuggingOptions.buildInfo.mode != BuildMode.release,
+      environment: <String, String>{
+        ...relayEnvironment,
+        ...engineSwitchesFromEnvironment(),
+        ...launchOptionSwitches(debuggingOptions),
+      },
+      enableVmService: enableVmService,
     );
 
-    if (needsDebugger) {
-      // Path 1: lldb (fast when it works). Over a wireless tunnel the attach
-      // can stall or drop the CoreDevice connection.
-      var attached = false;
-      final int? pid = await _findAppPid(id, bundleId, installUrl: installUrl);
-      // Since 3.47 LLDB shells out via `xcrun`, which it gets from the Xcode
-      // project interpreter. Without it, skip straight to the Xcode fallback.
-      final XcodeProjectInterpreter? xcodeProjectInterpreter = globals.xcodeProjectInterpreter;
-      if (pid != null && xcodeProjectInterpreter != null) {
-        logger.printTrace('Attaching lldb to pid $pid for JIT debugging...');
-        final LLDBLogForwarder lldbForwarder = _lldbLogForwarder ??= LLDBLogForwarder();
-        lldbForwarder.logLines.listen((String line) {
-          logger.printTrace('[lldb] $line');
-        });
-        final LLDB lldb = _lldb ??= LLDB(
-          logger: logger,
-          processUtils: globals.processUtils,
-          xcodeProjectInterpreter: xcodeProjectInterpreter,
-          // Required since Flutter 3.47.5. Null keeps off the manual stop
-          // handling 3.47.5 turns on for debug on a device at 27.0 or later,
-          // an iOS workaround never tried on a watch. It does not keep
-          // 3.47.4's commands: the JIT breakpoint is now set with
-          // `--auto-continue true`, where 3.47.4's hook returned False. Only a
-          // prebuilt debug launch gets here: the mode check at the top of
-          // startApp is skipped for prebuilt apps.
-          deviceVersion: null,
-        );
-        final Duration timeout = _lldbAttachTimeout;
-        attached = await lldb
-            .attachAndStart(
-              deviceId: id,
-              appProcessId: pid,
-              lldbLogForwarder: lldbForwarder,
-              mode: debuggingOptions.buildInfo.mode,
-              deviceSupport: _lldbDeviceSupport,
-            )
-            .timeout(
-              timeout,
-              onTimeout: () {
-                logger.printTrace(
-                  'lldb attach timed out after ${timeout.inSeconds}s; falling back.',
-                );
-                return false;
-              },
-            );
-      }
-
-      if (!attached) {
-        // Path 2: Xcode debugger fallback — the same path stock Flutter uses
-        // for iOS Core Devices, and the mechanism Xcode itself uses to reliably
-        // debug a wirelessly-paired device.
-        logger.printStatus(
-          'lldb debugging did not attach — falling back to the Xcode debugger. '
-          'You may be prompted to allow controlling Xcode '
-          '(Settings ▸ Privacy & Security ▸ Automation).',
-        );
-        await _teardownDeviceLaunch();
-        final bool xcodeStarted = await _launchViaXcodeDebugger(
-          project: project,
-          debuggingOptions: debuggingOptions,
-        );
-        if (!xcodeStarted) {
-          logger.printError(
-            'Could not attach a debugger to the app on this Apple Watch, so the '
-            'debug session could not start (the app may briefly appear on the '
-            'watch and then exit — watchOS debug mode requires an attached '
-            'debugger).\n'
-            '\n'
-            'Apple Watch debugging is wireless-only and depends on the CoreDevice '
-            'tunnel. Things to try, in order:\n'
-            '  1. Restart the Apple Watch to reset the tunnel, then run again — a '
-            'cold/stale tunnel is the most common cause.\n'
-            '  2. Make sure the Apple Watch (via its paired iPhone) and this Mac '
-            'are on the same Wi-Fi/LAN, and that the Mac has Local Network '
-            'permission (System Settings ▸ Privacy & Security ▸ Local Network).\n'
-            '  3. Re-run — the lldb attach over the tunnel can be slow; it is '
-            'given ${_lldbAttachTimeout.inSeconds}s (override with '
-            'FLUTTER_WATCHOS_LLDB_ATTACH_TIMEOUT_SECONDS).\n'
-            '  4. For fast debug iteration without the device, use the watchOS '
-            'simulator (JIT works there without a debugger).',
-          );
-          return LaunchResult.failed();
-        }
-        // IPv4 first, then IPv6 — a wireless watch often publishes only AAAA
-        // records, and an IPv4-only query throws rather than returning null.
-        Uri? xcodeUri;
-        for (final ipv6 in <bool>[false, true]) {
-          try {
-            xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
-              bundleId,
-              this,
-              usesIpv6: ipv6,
-              useDeviceIPAsHost: true,
-              // Halved so two queries keep the original 60s budget.
-              timeout: const Duration(seconds: 30),
-            );
-          } on Object catch (e) {
-            logger.printTrace('mDNS ${ipv6 ? 'IPv6' : 'IPv4'} VM Service lookup failed: $e');
-          }
-          if (xcodeUri != null) {
-            break;
-          }
-        }
-        if (xcodeUri != null) {
-          logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
-          return LaunchResult.succeeded(vmServiceUri: xcodeUri);
-        }
-        logger.printWarning(
-          'App launched via Xcode, but its Dart VM Service was not found over '
-          'mDNS within 60s — hot reload, hot restart, and DevTools will be '
-          'unavailable. Check that this Mac has Local Network permission '
-          '(System Settings ▸ Privacy & Security ▸ Local Network) and that the '
-          'Apple Watch is on the same network.',
-        );
-        return LaunchResult.succeeded();
-      }
+    // Without a VM Service there is nothing to wait for: the app is running,
+    // and its console streams to this Mac.
+    if (!enableVmService) {
+      return LaunchResult.succeeded();
     }
 
     // With the relay up, the Mac-reachable VM Service *is* the relay: it speaks
@@ -1151,165 +1417,6 @@ class WatchosDevice extends Device {
     return null;
   }
 
-  /// Tears down the in-flight devicectl `--console` launch and lldb session so
-  /// the Xcode debugger can take the device over cleanly.
-  Future<void> _teardownDeviceLaunch() async {
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
-    _logReader?.dispose();
-    _logReader = null;
-  }
-
-  /// Launches + debugs the app through Xcode (AppleScript automation), mirroring
-  /// stock Flutter's iOS Core Device Xcode fallback. Xcode reliably establishes
-  /// the debugserver connection to a wirelessly-paired device.
-  Future<bool> _launchViaXcodeDebugger({
-    required FlutterProject project,
-    required DebuggingOptions debuggingOptions,
-  }) async {
-    final Directory watchosDir = project.directory.childDirectory('watchos');
-    final Directory workspace = watchosDir.childDirectory('Runner.xcworkspace');
-    final Directory xcodeproj = watchosDir.childDirectory('Runner.xcodeproj');
-    if (!workspace.existsSync()) {
-      logger.printError(
-        'Xcode debugger fallback unavailable: ${workspace.path} not found. '
-        'Run the app once so CocoaPods generates the workspace.',
-      );
-      return false;
-    }
-
-    final Xcode? xcode = globals.xcode;
-    if (xcode == null) {
-      logger.printError(
-        'Xcode is required for the wireless debug fallback but is not selected.\n'
-        'Open Xcode once, or run '
-        '`sudo xcode-select -s /Applications/Xcode.app`.',
-      );
-      return false;
-    }
-
-    final xcodeDebug = XcodeDebug(
-      logger: logger,
-      processManager: globals.processManager,
-      xcode: xcode,
-      fileSystem: globals.fs,
-    );
-    _xcodeDebug = xcodeDebug;
-
-    final File schemeFile = xcodeproj
-        .childDirectory('xcshareddata')
-        .childDirectory('xcschemes')
-        .childFile('Runner.xcscheme');
-    if (schemeFile.existsSync()) {
-      try {
-        xcodeDebug.ensureXcodeDebuggerLaunchAction(schemeFile);
-      } on Object catch (e) {
-        logger.printError(
-          'Could not prepare the Runner scheme for debugging: $e\n'
-          'Open watchos/Runner.xcodeproj in Xcode and make sure the Runner '
-          "scheme's Run action uses the LLDB debugger.",
-        );
-        return false;
-      }
-    }
-
-    final List<String> launchArguments = debuggingOptions.getIOSLaunchArguments(
-      EnvironmentType.physical,
-      null,
-      const <String, Object?>{},
-      interfaceType: DeviceConnectionInterface.wireless,
-    )..removeWhere((String a) => a == '--enable-checked-mode' || a == '--verify-entry-points');
-    for (final flag in <String>[
-      // Dual-stack: see the same flag in startLogStreamForBundle.
-      '--vm-service-host=::0',
-      '--disable-service-auth-codes',
-      '--enable-dart-profiling',
-    ]) {
-      if (!launchArguments.contains(flag)) {
-        launchArguments.add(flag);
-      }
-    }
-
-    final debugProject = XcodeDebugProject(
-      scheme: 'Runner',
-      xcodeWorkspace: workspace,
-      xcodeProject: xcodeproj,
-      hostAppProjectName: 'Runner',
-      verboseLogging: logger.isVerbose,
-    );
-
-    final String? resolvedUdid = await _resolveDeviceUdid(id);
-    if (resolvedUdid == null) {
-      logger.printTrace(
-        'Could not resolve a hardware UDID; passing the CoreDevice id "$id" to '
-        'Xcode. If Xcode reports the device cannot be found, this is why.',
-      );
-    }
-    final String xcodeDeviceId = resolvedUdid ?? id;
-
-    return xcodeDebug.debugApp(
-      project: debugProject,
-      deviceId: xcodeDeviceId,
-      launchArguments: launchArguments,
-    );
-  }
-
-  /// Resolves the device's hardware UDID from its CoreDevice identifier.
-  Future<String?> _resolveDeviceUdid(String deviceId) async {
-    final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_udid.');
-    try {
-      final File out = tmp.childFile('info.json');
-      final RunResult r = await globals.processUtils.run(<String>[
-        'xcrun',
-        'devicectl',
-        'device',
-        'info',
-        'details',
-        '--device',
-        deviceId,
-        '--json-output',
-        out.path,
-      ]);
-      if (r.exitCode != 0 || !out.existsSync()) {
-        logger.printTrace(
-          'devicectl UDID lookup failed (exit ${r.exitCode}); '
-          'falling back to the raw device id. stderr: ${r.stderr}',
-        );
-        return null;
-      }
-      final String? udid = parseDeviceUdid(out.readAsStringSync());
-      if (udid == null) {
-        logger.printTrace(
-          'devicectl returned 0 but no result.hardwareProperties.udid was '
-          'found (JSON shape may have changed); falling back to the raw id.',
-        );
-      }
-      return udid;
-    } on Object catch (e) {
-      logger.printTrace('Failed to resolve device UDID: $e');
-      return null;
-    } finally {
-      tmp.deleteSync(recursive: true);
-    }
-  }
-
-  /// Extracts the hardware UDID from `devicectl device info details` JSON.
-  static String? parseDeviceUdid(String jsonOutput) {
-    try {
-      final dynamic decoded = jsonDecode(jsonOutput);
-      final dynamic result = (decoded is Map) ? decoded['result'] : null;
-      final dynamic hw = (result is Map) ? result['hardwareProperties'] : null;
-      if (hw is Map && hw['udid'] is String) {
-        return hw['udid'] as String;
-      }
-    } on FormatException {
-      return null;
-    }
-    return null;
-  }
-
   /// Extracts a Mac-reachable address for [deviceId] from
   /// `devicectl list devices --json-output`.
   ///
@@ -1409,117 +1516,6 @@ class WatchosDevice extends Device {
         return null;
       }
       return parseDeviceAddress(out.readAsStringSync(), deviceId);
-    } finally {
-      try {
-        tmp.deleteSync(recursive: true);
-      } on FileSystemException {
-        /* ignore */
-      }
-    }
-  }
-
-  /// Polls `devicectl device info processes` until a process whose executable
-  /// lives inside a bundle matching [installUrl] appears, returning its pid.
-  Future<int?> _findAppPid(
-    String deviceId,
-    String bundleId, {
-    String? installUrl,
-    Duration timeout = const Duration(seconds: 15),
-    Duration pollInterval = const Duration(milliseconds: 200),
-  }) async {
-    if (installUrl == null) {
-      final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_url.');
-      try {
-        final File out = tmp.childFile('apps.json');
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'apps',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic apps = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['apps']
-                : null;
-            if (apps is List) {
-              for (final Object? a in apps) {
-                if (a is Map && a['bundleIdentifier'] == bundleId) {
-                  final dynamic u = a['url'];
-                  if (u is String) {
-                    installUrl = u;
-                  }
-                  break;
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-      } finally {
-        try {
-          tmp.deleteSync(recursive: true);
-        } on FileSystemException {
-          /* ignore */
-        }
-      }
-    }
-    if (installUrl == null) {
-      return null;
-    }
-
-    final sw = Stopwatch()..start();
-    final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ps.');
-    try {
-      while (sw.elapsed < timeout) {
-        final File out = tmp.childFile('ps.json');
-        if (out.existsSync()) {
-          out.deleteSync();
-        }
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'processes',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic procs = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['runningProcesses']
-                : null;
-            if (procs is List) {
-              for (final Object? p in procs) {
-                if (p is Map) {
-                  final dynamic exe = p['executable'];
-                  final dynamic pid = p['processIdentifier'];
-                  if (exe is String &&
-                      pid is int &&
-                      exe.contains(installUrl.replaceFirst('file://', ''))) {
-                    return pid;
-                  }
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-        await Future<void>.delayed(pollInterval);
-      }
-      return null;
     } finally {
       try {
         tmp.deleteSync(recursive: true);
@@ -1633,14 +1629,10 @@ class WatchosDevice extends Device {
       return false;
     }
 
+    await _launchHold?.cancel();
+    _launchHold = null;
     _logReader?.dispose();
     _logReader = null;
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
-    unawaited(_xcodeDebug?.exit());
-    _xcodeDebug = null;
 
     if (isSimulator) {
       final RunResult result = await globals.processUtils.run(<String>[
@@ -1687,7 +1679,7 @@ class WatchosDevice extends Device {
   /// Returns the environment the app needs to find it, or an empty map if the
   /// relay could not be started — in which case the run continues without live
   /// DevTools rather than failing outright.
-  Future<Map<String, String>> _startVmRelay() async {
+  Future<Map<String, String>> _startVmRelay(int? devicePort) async {
     try {
       final String? macAddress = await resolveMacLanAddress(
         override: globals.platform.environment['FLUTTER_WATCHOS_RELAY_HOST'],
@@ -1697,7 +1689,7 @@ class WatchosDevice extends Device {
         return const <String, String>{};
       }
       _relayAdvertisedHost = macAddress;
-      _deviceVmServicePort = pickDeviceVmServicePort();
+      _deviceVmServicePort = devicePort ?? pickDeviceVmServicePort();
       final WatchosVmRelay relay = await WatchosVmRelay.start(logTrace: logger.printTrace);
       _vmRelay = relay;
       globals.shutdownHooks.addShutdownHook(relay.dispose);
@@ -1724,7 +1716,7 @@ class WatchosDevice extends Device {
     bool includePastLogs = false,
   }) {
     if (isSimulator) {
-      return _logReader ??= WatchosSimulatorLogReader(name);
+      return _logReader ??= WatchosSimulatorLogReader(name, deviceId: id, logger: logger);
     }
     return _logReader ??= WatchosPhysicalDeviceLogReader(name);
   }
@@ -1732,8 +1724,65 @@ class WatchosDevice extends Device {
   @override
   final DevicePortForwarder portForwarder = const NoOpDevicePortForwarder();
 
+  /// A watch Simulator takes screenshots through `simctl io`, as stock iOS
+  /// Simulators do. A physical watch takes them through devicectl when its
+  /// CoreDevice capabilities say it can; otherwise stock's `screenshot`
+  /// refuses it by name."
   @override
-  bool get supportsScreenshot => false;
+  bool get supportsScreenshot =>
+      isSimulator || coreDeviceCapabilities.contains(captureScreenshotCapability);
+
+  @override
+  Future<void> takeScreenshot(File outputFile) async {
+    if (!isSimulator) {
+      return _takeWatchScreenshot(outputFile);
+    }
+    final RunResult result = await globals.processUtils.run(<String>[
+      'xcrun',
+      'simctl',
+      'io',
+      id,
+      'screenshot',
+      outputFile.path,
+    ]);
+    if (result.exitCode != 0) {
+      logger.printError('Unable to take screenshot of $id:\n${result.stderr}');
+    }
+  }
+
+  /// Takes a screenshot of a physical watch through Xcode 27's devicectl.
+  ///
+  /// Throws a [WatchScreenshotException] with devicectl's message when it
+  /// fails, or writes nothing, and leaves no file behind: an empty PNG would
+  /// look like a screenshot.
+  Future<void> _takeWatchScreenshot(File outputFile) async {
+    final RunResult result = await globals.processUtils.run(<String>[
+      'xcrun',
+      'devicectl',
+      'device',
+      'capture',
+      'screenshot',
+      '--device',
+      id,
+      '--destination',
+      outputFile.path,
+    ]);
+    final bool written = outputFile.existsSync() && outputFile.lengthSync() > 0;
+    if (result.exitCode == 0 && written) {
+      return;
+    }
+    if (outputFile.existsSync()) {
+      outputFile.deleteSync();
+    }
+    final String message = <String>[
+      result.stderr.trim(),
+      result.stdout.trim(),
+    ].firstWhere((String m) => m.isNotEmpty, orElse: () => 'devicectl wrote no screenshot.');
+    throw WatchScreenshotException(
+      '$message\n'
+      'Screenshots of a physical Apple Watch need Xcode 27 or later.',
+    );
+  }
 
   @override
   bool isSupportedForProject(FlutterProject flutterProject) {
@@ -1742,8 +1791,8 @@ class WatchosDevice extends Device {
 
   @override
   Future<void> dispose() async {
+    await _launchHold?.cancel();
+    _launchHold = null;
     _logReader?.dispose();
-    unawaited(_xcodeDebug?.exit());
-    _xcodeDebug = null;
   }
 }

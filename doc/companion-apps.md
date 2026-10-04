@@ -12,11 +12,12 @@ wiring `host` reconciles see [commands.md](commands.md#host).
 
 There is no setting. A project with an `ios/` Flutter app is a companion
 project; one without is standalone (watch-only). `create`, `build` and `run`
-all re-derive it, and `flutter-watchos host` reports it:
+all re-derive it, and `flutter-watchos host` reports it. The first line below
+makes the project a companion; `host` then confirms it and heals the wiring:
 
 ```sh
-flutter create --platforms=ios .      # this project is now a companion
-flutter-watchos host                  # confirms it, and heals the wiring
+flutter create --platforms=ios .
+flutter-watchos host
 ```
 
 In companion mode the iOS Runner gets an "Embed Prebuilt watchOS App" build
@@ -53,9 +54,16 @@ runApp(
 );
 ```
 
+Run the phone app with `flutter`:
+
 ```sh
-flutter run                       # phone
-flutter-watchos run -d <watch-id> # watch
+flutter run
+```
+
+Run the watch app with `flutter-watchos`:
+
+```sh
+flutter-watchos run -d <watch-id>
 ```
 
 `FlutterWatchosPlatform.isWatch` is the check to branch on — **not**
@@ -129,11 +137,12 @@ work than reconstructing delivery order.
 ## Testing on the Simulator
 
 WatchConnectivity works between paired Simulators, but the pairing is not set up
-for you:
+for you. Pair them, then list the pairs and wait until yours shows
+"(active, connected)":
 
 ```sh
 xcrun simctl pair <watch-udid> <phone-udid>
-xcrun simctl list pairs        # wait for "(active, connected)"
+xcrun simctl list pairs
 ```
 
 Boot both, and **launch the iPhone app before the watch app** — the watch

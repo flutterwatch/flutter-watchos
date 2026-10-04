@@ -208,8 +208,10 @@ const String kOwedEnginesAfterSignInNote =
 
 /// A gate response that leaves one zip out instead of ending the download.
 enum SkippedGate {
-  /// The service does not give this account that engine.
-  notForThisAccount('not available to this account, skipped'),
+  /// The service does not give this account that engine. The note says only
+  /// that it is not available: what an account holds is the service's to
+  /// describe, and the tool names no programme and no access level.
+  notForThisAccount('not available, skipped'),
 
   /// Nobody is signed in, and that engine needs an account.
   needsAccount('needs an account, skipped'),

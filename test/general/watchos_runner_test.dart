@@ -73,25 +73,45 @@ void main() {
   }
 
   group('renderWatchosRunner guards', () {
-    testWithoutContext('is a no-op when the template directory is missing', () async {
+    // An incomplete checkout used to leave watchos/ out without a word, and
+    // create then said it had made one.
+    testWithoutContext('stops, naming the path, when the template directory is missing', () async {
       fileSystem.directory('/proj').createSync(recursive: true);
 
-      await render('/proj');
+      await expectLater(
+        render('/proj'),
+        throwsToolExit(message: 'the watchOS app template is not at ${templatePath()}'),
+      );
 
-      expect(fileSystem.directory('/proj/watchos').existsSync(), isFalse);
+      expect(fileSystem.directory('/proj').listSync(), isEmpty);
       expect(logger.statusText, isNot(contains('Generating watchOS runner')));
     });
 
-    testWithoutContext('is a no-op when watchos/ already exists', () async {
-      // Even with a template present, an existing watchos/ must not be
-      // re-rendered (the create/port flows are idempotent).
-      fileSystem.directory(templatePath()).createSync(recursive: true);
-      fileSystem.directory('/proj/watchos').createSync(recursive: true);
-
-      await render('/proj');
-
-      expect(logger.statusText, isNot(contains('Generating watchOS runner')));
+    testWithoutContext('the message says the checkout looks incomplete', () {
+      expect(
+        () => watchosRunnerTemplate(fileSystem),
+        throwsToolExit(message: 'The flutter-watchos checkout looks incomplete.'),
+      );
     });
+
+    for (final withTemplate in <bool>[true, false]) {
+      testWithoutContext(
+        'is a no-op when watchos/ already exists, ${withTemplate ? 'with' : 'without'} a template',
+        () async {
+          // An existing watchos/ is never rendered again, so the create and
+          // port flows can run twice, and need no template for it.
+          if (withTemplate) {
+            fileSystem.directory(templatePath()).createSync(recursive: true);
+          }
+          fileSystem.directory('/proj/watchos').createSync(recursive: true);
+
+          await render('/proj');
+
+          expect(fileSystem.directory('/proj/watchos').listSync(), isEmpty);
+          expect(logger.statusText, isNot(contains('Generating watchOS runner')));
+        },
+      );
+    }
   });
 
   group('watchosRunnerProjectName', () {
