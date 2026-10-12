@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/build_info.dart';
 
 /// The `Generated.xcconfig` lines that link the host-module and plugin
 /// archives into the watch target. Pure, so the quoting can be tested.
@@ -90,3 +91,27 @@ String pluginObjectName({
   final String flattened = relative.replaceAll(RegExp(r'[\\/]+'), '_');
   return '${pluginName}__$flattened.o';
 }
+
+/// The optimization and debug-info flags for the plugin C, Objective-C and
+/// Objective-C++ sources the CLI compiles itself.
+///
+/// This pass used to pass no `-O` at all, and clang defaults to `-O0`, so
+/// every FFI plugin shipped unoptimized code in profile and release builds.
+/// `-Os` is Xcode's Release default (`GCC_OPTIMIZATION_LEVEL = s`), which the
+/// same plugin gets on iOS from CocoaPods or SwiftPM. Profile counts as
+/// release because it exists to measure performance. `-g` in every mode, as
+/// for the host module, so plugin frames symbolicate.
+List<String> pluginClangOptimizationFlags(BuildMode mode) => <String>[
+  if (mode == BuildMode.debug) '-O0' else '-Os',
+  '-g',
+];
+
+/// The optimization and debug-info flags for the plugin SwiftUI view sources.
+///
+/// swiftc defaults to `-Onone`, and `-whole-module-optimization` alone does
+/// not turn optimization on. `-O` is Xcode's Release default
+/// (`SWIFT_OPTIMIZATION_LEVEL = -O`) and what the host module is built with.
+List<String> pluginSwiftOptimizationFlags(BuildMode mode) => <String>[
+  if (mode == BuildMode.debug) '-Onone' else '-O',
+  '-g',
+];

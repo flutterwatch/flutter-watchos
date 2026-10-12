@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_watchos/build_targets/watchos_native_link.dart';
 
 import '../src/common.dart';
@@ -101,5 +102,21 @@ void main() {
       );
       expect(a, isNot(b));
     });
+  });
+
+  // Both passes used to pass no -O at all, so every FFI plugin shipped -O0
+  // (clang) and -Onone (swiftc) code in profile and release builds.
+  group('plugin optimization flags', () {
+    testWithoutContext('debug stays unoptimized, with debug info', () {
+      expect(pluginClangOptimizationFlags(BuildMode.debug), <String>['-O0', '-g']);
+      expect(pluginSwiftOptimizationFlags(BuildMode.debug), <String>['-Onone', '-g']);
+    });
+
+    for (final BuildMode mode in BuildMode.values.where((BuildMode m) => m != BuildMode.debug)) {
+      testWithoutContext('${mode.cliName} is optimized as Xcode Release is', () {
+        expect(pluginClangOptimizationFlags(mode), <String>['-Os', '-g']);
+        expect(pluginSwiftOptimizationFlags(mode), <String>['-O', '-g']);
+      });
+    }
   });
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Plugin native code is optimized in profile and release builds.** The
+  tool compiles a watchOS plugin's C, Objective-C and Objective-C++ sources
+  and its SwiftUI view sources itself, and it passed no optimization flag,
+  so every plugin ran unoptimized code (`-O0`, `-Onone`) in every build
+  mode. Profile and release builds now use `-Os` and `-O`, as Xcode's
+  Release configuration does, and debug builds stay unoptimized. Debug info
+  (`-g`) is emitted in every mode, as for the host module, so plugin frames
+  symbolicate. Plugins built through SwiftPM were already optimized.
+
 ## 0.1.1
 
 Debugging on the watch Simulator now takes stock Flutter's launch options
