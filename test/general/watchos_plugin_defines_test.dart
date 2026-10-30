@@ -6,9 +6,11 @@
 // Info.plist keys that turn them on, under
 // `flutter.plugin.platforms.watchos.defines`, and the build compiles that
 // plugin's sources with each macro the watch app's Info.plist turns on, after
-// a marker that every plugin source the CLI compiles gets.
+// a marker that says the plugin's `defines` were applied. A plugin that
+// declares none gets neither, as under a CLI that predates them.
 
 import 'dart:convert';
+import 'dart:io' as io;
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/common.dart';
@@ -22,8 +24,9 @@ import 'package:flutter_watchos/build_targets/application.dart';
 import 'package:flutter_watchos/watchos_build_info.dart';
 import 'package:flutter_watchos/watchos_plugin_defines.dart';
 import 'package:flutter_watchos/watchos_plugins.dart'
-    show discoverWatchosSpmPlugins, ensureReadyForWatchosTooling;
+    show discoverWatchosSpmPlugins, ensureReadyForWatchosTooling, writeWatchosDartPluginRegistrant;
 import 'package:flutter_watchos/watchos_swift_package_manager.dart';
+import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import '../src/common.dart';
@@ -31,6 +34,7 @@ import '../src/context.dart';
 import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 import '../src/forbidden_words.dart';
+import '../src/host_sources.dart';
 
 const _simulatorDebug = WatchosBuildInfo(BuildInfo.debug, targetArch: 'arm64', simulator: true);
 
@@ -54,6 +58,18 @@ String _definesYaml(Map<String, Object> defines) {
     }
   });
   return yaml.toString();
+}
+
+/// The pubspec of the watchOS plugin [name], with [watchosLines] under
+/// `watchos:` after `ffiPlugin: true`.
+String _pluginPubspec(String name, String watchosLines) {
+  return 'name: $name\n'
+      'flutter:\n'
+      '  plugin:\n'
+      '    platforms:\n'
+      '      watchos:\n'
+      '        ffiPlugin: true\n'
+      '$watchosLines';
 }
 
 /// An app at /app whose watchOS plugins are [plugins], each name mapped to the
@@ -99,17 +115,7 @@ FlutterProject _app(
   for (final MapEntry<String, String> plugin in plugins.entries) {
     final String name = plugin.key;
     final Directory dir = fileSystem.directory('/pub/$name')..createSync(recursive: true);
-    dir
-        .childFile('pubspec.yaml')
-        .writeAsStringSync(
-          'name: $name\n'
-          'flutter:\n'
-          '  plugin:\n'
-          '    platforms:\n'
-          '      watchos:\n'
-          '        ffiPlugin: true\n'
-          '${plugin.value}',
-        );
+    dir.childFile('pubspec.yaml').writeAsStringSync(_pluginPubspec(name, plugin.value));
     dir.childFile('watchos/Package.swift')
       ..createSync(recursive: true)
       ..writeAsStringSync(
@@ -132,9 +138,22 @@ FlutterProject _app(
 /// The object the clang pass writes for [plugin]'s C source.
 String _object(String plugin) => '$_objDir/${plugin}__Sources_${plugin}_$plugin.c.o';
 
+/// What a compile command does when it runs with a [fileSystem]: it writes
+/// the object it names after `-o` there, as the real compiler does. Without
+/// one, it writes nothing.
+void Function(List<String> command)? _writesObject(FileSystem? fileSystem) {
+  if (fileSystem == null) {
+    return null;
+  }
+  return (List<String> command) {
+    fileSystem.file(command[command.indexOf('-o') + 1]).createSync(recursive: true);
+  };
+}
+
 /// The clang compile of [plugin]'s C source, for a simulator debug build at
-/// the supported minimum, with the -D flags [defines].
-FakeCommand _clang(String plugin, List<String> defines) {
+/// the supported minimum, with the -D flags [defines]. With [fileSystem], it
+/// writes its object there.
+FakeCommand _clang(String plugin, List<String> defines, {FileSystem? fileSystem}) {
   return FakeCommand(
     command: <String>[
       'xcrun',
@@ -153,11 +172,13 @@ FakeCommand _clang(String plugin, List<String> defines) {
       '-o',
       _object(plugin),
     ],
+    onRun: _writesObject(fileSystem),
   );
 }
 
 /// The swiftc compile of [plugin]'s view source, with the -D flags [defines].
-FakeCommand _swiftc(String plugin, List<String> defines) {
+/// With [fileSystem], it writes its object there.
+FakeCommand _swiftc(String plugin, List<String> defines, {FileSystem? fileSystem}) {
   return FakeCommand(
     command: <String>[
       'xcrun',
@@ -179,6 +200,7 @@ FakeCommand _swiftc(String plugin, List<String> defines) {
       '$_objDir/flutter_watchos_plugin_views_shim.swift',
       '/pub/$plugin/watchos/Sources/$plugin/View.swift',
     ],
+    onRun: _writesObject(fileSystem),
   );
 }
 
@@ -233,6 +255,34 @@ String _refusal(String yaml) {
   }
   fail('`defines` of "$yaml" was accepted');
 }
+
+/// Dates [project]'s pubspec.yaml and package config, so the config reads as
+/// written before (`pub get` pending) or after the last pubspec.yaml edit.
+void _datePubGet(FlutterProject project, {required bool pending}) {
+  final edited = DateTime(2026, 10, 30, 12);
+  project.pubspecFile.setLastModifiedSync(edited);
+  project.directory
+      .childFile('.dart_tool/package_config.json')
+      .setLastModifiedSync(edited.add(Duration(minutes: pending ? -1 : 1)));
+}
+
+/// A watch-only app's Info.plist before the host-mode sync, which adds
+/// WKWatchOnly to it.
+const _standaloneInfoPlist =
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<plist version="1.0">\n'
+    '<dict>\n'
+    '\t<key>CFBundleName</key>\n'
+    '\t<string>app</string>\n'
+    '</dict>\n'
+    '</plist>\n';
+
+/// The template's watch project.pbxproj, which sets INFOPLIST_FILE to
+/// Runner/Info.plist for the watch app and to HostApp/Info.plist for the iOS
+/// container.
+String _templatePbxproj() => io.File(
+  cliRootPath('templates/app/swift/watchos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl'),
+).readAsStringSync();
 
 void main() {
   group('parseWatchosPluginDefines', () {
@@ -330,16 +380,23 @@ _permission_2: PermissionHandlerWatchosSiri
       });
     }
 
-    testWithoutContext('names every problem in one message, which says what an entry is', () {
-      expect(
-        _refusal('1GADGET: NSCameraUsageDescription\nGADGET_OK: Key\nGADGET_SIRI: []\n'),
-        'The watchOS plugin gadget has an invalid `defines` in /pub/gadget/pubspec.yaml:\n'
-        '  - `1GADGET` is not a C identifier.\n'
-        '  - `GADGET_SIRI` lists no Info.plist key.\n'
-        'Each entry maps a macro name, a C identifier, to an app Info.plist key or to a list '
-        'of keys.',
-      );
-    });
+    // The last line is for the developer of an app that uses the plugin, who
+    // cannot fix its pubspec but can move to a version that fixes it.
+    testWithoutContext(
+      'names every problem in one message, which says what an entry is and when to run pub get',
+      () {
+        expect(
+          _refusal('1GADGET: NSCameraUsageDescription\nGADGET_OK: Key\nGADGET_SIRI: []\n'),
+          'The watchOS plugin gadget has an invalid `defines` in /pub/gadget/pubspec.yaml:\n'
+          '  - `1GADGET` is not a C identifier.\n'
+          '  - `GADGET_SIRI` lists no Info.plist key.\n'
+          'Each entry maps a macro name, a C identifier, to an app Info.plist key or to a list '
+          'of keys.\n'
+          "If the app's dependency on gadget changed, run `flutter-watchos pub get` to resolve "
+          'it again.',
+        );
+      },
+    );
 
     testWithoutContext('the refusal holds no forbidden word', () {
       expect(forbiddenWordsIn(_refusal('1GADGET: 42\n')), isEmpty);
@@ -434,6 +491,62 @@ _permission_2: PermissionHandlerWatchosSiri
     });
   });
 
+  // The build reads defines from watchos/Runner/Info.plist, the file the
+  // template's Runner target names. A project whose INFOPLIST_FILE never
+  // names it is worth a warning.
+  group('otherInfoPlistFiles', () {
+    List<String>? others(String pbxproj) {
+      return otherInfoPlistFiles(
+        pbxproj: pbxproj,
+        projectDirectory: '/app/watchos',
+        infoPlistPath: _infoPlistPath,
+        pathContext: p.posix,
+      );
+    }
+
+    testWithoutContext('none when the project names Runner/Info.plist, as the template does', () {
+      expect(others(_templatePbxproj()), isNull);
+    });
+
+    testWithoutContext('each file the project names, once, when none is Runner/Info.plist', () {
+      expect(
+        others(
+          '\t\t\t\tGENERATE_INFOPLIST_FILE = NO;\n'
+          '\t\t\t\tINFOPLIST_FILE = Runner/Info-Watch.plist;\n'
+          '\t\t\t\tINFOPLIST_FILE = "Runner/Info-Watch.plist";\n'
+          '\t\t\t\t"INFOPLIST_FILE[sdk=watchos*]" = "Watch App/Info.plist";\n'
+          '\t\t\t\tINFOPLIST_FILE = HostApp/Info.plist;\n',
+        ),
+        <String>['Runner/Info-Watch.plist', 'Watch App/Info.plist', 'HostApp/Info.plist'],
+      );
+    });
+
+    testWithoutContext('reads a value from the project directory, as Xcode does', () {
+      for (final value in <String>[
+        r'"$(SRCROOT)/Runner/Info.plist"',
+        r'"${PROJECT_DIR}/Runner/Info.plist"',
+        './Runner/Info.plist',
+        'Runner/../Runner/Info.plist',
+        '/app/watchos/Runner/Info.plist',
+      ]) {
+        expect(
+          others('INFOPLIST_FILE = $value;\nINFOPLIST_FILE = HostApp/Info.plist;\n'),
+          isNull,
+          reason: value,
+        );
+      }
+    });
+
+    testWithoutContext('none when a value holds a build setting that may name the file', () {
+      expect(others('INFOPLIST_FILE = "\$(TARGET_NAME)/Info.plist";\n'), isNull);
+    });
+
+    testWithoutContext('none when the project sets no INFOPLIST_FILE', () {
+      expect(others('GENERATE_INFOPLIST_FILE = YES;\nINFOPLIST_KEY_CFBundleName = app;\n'), isNull);
+      expect(others('INFOPLIST_FILE = "";\n'), isNull);
+    });
+  });
+
   group('plugin discovery', () {
     late MemoryFileSystem fileSystem;
 
@@ -480,21 +593,14 @@ _permission_2: PermissionHandlerWatchosSiri
         final FlutterProject project = _app(fileSystem, <String, String>{
           'gadget': _definesYaml(<String, Object>{'GADGET-CAMERA': 'NSCameraUsageDescription'}),
         });
-        const infoPlist =
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<plist version="1.0">\n'
-            '<dict>\n'
-            '\t<key>CFBundleName</key>\n'
-            '\t<string>app</string>\n'
-            '</dict>\n'
-            '</plist>\n';
-        final File plist = fileSystem.file(_infoPlistPath)..writeAsStringSync(infoPlist);
+        final File plist = fileSystem.file(_infoPlistPath)..writeAsStringSync(_standaloneInfoPlist);
+        _datePubGet(project, pending: false);
 
         await expectLater(
           ensureReadyForWatchosTooling(project),
           throwsToolExit(message: '`GADGET-CAMERA` is not a C identifier.'),
         );
-        expect(plist.readAsStringSync(), infoPlist);
+        expect(plist.readAsStringSync(), _standaloneInfoPlist);
         expect(
           project.directory
               .childFile('watchos/Flutter/GeneratedPluginRegistrant.swift')
@@ -506,16 +612,105 @@ _permission_2: PermissionHandlerWatchosSiri
         fileSystem
             .file('/pub/gadget/pubspec.yaml')
             .writeAsStringSync(
-              'name: gadget\n'
-              'flutter:\n'
-              '  plugin:\n'
-              '    platforms:\n'
-              '      watchos:\n'
-              '        ffiPlugin: true\n'
-              '${_definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'})}',
+              _pluginPubspec(
+                'gadget',
+                _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
+              ),
             );
         await ensureReadyForWatchosTooling(project);
         expect(plist.readAsStringSync(), contains('<key>WKWatchOnly</key>'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    // The commands take the tooling step before their `pub get`. Right after
+    // the app's pubspec.yaml moves away from a plugin version with an invalid
+    // declaration, the package config still resolves that version, and a
+    // refusal there would stop the very command whose `pub get` fixes it.
+    testUsingContext(
+      'with pub get pending, the tooling step leaves the refusal to the build after it',
+      () async {
+        final FlutterProject project = _app(fileSystem, <String, String>{
+          'gadget': _definesYaml(<String, Object>{'GADGET-CAMERA': 'NSCameraUsageDescription'}),
+        });
+        final File plist = fileSystem.file(_infoPlistPath)..writeAsStringSync(_standaloneInfoPlist);
+        _datePubGet(project, pending: true);
+
+        await ensureReadyForWatchosTooling(project);
+
+        expect(plist.readAsStringSync(), contains('<key>WKWatchOnly</key>'));
+        expect(
+          testLogger.traceText,
+          contains(
+            'The `defines` of gadget in /pub/gadget/pubspec.yaml are invalid, but pub get has '
+            'yet to resolve the last pubspec.yaml edit: the build checks them again after it.\n',
+          ),
+        );
+
+        // pub get resolves the version the edit asked for, and the build's
+        // discovery after it has nothing to refuse.
+        fileSystem.file('/pub/gadget-fixed/pubspec.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            _pluginPubspec(
+              'gadget',
+              _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
+            ),
+          );
+        fileSystem.file('/pub/gadget-fixed/watchos/Package.swift')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('let package = Package(name: "gadget")\n');
+        project.directory
+            .childFile('.dart_tool/package_config.json')
+            .writeAsStringSync(
+              json.encode(<String, Object>{
+                'configVersion': 2,
+                'packages': <Map<String, String>>[
+                  <String, String>{'name': 'gadget', 'rootUri': 'file:///pub/gadget-fixed'},
+                ],
+              }),
+            );
+        _datePubGet(project, pending: false);
+
+        writeWatchosDartPluginRegistrant(project);
+        await ensureReadyForWatchosTooling(project);
+        expect(discoverWatchosSpmPlugins(project).single.defines, const <WatchosPluginDefine>[
+          WatchosPluginDefine('GADGET_CAMERA', <String>['NSCameraUsageDescription']),
+        ]);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => FakeProcessManager.any(),
+      },
+    );
+
+    testUsingContext(
+      'after pub get, the build refuses a declaration that is still invalid',
+      () async {
+        final FlutterProject project = _app(fileSystem, <String, String>{
+          'gadget': _definesYaml(<String, Object>{'GADGET-CAMERA': 'NSCameraUsageDescription'}),
+        });
+        fileSystem.file(_infoPlistPath).writeAsStringSync(_standaloneInfoPlist);
+        _datePubGet(project, pending: true);
+        await ensureReadyForWatchosTooling(project);
+
+        // pub get leaves the same resolution in place.
+        _datePubGet(project, pending: false);
+
+        // The build's first discovery after pub get, before the kernel
+        // compiles, and the tooling step it takes again before the native
+        // compiles.
+        expect(
+          () => writeWatchosDartPluginRegistrant(project),
+          throwsToolExit(message: '`GADGET-CAMERA` is not a C identifier.'),
+        );
+        await expectLater(
+          ensureReadyForWatchosTooling(project),
+          throwsToolExit(message: '`GADGET-CAMERA` is not a C identifier.'),
+        );
       },
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
@@ -583,8 +778,10 @@ _permission_2: PermissionHandlerWatchosSiri
       overrides: overrides(),
     );
 
+    // A plugin without `defines` compiles as under a CLI that predates them:
+    // no marker, so whatever it guards with the marker form stays in.
     testUsingContext(
-      'gives each plugin its own macros, and the marker to one without defines',
+      'gives each plugin its own macros, and no -D to one without defines',
       () async {
         final FlutterProject project = _app(fileSystem, <String, String>{
           'gadget': _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
@@ -598,7 +795,7 @@ _permission_2: PermissionHandlerWatchosSiri
         processManager.addCommands(<FakeCommand>[
           _clang('gadget', <String>[_marker, '-DGADGET_CAMERA=1']),
           _clang('widget', <String>[_marker, '-DWIDGET_CAMERA=1']),
-          _clang('plain', <String>[_marker]),
+          _clang('plain', const <String>[]),
           _libtool(<String>[_object('gadget'), _object('widget'), _object('plain')]),
         ]);
 
@@ -607,6 +804,14 @@ _permission_2: PermissionHandlerWatchosSiri
         expect(processManager, hasNoRemainingExpectations);
         // Read once for the whole build.
         expect(plistParser.reads, <String>[_infoPlistPath]);
+        // -v has a line for every plugin.
+        expect(
+          testLogger.traceText,
+          contains(
+            'watchOS plugin gadget defines (1 of 1 on, from $_infoPlistPath): '
+            'GADGET_CAMERA (NSCameraUsageDescription)\n',
+          ),
+        );
         expect(
           testLogger.traceText,
           contains(
@@ -614,6 +819,110 @@ _permission_2: PermissionHandlerWatchosSiri
             'WIDGET_CAMERA (NSCameraUsageDescription)\n',
           ),
         );
+        expect(
+          testLogger.traceText,
+          contains(
+            'watchOS plugin plain declares no `defines`: its sources compile without '
+            'FLUTTER_WATCHOS_PLUGIN_DEFINES.\n',
+          ),
+        );
+        expect(forbiddenWordsIn(testLogger.traceText), isEmpty);
+      },
+      overrides: overrides(),
+    );
+
+    // The same macro name in two plugins is two macros: each plugin's is on
+    // or off by its own keys, in its C sources and in its view sources.
+    testUsingContext(
+      "a macro name that two plugins declare follows each plugin's own keys, in both passes",
+      () async {
+        final FlutterProject project = _app(
+          fileSystem,
+          <String, String>{
+            'gadget': _definesYaml(<String, Object>{'SHARED_CAMERA': 'NSCameraUsageDescription'}),
+            'widget': _definesYaml(<String, Object>{'SHARED_CAMERA': 'WidgetCamera'}),
+          },
+          views: <String>{'gadget', 'widget'},
+        );
+        plistParser.setProperty('NSCameraUsageDescription', 'Scans a code.');
+        processManager.addCommands(<FakeCommand>[
+          _clang('gadget', <String>[_marker, '-DSHARED_CAMERA=1']),
+          _clang('widget', <String>[_marker]),
+          _swiftc('gadget', <String>[_swiftMarker, '-DSHARED_CAMERA']),
+          _swiftc('widget', <String>[_swiftMarker]),
+          _libtool(<String>[
+            _object('gadget'),
+            _object('widget'),
+            '$_objDir/gadget_views.o',
+            '$_objDir/widget_views.o',
+          ]),
+        ]);
+
+        await _build(project);
+
+        expect(processManager, hasNoRemainingExpectations);
+        expect(
+          testLogger.traceText,
+          contains('watchOS plugin widget defines (0 of 1 on, from $_infoPlistPath): none\n'),
+        );
+      },
+      overrides: overrides(),
+    );
+
+    // The marker goes only to a plugin that declares `defines`, so a
+    // declaration the CLI does not see leaves the plugin as an older CLI
+    // compiles it, rather than compiling out all it guards.
+    testUsingContext(
+      'a misspelled, misplaced or empty defines compiles the plugin as before, and -v says so',
+      () async {
+        final FlutterProject project = _app(
+          fileSystem,
+          <String, String>{
+            'typo': '        define:\n          TYPO_CAMERA: NSCameraUsageDescription\n',
+            'stray': '',
+            'empty': '        defines: {}\n',
+          },
+          views: <String>{'typo'},
+        );
+        fileSystem
+            .file('/pub/stray/pubspec.yaml')
+            .writeAsStringSync(
+              'name: stray\n'
+              'flutter:\n'
+              '  plugin:\n'
+              '    defines:\n'
+              '      STRAY_CAMERA: NSCameraUsageDescription\n'
+              '    platforms:\n'
+              '      watchos:\n'
+              '        ffiPlugin: true\n',
+            );
+        plistParser.setProperty('NSCameraUsageDescription', 'Scans a code.');
+        processManager.addCommands(<FakeCommand>[
+          _clang('typo', const <String>[]),
+          _clang('stray', const <String>[]),
+          _clang('empty', const <String>[]),
+          _swiftc('typo', const <String>[]),
+          _libtool(<String>[
+            _object('typo'),
+            _object('stray'),
+            _object('empty'),
+            '$_objDir/typo_views.o',
+          ]),
+        ]);
+
+        await _build(project);
+
+        expect(processManager, hasNoRemainingExpectations);
+        expect(plistParser.reads, isEmpty);
+        for (final plugin in <String>['typo', 'stray', 'empty']) {
+          expect(
+            testLogger.traceText,
+            contains(
+              'watchOS plugin $plugin declares no `defines`: its sources compile without '
+              'FLUTTER_WATCHOS_PLUGIN_DEFINES.\n',
+            ),
+          );
+        }
       },
       overrides: overrides(),
     );
@@ -643,7 +952,11 @@ _permission_2: PermissionHandlerWatchosSiri
 
     // Plugin objects compile on every build, with no up-to-date check, so the
     // next build after an Info.plist edit compiles the same objects again,
-    // with the new flags.
+    // with the new flags. The compiles write their objects, as the real
+    // compilers do, so the second build finds the first one's in place and
+    // newer than the sources: an up-to-date check that skipped a compile with
+    // such an object, without counting the -D flags as an input, would leave
+    // the second build's compiles unrun, and this test would fail.
     testUsingContext(
       'an Info.plist edit recompiles the same objects with the new macros',
       () async {
@@ -659,19 +972,30 @@ _permission_2: PermissionHandlerWatchosSiri
         );
         plistParser.setProperty('NSCameraUsageDescription', 'Scans a code.');
         processManager.addCommands(<FakeCommand>[
-          _clang('gadget', <String>[_marker, '-DGADGET_CAMERA=1']),
-          _swiftc('gadget', <String>[_swiftMarker, '-DGADGET_CAMERA']),
+          _clang('gadget', <String>[_marker, '-DGADGET_CAMERA=1'], fileSystem: fileSystem),
+          _swiftc('gadget', <String>[_swiftMarker, '-DGADGET_CAMERA'], fileSystem: fileSystem),
           _libtool(<String>[_object('gadget'), '$_objDir/gadget_views.o']),
         ]);
         await _build(project);
         expect(processManager, hasNoRemainingExpectations);
+        for (final (String object, String source) in <(String, String)>[
+          (_object('gadget'), '/pub/gadget/watchos/Sources/gadget/gadget.c'),
+          ('$_objDir/gadget_views.o', '/pub/gadget/watchos/Sources/gadget/View.swift'),
+        ]) {
+          final DateTime written = fileSystem.file(object).lastModifiedSync();
+          expect(
+            written.isAfter(fileSystem.file(source).lastModifiedSync()),
+            isTrue,
+            reason: object,
+          );
+        }
 
         plistParser
           ..replaceKey(_infoPlistPath, key: 'NSCameraUsageDescription')
           ..setProperty('GadgetSiri', true);
         processManager.addCommands(<FakeCommand>[
-          _clang('gadget', <String>[_marker, '-DGADGET_SIRI=1']),
-          _swiftc('gadget', <String>[_swiftMarker, '-DGADGET_SIRI']),
+          _clang('gadget', <String>[_marker, '-DGADGET_SIRI=1'], fileSystem: fileSystem),
+          _swiftc('gadget', <String>[_swiftMarker, '-DGADGET_SIRI'], fileSystem: fileSystem),
           _libtool(<String>[_object('gadget'), '$_objDir/gadget_views.o']),
         ]);
         await _build(project);
@@ -682,34 +1006,38 @@ _permission_2: PermissionHandlerWatchosSiri
       overrides: overrides(),
     );
 
-    testUsingContext('an invalid declaration stops the build before any command runs', () async {
-      final FlutterProject project = _app(fileSystem, <String, String>{
-        'plain': '',
-        'gadget': _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
-      });
-      fileSystem
-          .file('/pub/gadget/pubspec.yaml')
-          .writeAsStringSync(
-            'name: gadget\n'
-            'flutter:\n'
-            '  plugin:\n'
-            '    platforms:\n'
-            '      watchos:\n'
-            '        ffiPlugin: true\n'
-            '        defines:\n'
-            '          GADGET_CAMERA: 7\n',
-          );
+    // Only the tooling step before `pub get` waits for it. The plugin compile
+    // refuses whatever the package config's age, as under `--no-pub`.
+    for (final pending in <bool>[false, true]) {
+      final label = pending ? ', with pub get pending' : '';
+      testUsingContext(
+        'an invalid declaration stops the build before any command runs$label',
+        () async {
+          final FlutterProject project = _app(fileSystem, <String, String>{
+            'plain': '',
+            'gadget': _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
+          });
+          fileSystem
+              .file('/pub/gadget/pubspec.yaml')
+              .writeAsStringSync(
+                _pluginPubspec('gadget', '        defines:\n          GADGET_CAMERA: 7\n'),
+              );
+          _datePubGet(project, pending: pending);
 
-      await expectLater(
-        _build(project),
-        throwsToolExit(
-          message: 'The watchOS plugin gadget has an invalid `defines` in /pub/gadget/pubspec.yaml',
-        ),
+          await expectLater(
+            _build(project),
+            throwsToolExit(
+              message:
+                  'The watchOS plugin gadget has an invalid `defines` in /pub/gadget/pubspec.yaml',
+            ),
+          );
+          // FakeProcessManager.empty() fails any command, so none ran.
+          expect(processManager, hasNoRemainingExpectations);
+          expect(plistParser.reads, isEmpty);
+        },
+        overrides: overrides(),
       );
-      // FakeProcessManager.empty() fails any command, so none ran.
-      expect(processManager, hasNoRemainingExpectations);
-      expect(plistParser.reads, isEmpty);
-    }, overrides: overrides());
+    }
 
     // Out of scope: none of its sources get a -D, the view sources the CLI
     // compiles itself included, so the whole plugin compiles as under a CLI
@@ -767,6 +1095,8 @@ _permission_2: PermissionHandlerWatchosSiri
       ('without an Info.plist', false),
       ('with an Info.plist that reads as empty', true),
     ]) {
+      // The warning says what the compile does, not what the plugin's guards
+      // make of it: a plain `#if MACRO` guard leaves its code out.
       testUsingContext(
         '$label, a plugin with defines compiles as before, and the build says so',
         () async {
@@ -777,7 +1107,7 @@ _permission_2: PermissionHandlerWatchosSiri
           plistParser.replaceKey(_infoPlistPath, key: 'CFBundleName');
           processManager.addCommands(<FakeCommand>[
             _clang('gadget', const <String>[]),
-            _clang('plain', <String>[_marker]),
+            _clang('plain', const <String>[]),
             _libtool(<String>[_object('gadget'), _object('plain')]),
           ]);
 
@@ -788,24 +1118,32 @@ _permission_2: PermissionHandlerWatchosSiri
           expect(
             testLogger.warningText,
             "Could not read the watch app's Info.plist at $_infoPlistPath, so these plugins "
-            'are compiled with all of their optional code: gadget. Each chooses that code '
-            'from the keys the Info.plist sets, under `defines` in its pubspec.yaml.\n',
+            'are compiled without their `defines` and without FLUTTER_WATCHOS_PLUGIN_DEFINES, '
+            'as an older flutter-watchos compiles them: gadget. Code they guard with '
+            '`#if !defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MACRO` is compiled in.\n',
           );
           expect(forbiddenWordsIn(testLogger.warningText), isEmpty);
+          expect(
+            testLogger.traceText,
+            contains(
+              'watchOS plugin gadget defines (not applied, cannot read $_infoPlistPath): its '
+              'sources compile without FLUTTER_WATCHOS_PLUGIN_DEFINES.\n',
+            ),
+          );
         },
         overrides: overrides(),
       );
     }
 
-    testUsingContext('no plugin with defines, no Info.plist read', () async {
+    testUsingContext('no plugin with defines, no Info.plist read, and no -D', () async {
       final FlutterProject project = _app(
         fileSystem,
         <String, String>{'plain': ''},
         views: <String>{'plain'},
       );
       processManager.addCommands(<FakeCommand>[
-        _clang('plain', <String>[_marker]),
-        _swiftc('plain', <String>[_swiftMarker]),
+        _clang('plain', const <String>[]),
+        _swiftc('plain', const <String>[]),
         _libtool(<String>[_object('plain'), '$_objDir/plain_views.o']),
       ]);
 
@@ -814,6 +1152,56 @@ _permission_2: PermissionHandlerWatchosSiri
       expect(processManager, hasNoRemainingExpectations);
       expect(plistParser.reads, isEmpty);
     }, overrides: overrides());
+
+    // Defines are read from watchos/Runner/Info.plist. An app whose project
+    // builds with another Info.plist, and keeps this one, is told so, once a
+    // build however many plugins declare `defines`.
+    for (final (String label, String? Function() pbxproj, bool warns)
+        in <(String, String? Function(), bool)>[
+          ('a project that names Runner/Info.plist', _templatePbxproj, false),
+          (
+            'a project that names only other files',
+            () => _templatePbxproj().replaceAll(
+              'INFOPLIST_FILE = Runner/Info.plist;',
+              'INFOPLIST_FILE = Runner/Info-Watch.plist;',
+            ),
+            true,
+          ),
+          ('no Xcode project', () => null, false),
+        ]) {
+      testUsingContext('with $label, ${warns ? 'warns once' : 'no warning'}', () async {
+        final FlutterProject project = _app(fileSystem, <String, String>{
+          'gadget': _definesYaml(<String, Object>{'GADGET_CAMERA': 'NSCameraUsageDescription'}),
+          'widget': _definesYaml(<String, Object>{'WIDGET_CAMERA': 'NSCameraUsageDescription'}),
+        });
+        final String? text = pbxproj();
+        if (text != null) {
+          fileSystem.file('/app/watchos/Runner.xcodeproj/project.pbxproj')
+            ..createSync(recursive: true)
+            ..writeAsStringSync(text);
+        }
+        plistParser.setProperty('NSCameraUsageDescription', 'Scans a code.');
+        processManager.addCommands(<FakeCommand>[
+          _clang('gadget', <String>[_marker, '-DGADGET_CAMERA=1']),
+          _clang('widget', <String>[_marker, '-DWIDGET_CAMERA=1']),
+          _libtool(<String>[_object('gadget'), _object('widget')]),
+        ]);
+
+        await _build(project);
+
+        expect(processManager, hasNoRemainingExpectations);
+        expect(
+          testLogger.warningText,
+          warns
+              ? "Plugin `defines` are read from $_infoPlistPath, but the watch app's Xcode "
+                    'project sets INFOPLIST_FILE only to Runner/Info-Watch.plist, '
+                    'HostApp/Info.plist: the plugins that declare them may not follow the keys '
+                    'the app is built with.\n'
+              : isEmpty,
+        );
+        expect(forbiddenWordsIn(testLogger.warningText), isEmpty);
+      }, overrides: overrides());
+    }
 
     // The parser flutter_tools uses converts the file with plutil and reads
     // the XML, so every value type arrives as a Dart value.

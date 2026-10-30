@@ -167,10 +167,13 @@ Objective-C and Objective-C++ sources are compiled with
 `-DMY_PLUGIN_CONTACTS`, since a Swift condition takes no value. A macro that
 is off is not defined at all.
 
-Every plugin source the CLI compiles also gets
-`FLUTTER_WATCHOS_PLUGIN_DEFINES`. A flutter-watchos from before `defines`
-passes neither, so guard optional code this way to keep it in apps built by
-one:
+The plugin's sources also get `FLUTTER_WATCHOS_PLUGIN_DEFINES`, first, which
+says that its `defines` were applied. A flutter-watchos from before
+`defines` passes neither, and neither does this one when it does not apply
+them: to a plugin that declares no `defines` (a misspelled or misplaced
+`defines:` counts as none), to one built through SwiftPM, and when the
+watch app's Info.plist cannot be read. Guard optional code this way, so it
+stays in the app in each of those cases:
 
 ```objc
 #if !defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MY_PLUGIN_CONTACTS
@@ -184,22 +187,32 @@ one:
 #endif
 ```
 
+A plain `#if MY_PLUGIN_CONTACTS` leaves the code out in each of those cases
+instead.
+
 - Give the plugin an answer for what it leaves out: permission_handler's
   iOS implementation reports such a permission as denied.
 - Guard implementation, not declarations in a header that another plugin
   includes: that plugin's sources are compiled without your macros.
-- An Info.plist change takes effect on the next build. Plugin sources are
-  compiled on every build.
+- An Info.plist change takes effect on the next `flutter-watchos build`,
+  `run` or `test`, which compile plugin sources every time. An Xcode build
+  or archive does not compile them: it links the plugin archive that the
+  last flutter-watchos build left in `watchos/Flutter/`. After an
+  Info.plist edit, run `flutter-watchos build watchos --release` again
+  before you archive (see [Publish an app](publish-app.md)).
 - An invalid `defines` stops the build before anything is compiled, and
   names the plugin and the entry. Invalid means a `defines` that is not a
   map, a macro name that is not a C identifier, or a value that is not an
   Info.plist key or a list of keys.
-- `flutter-watchos build watchos -v` prints, for each plugin that declares
-  `defines`, the macros that are on and the key that turned each on.
+- `flutter-watchos build watchos -v` prints a line for each plugin the CLI
+  compiles: the macros that are on and the key that turned each on, or why
+  its `defines` are not applied.
 - If the watch app's Info.plist cannot be read, the build warns, and
   compiles the plugins that declare `defines` without any of their macros
   and without `FLUTTER_WATCHOS_PLUGIN_DEFINES`, as an older flutter-watchos
-  does.
+  does. The file is always `watchos/Runner/Info.plist`, the one the
+  template's `Runner` target names; the build also warns when the watch
+  app's Xcode project sets `INFOPLIST_FILE` only to other files.
 - A plugin built through SwiftPM (a `watchos/Package.swift` that names a
   SwiftPM package, see [Linking an external native SDK](#linking-an-external-native-sdk))
   is not covered. xcodebuild compiles it, and none of its sources, view

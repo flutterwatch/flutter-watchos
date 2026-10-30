@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:flutter_tools/src/base/common.dart' show ToolExit;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
@@ -246,8 +247,12 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
 /// instances.
 ///
 /// Throws a `ToolExit` for a plugin whose `defines` is invalid (see
-/// [parseWatchosPluginDefines]).
-List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
+/// [parseWatchosPluginDefines]), unless [refuseInvalidDefines] is false: that
+/// plugin is then discovered with no `defines`, and a trace says why.
+List<WatchosPlugin> _discoverWatchosPlugins(
+  FlutterProject project, {
+  bool refuseInvalidDefines = true,
+}) {
   final watchosPlugins = <WatchosPlugin>[];
   for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
     final dynamic platforms = dep.pluginYaml['platforms'];
@@ -258,6 +263,24 @@ List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
     if (watchosConfig is! YamlMap) {
       continue;
     }
+    final String pubspecPath = globals.fs.path.join(dep.path, 'pubspec.yaml');
+    List<WatchosPluginDefine> defines;
+    try {
+      defines = parseWatchosPluginDefines(
+        pluginName: dep.name,
+        pubspecPath: pubspecPath,
+        yaml: watchosConfig[kWatchosDefines],
+      );
+    } on ToolExit {
+      if (refuseInvalidDefines) {
+        rethrow;
+      }
+      globals.logger.printTrace(
+        'The `$kWatchosDefines` of ${dep.name} in $pubspecPath are invalid, but pub get '
+        'has yet to resolve the last pubspec.yaml edit: the build checks them again after it.',
+      );
+      defines = const <WatchosPluginDefine>[];
+    }
     watchosPlugins.add(
       WatchosPlugin(
         name: dep.name,
@@ -266,11 +289,7 @@ List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
         dartPluginClass: watchosConfig['dartPluginClass'] as String?,
         ffiPlugin: watchosConfig[kFfiPlugin] as bool?,
         ffiSymbols: _parseFfiSymbols(dep.name, watchosConfig[kWatchosFfiSymbols]),
-        defines: parseWatchosPluginDefines(
-          pluginName: dep.name,
-          pubspecPath: globals.fs.path.join(dep.path, 'pubspec.yaml'),
-          yaml: watchosConfig[kWatchosDefines],
-        ),
+        defines: defines,
       ),
     );
     globals.logger.printTrace('Discovered watchOS plugin: ${dep.name} at ${dep.path}');
@@ -580,8 +599,9 @@ bool _warnedAboutOldFlutterWatchos = false;
 /// The commands run the tooling step before their `pub get`, and the build
 /// runs it again after. A version read from a config that is about to change
 /// describes a resolution the build will not use: right after the user moves
-/// to a newer plugin, it would still name the old `flutter_watchos`. This is
-/// the test stock `pub get` makes before it skips itself.
+/// to a newer plugin, it would still name the old `flutter_watchos`, and the
+/// `defines` of a plugin version the user just moved away from. This is the
+/// test stock `pub get` makes before it skips itself.
 bool _packageConfigPending(FlutterProject project) {
   final File config = project.directory
       .childDirectory('.dart_tool')
@@ -652,8 +672,18 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   }
 
   // First, before anything here writes a file: discovery stops on a plugin
-  // whose `defines` is invalid, and a refused build changes nothing.
-  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
+  // whose `defines` is invalid, and a refused build changes nothing. The
+  // commands take this step before their `pub get`, though, and right after
+  // an edit to pubspec.yaml the package config can still resolve a plugin
+  // version that the edit moved away from, or a plugin it removed. The
+  // refusal is then left to the build, which discovers the plugins again
+  // after `pub get` and before it compiles anything, so the edit that fixes
+  // the app is not refused by the version it replaces.
+  final bool packageConfigPending = _packageConfigPending(project);
+  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(
+    project,
+    refuseInvalidDefines: !packageConfigPending,
+  );
 
   // Keep the host-mode wiring (standalone thin container vs companion iOS
   // app) consistent on every build/run. The mode is derived from the project
@@ -688,7 +718,7 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   if (unsupported.isNotEmpty) {
     globals.logger.printWarning(unsupported.join('\n'));
   }
-  final String? oldPackage = _packageConfigPending(project)
+  final String? oldPackage = packageConfigPending
       ? null
       : oldFlutterWatchosWarning(flutterWatchosVersion);
   if (oldPackage != null && !_warnedAboutOldFlutterWatchos) {

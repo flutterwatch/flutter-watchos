@@ -29,6 +29,14 @@ if [ "$CONFIGURATION" = Release ] && [ "$FLUTTER_WATCHOS_BUILD_MODE" != release 
 fi
 ```
 
+The same goes for plugins' native code, which that build compiled and
+staged there too. A plugin can compile code in or out by the keys the watch
+app's `Info.plist` sets (see
+[Compiling out what an app does not use](plugins.md#compiling-out-what-an-app-does-not-use)),
+and Xcode does not recompile it. So after an `Info.plist` edit, such as a
+usage description added on the `Runner` target's Info tab, run
+`flutter-watchos build watchos --release` again before you archive.
+
 ## How submission works
 
 App Store submission wraps a watch-only app in a thin iOS container

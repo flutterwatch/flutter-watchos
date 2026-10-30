@@ -120,8 +120,9 @@ void main() {
     }
   });
 
-  // A plugin guards optional code with its own macros and with the marker,
-  // which says that this CLI applies `defines`; an older CLI passes neither.
+  // A plugin that declares `defines` guards optional code with its own macros
+  // and with the marker, which says that the CLI applied them. An older CLI
+  // passes neither, and so does this one to a plugin that declares none.
   group('plugin define flags', () {
     testWithoutContext('clang gets the marker first, then each macro that is on, all =1', () {
       expect(
@@ -146,7 +147,7 @@ void main() {
       );
     });
 
-    testWithoutContext('with no macro on, both passes still get the marker', () {
+    testWithoutContext('a plugin with defines but none on still gets the marker', () {
       expect(pluginClangDefineFlags(const <String>[]), <String>[
         '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
       ]);

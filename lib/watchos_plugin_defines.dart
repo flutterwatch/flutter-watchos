@@ -24,19 +24,23 @@ library;
 
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:meta/meta.dart';
+import 'package:path/path.dart' as p;
 
 /// Pubspec key, nested under `flutter.plugin.platforms.watchos`, that maps a
 /// plugin's preprocessor macros to the app Info.plist keys that turn them on.
 const String kWatchosDefines = 'defines';
 
-/// The define that every plugin source the CLI compiles gets, ahead of the
-/// plugin's own macros: `-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1` for clang, and a
-/// compilation condition of the same name for swiftc.
+/// The define that the sources of a plugin whose `defines` the CLI applies
+/// get, ahead of the plugin's own macros: `-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1`
+/// for clang, and a compilation condition of the same name for swiftc.
 ///
-/// It says that this CLI applies `defines`. A CLI that predates them passes no
-/// macro at all, so a plugin keeps all of its code there by guarding with
+/// It says that the CLI applied this plugin's `defines`. A CLI that predates
+/// them passes no macro at all, and neither does this one for a plugin that
+/// declares none, so a plugin keeps all of its code there by guarding with
 /// `#if !defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MY_MACRO` (in Swift,
-/// `#if !FLUTTER_WATCHOS_PLUGIN_DEFINES || MY_MACRO`).
+/// `#if !FLUTTER_WATCHOS_PLUGIN_DEFINES || MY_MACRO`). A `defines` that is
+/// misspelled or misplaced in the pubspec then keeps that code too, instead
+/// of compiling all of it out.
 const String kWatchosPluginDefinesMarker = 'FLUTTER_WATCHOS_PLUGIN_DEFINES';
 
 /// A C identifier, which a macro name must be.
@@ -86,7 +90,10 @@ class WatchosPluginDefine {
 /// or out of every app that uses the plugin. Throws a [ToolExit] that names
 /// the plugin, [pubspecPath] and every invalid entry when [yaml] is not a
 /// map, when a macro name is not a C identifier, or when a value is not an
-/// Info.plist key (a non-empty string) or a non-empty list of keys.
+/// Info.plist key (a non-empty string) or a non-empty list of keys. Its last
+/// line is for the developer of an app that uses the plugin, who cannot fix
+/// its pubspec: after a change to the dependency, `flutter-watchos pub get`
+/// resolves the plugin again.
 List<WatchosPluginDefine> parseWatchosPluginDefines({
   required String pluginName,
   required String pubspecPath,
@@ -117,7 +124,9 @@ List<WatchosPluginDefine> parseWatchosPluginDefines({
       'The watchOS plugin $pluginName has an invalid `$kWatchosDefines` in $pubspecPath:\n'
       '${problems.map((String problem) => '  - $problem').join('\n')}\n'
       'Each entry maps a macro name, a C identifier, to an app Info.plist key '
-      'or to a list of keys.',
+      'or to a list of keys.\n'
+      "If the app's dependency on $pluginName changed, run `flutter-watchos pub get` "
+      'to resolve it again.',
     );
   }
   return defines;
@@ -194,4 +203,62 @@ Map<String, String> enabledWatchosPluginDefines(
     }
   }
   return enabled;
+}
+
+/// An `INFOPLIST_FILE` build setting in the text of a `project.pbxproj`, with
+/// or without a condition (`"INFOPLIST_FILE[sdk=watchos*]"`), and its value,
+/// quoted or not. The word boundary leaves out `GENERATE_INFOPLIST_FILE`.
+final RegExp _infoPlistFileSetting = RegExp(
+  r'\bINFOPLIST_FILE(?:\[[^\]\n]*\])*"?\s*=\s*("(?:[^"\\\n]|\\.)*"|[^\s;"]+)\s*;',
+);
+
+/// A backslash escape in a quoted `project.pbxproj` string.
+final RegExp _pbxprojEscape = RegExp(r'\\(.)');
+
+/// The project's own directory in a build setting, `$(SRCROOT)` or
+/// `$(PROJECT_DIR)`, in either bracket style.
+final RegExp _projectDirectorySetting = RegExp(r'\$[({](?:SRCROOT|PROJECT_DIR)[)}]');
+
+/// The `INFOPLIST_FILE` values that [pbxproj], the text of the watch app's
+/// `Runner.xcodeproj/project.pbxproj`, sets, when none of them names
+/// [infoPlistPath], the Info.plist that plugin `defines` are read from. Each
+/// value is given once, as written, in the order it first appears.
+///
+/// Null when one of them names [infoPlistPath], when [pbxproj] sets none, and
+/// when a value holds a build setting other than `$(SRCROOT)` or
+/// `$(PROJECT_DIR)`, such as `$(TARGET_NAME)/Info.plist`, which may well name
+/// it. A relative value is read from [projectDirectory], the `watchos/`
+/// directory, as Xcode reads it. This is a cheap reading of the text, not
+/// Xcode's resolution of the setting per target and configuration: a value
+/// that only the iOS container's target sets counts as well.
+List<String>? otherInfoPlistFiles({
+  required String pbxproj,
+  required String projectDirectory,
+  required String infoPlistPath,
+  required p.Context pathContext,
+}) {
+  final values = <String>{};
+  for (final RegExpMatch match in _infoPlistFileSetting.allMatches(pbxproj)) {
+    String value = match[1]!;
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value
+          .substring(1, value.length - 1)
+          .replaceAllMapped(_pbxprojEscape, (Match escape) => escape[1]!);
+    }
+    if (value.isNotEmpty) {
+      values.add(value);
+    }
+  }
+  if (values.isEmpty) {
+    return null;
+  }
+  final String infoPlist = pathContext.normalize(infoPlistPath);
+  for (final value in values) {
+    final String path = value.replaceAll(_projectDirectorySetting, projectDirectory);
+    if (path.contains(r'$') ||
+        pathContext.normalize(pathContext.join(projectDirectory, path)) == infoPlist) {
+      return null;
+    }
+  }
+  return values.toList();
 }

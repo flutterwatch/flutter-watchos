@@ -137,7 +137,12 @@ and (watchOS 9+) LocalAuthentication all exist on the watch.
 3. If the source plugin compiles parts of itself out with macros that each
    app sets, as permission_handler's `PERMISSION_*` do, map those macros to
    the app Info.plist keys that turn them on, under `defines:` in
-   `pubspec.yaml` (see
+   `pubspec.yaml`, and rewrite each upstream guard to the marker form:
+   `#if PERMISSION_CONTACTS` becomes
+   `#if !defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || PERMISSION_CONTACTS`
+   (in Swift, `#if !FLUTTER_WATCHOS_PLUGIN_DEFINES || PERMISSION_CONTACTS`).
+   An upstream guard left as it is compiles its code out wherever the
+   defines are not applied, under an older flutter-watchos for one (see
    [Compiling out what an app does not use](plugins.md#compiling-out-what-an-app-does-not-use)).
 4. Apply the TODO block in `lib/<plugin>_watchos.dart`: import the
    platform interface, `extends` it, and set `instance` in

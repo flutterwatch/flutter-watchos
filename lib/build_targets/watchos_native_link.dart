@@ -118,8 +118,10 @@ List<String> pluginSwiftOptimizationFlags(BuildMode mode) => <String>[
   '-g',
 ];
 
-/// The `-D` flags for a plugin's C, Objective-C and Objective-C++ sources:
-/// [kWatchosPluginDefinesMarker], then each of [macros], all `=1`.
+/// The `-D` flags for the C, Objective-C and Objective-C++ sources of a
+/// plugin whose `defines` the CLI applies: [kWatchosPluginDefinesMarker],
+/// then each of [macros], all `=1`. A plugin that declares no `defines` gets
+/// no `-D` at all.
 ///
 /// [macros] are the plugin's `defines` that the app's Info.plist turns on
 /// (see [enabledWatchosPluginDefines]). A macro that is off is not passed at
