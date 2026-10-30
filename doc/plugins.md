@@ -124,6 +124,87 @@ flutter:
           - my_plugin_watchos_do_thing
 ```
 
+### Compiling out what an app does not use
+
+App Store Connect asks for a usage description for each privacy-sensitive
+API a binary references (ITMS-90683), whether or not the app ever calls it.
+So a plugin that covers several such APIs, as a permissions plugin does,
+should only put the code for one of them in an app that uses it. On iOS,
+permission_handler does this with `PERMISSION_*` macros that each app sets
+in its Podfile. A watchOS plugin maps each of its macros to the app
+Info.plist key that turns it on, under `defines:`:
+
+```yaml
+flutter:
+  plugin:
+    platforms:
+      watchos:
+        ffiPlugin: true
+        dartPluginClass: MyPluginWatchos
+        defines:
+          MY_PLUGIN_CONTACTS: NSContactsUsageDescription
+          MY_PLUGIN_LOCATION:
+            - NSLocationWhenInUseUsageDescription
+            - NSLocationAlwaysAndWhenInUseUsageDescription
+          MY_PLUGIN_EXTRAS: MyPluginWatchosExtras
+```
+
+A key can be one that Apple defines, such as a usage description, or one
+that the plugin defines for an app to set to `<true/>`, such as
+`MyPluginWatchosExtras` above, for code that no usage description stands
+for.
+
+On every build, `flutter-watchos` reads the watch app's
+`watchos/Runner/Info.plist` and turns a macro on when one of its keys holds
+a non-empty string or `<true/>`. With a list, any one key is enough. A
+missing key, `<false/>`, an empty string and any other type of value leave
+the macro off. Values are read as written, before Xcode expands build
+settings, so `<string>NO</string>` turns a macro on: write `<false/>`.
+
+A macro that is on reaches only the plugin that declares it. Its C,
+Objective-C and Objective-C++ sources are compiled with
+`-DMY_PLUGIN_CONTACTS=1`, and its SwiftUI view sources with
+`-DMY_PLUGIN_CONTACTS`, since a Swift condition takes no value. A macro that
+is off is not defined at all.
+
+Every plugin source the CLI compiles also gets
+`FLUTTER_WATCHOS_PLUGIN_DEFINES`. A flutter-watchos from before `defines`
+passes neither, so guard optional code this way to keep it in apps built by
+one:
+
+```objc
+#if !defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MY_PLUGIN_CONTACTS
+// Contacts code, in an app that sets NSContactsUsageDescription.
+#endif
+```
+
+```swift
+#if !FLUTTER_WATCHOS_PLUGIN_DEFINES || MY_PLUGIN_CONTACTS
+// Contacts code, in an app that sets NSContactsUsageDescription.
+#endif
+```
+
+- Give the plugin an answer for what it leaves out: permission_handler's
+  iOS implementation reports such a permission as denied.
+- Guard implementation, not declarations in a header that another plugin
+  includes: that plugin's sources are compiled without your macros.
+- An Info.plist change takes effect on the next build. Plugin sources are
+  compiled on every build.
+- An invalid `defines` stops the build before anything is compiled, and
+  names the plugin and the entry. Invalid means a `defines` that is not a
+  map, a macro name that is not a C identifier, or a value that is not an
+  Info.plist key or a list of keys.
+- `flutter-watchos build watchos -v` prints, for each plugin that declares
+  `defines`, the macros that are on and the key that turned each on.
+- If the watch app's Info.plist cannot be read, the build warns, and
+  compiles the plugins that declare `defines` without any of their macros
+  and without `FLUTTER_WATCHOS_PLUGIN_DEFINES`, as an older flutter-watchos
+  does.
+- A plugin built through SwiftPM (a `watchos/Package.swift` that names a
+  SwiftPM package, see [Linking an external native SDK](#linking-an-external-native-sdk))
+  is not covered. xcodebuild compiles it, and none of its sources, view
+  sources included, get the macros or `FLUTTER_WATCHOS_PLUGIN_DEFINES`.
+
 ### Plugins with native SwiftUI views
 
 A plugin that needs a native rendering surface (video, maps, …) can ship

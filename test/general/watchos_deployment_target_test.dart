@@ -485,6 +485,8 @@ flutter:
           final FlutterProject project = appWithPlugin(debug, release);
           // Debug stays unoptimized; profile and release are optimized as
           // Xcode's Release configuration is, with debug info in every mode.
+          // The plugin declares no `defines`, so its compiles get only the
+          // marker that says this CLI applies them.
           final debugMode = buildInfo.buildInfo.mode == BuildMode.debug;
           processManager.addCommands(<FakeCommand>[
             FakeCommand(
@@ -499,6 +501,7 @@ flutter:
                 '-g',
                 '-fobjc-arc',
                 '-fmodules',
+                '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
                 '-c',
                 '/pub/gadget/watchos/Sources/gadget/gadget.c',
                 '-o',
@@ -517,6 +520,7 @@ flutter:
                 if (debugMode) '-Onone' else '-O',
                 '-g',
                 '-whole-module-optimization',
+                '-DFLUTTER_WATCHOS_PLUGIN_DEFINES',
                 '-module-name',
                 'gadget_views',
                 '-emit-object',

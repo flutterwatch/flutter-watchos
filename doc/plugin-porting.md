@@ -134,10 +134,15 @@ and (watchOS 9+) LocalAuthentication all exist on the watch.
    (the generated example shows the pattern).
 2. List every exported symbol under `ffiSymbols:` in `pubspec.yaml`, and
    every framework you link in `Package.swift`.
-3. Apply the TODO block in `lib/<plugin>_watchos.dart`: import the
+3. If the source plugin compiles parts of itself out with macros that each
+   app sets, as permission_handler's `PERMISSION_*` do, map those macros to
+   the app Info.plist keys that turn them on, under `defines:` in
+   `pubspec.yaml` (see
+   [Compiling out what an app does not use](plugins.md#compiling-out-what-an-app-does-not-use)).
+4. Apply the TODO block in `lib/<plugin>_watchos.dart`: import the
    platform interface, `extends` it, and set `instance` in
    `registerWith()`. Add a `lookupFunction` binding per symbol.
-4. Verify on a watch: add the package to an app
+5. Verify on a watch: add the package to an app
    (`flutter-watchos create` one if needed), build for `watchsimulator`,
    and `nm` the binary to confirm your symbols are present (type `T`).
    Then run it — the implementation registers automatically via

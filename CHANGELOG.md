@@ -11,6 +11,20 @@
   (`-g`) is emitted in every mode, as for the host module, so plugin frames
   symbolicate. Plugins built through SwiftPM were already optimized.
 
+- **A plugin can leave out the code an app does not use.** A watchOS plugin
+  can map preprocessor macros to app Info.plist keys under
+  `flutter.plugin.platforms.watchos.defines` in its pubspec. On every
+  build, the tool reads the watch app's `watchos/Runner/Info.plist` and
+  compiles that plugin's native sources with each macro whose key the app
+  sets to a non-empty string or `true`. Every plugin source the tool
+  compiles also gets `FLUTTER_WATCHOS_PLUGIN_DEFINES`, so a plugin can keep
+  all of its code under an older flutter-watchos. A permissions plugin can
+  then leave out the groups an app does not use, as permission_handler's
+  `PERMISSION_*` macros do on iOS. An invalid declaration stops the build
+  before anything is compiled, and `-v` prints each plugin's macros.
+  Plugins built through SwiftPM are not covered. See
+  [Compiling out what an app does not use](doc/plugins.md#compiling-out-what-an-app-does-not-use).
+
 ## 0.1.1
 
 Debugging on the watch Simulator now takes stock Flutter's launch options

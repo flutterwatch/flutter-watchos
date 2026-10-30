@@ -14,6 +14,7 @@ import 'package:yaml/yaml.dart';
 
 import 'watchos_cache.dart' show watchosToolRootDirectory;
 import 'watchos_host_mode.dart';
+import 'watchos_plugin_defines.dart';
 import 'watchos_swift_package_manager.dart';
 
 /// Pubspec key, nested under `flutter.plugin.platforms.watchos`, by which an
@@ -243,6 +244,9 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
 /// Discovers plugins in [project] that declare a
 /// `flutter.plugin.platforms.watchos` block, parsing them into [WatchosPlugin]
 /// instances.
+///
+/// Throws a `ToolExit` for a plugin whose `defines` is invalid (see
+/// [parseWatchosPluginDefines]).
 List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
   final watchosPlugins = <WatchosPlugin>[];
   for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
@@ -262,6 +266,11 @@ List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
         dartPluginClass: watchosConfig['dartPluginClass'] as String?,
         ffiPlugin: watchosConfig[kFfiPlugin] as bool?,
         ffiSymbols: _parseFfiSymbols(dep.name, watchosConfig[kWatchosFfiSymbols]),
+        defines: parseWatchosPluginDefines(
+          pluginName: dep.name,
+          pubspecPath: globals.fs.path.join(dep.path, 'pubspec.yaml'),
+          yaml: watchosConfig[kWatchosDefines],
+        ),
       ),
     );
     globals.logger.printTrace('Discovered watchOS plugin: ${dep.name} at ${dep.path}');
@@ -313,7 +322,13 @@ List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
     final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
     final String packageName = names.package ?? plugin.name;
     spmPlugins.add(
-      WatchosSpmPlugin(name: packageName, packagePath: watchosDir.path, libraryName: names.library),
+      WatchosSpmPlugin(
+        name: packageName,
+        packagePath: watchosDir.path,
+        libraryName: names.library,
+        pluginName: plugin.name,
+        defines: plugin.defines,
+      ),
     );
     globals.logger.printTrace(
       'watchOS SPM plugin: $packageName (product '
@@ -636,6 +651,10 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
     return;
   }
 
+  // First, before anything here writes a file: discovery stops on a plugin
+  // whose `defines` is invalid, and a refused build changes nothing.
+  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
+
   // Keep the host-mode wiring (standalone thin container vs companion iOS
   // app) consistent on every build/run. The mode is derived from the project
   // shape — an ios/ Flutter app means the watch app ships inside it as its
@@ -643,8 +662,6 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   // treats platform directories as the source of truth. Idempotent and
   // silent when the project is already consistent.
   await syncWatchosHostMode(projectDir: project.directory, logger: globals.logger);
-
-  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
 
   final List<String> recommendations = recommendWatchosPluginsToInstall(
     allPluginNames: _findAllPluginNames(project),
@@ -904,6 +921,7 @@ class WatchosPlugin extends PluginPlatform implements NativeOrDartPlugin {
     this.defaultPackage,
     this.ffiPlugin,
     this.ffiSymbols = const <String>[],
+    this.defines = const <WatchosPluginDefine>[],
   }) : assert(
          pluginClass != null ||
              dartPluginClass != null ||
@@ -921,6 +939,11 @@ class WatchosPlugin extends PluginPlatform implements NativeOrDartPlugin {
   /// C symbols this FFI plugin exports for `dart:ffi` lookup, declared under
   /// `flutter.plugin.platforms.watchos.ffiSymbols`.
   final List<String> ffiSymbols;
+
+  /// The macros this plugin's native sources are compiled with when the app's
+  /// Info.plist sets their keys, declared under
+  /// `flutter.plugin.platforms.watchos.defines`.
+  final List<WatchosPluginDefine> defines;
 
   @override
   bool hasMethodChannel() => pluginClass != null;

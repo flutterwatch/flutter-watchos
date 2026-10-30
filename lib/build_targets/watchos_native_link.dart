@@ -5,6 +5,8 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/build_info.dart';
 
+import '../watchos_plugin_defines.dart';
+
 /// The `Generated.xcconfig` lines that link the host-module and plugin
 /// archives into the watch target. Pure, so the quoting can be tested.
 ///
@@ -114,4 +116,23 @@ List<String> pluginClangOptimizationFlags(BuildMode mode) => <String>[
 List<String> pluginSwiftOptimizationFlags(BuildMode mode) => <String>[
   if (mode == BuildMode.debug) '-Onone' else '-O',
   '-g',
+];
+
+/// The `-D` flags for a plugin's C, Objective-C and Objective-C++ sources:
+/// [kWatchosPluginDefinesMarker], then each of [macros], all `=1`.
+///
+/// [macros] are the plugin's `defines` that the app's Info.plist turns on
+/// (see [enabledWatchosPluginDefines]). A macro that is off is not passed at
+/// all, so `#if` and `#ifdef` agree on it.
+List<String> pluginClangDefineFlags(Iterable<String> macros) => <String>[
+  '-D$kWatchosPluginDefinesMarker=1',
+  for (final String macro in macros) '-D$macro=1',
+];
+
+/// The `-D` flags for a plugin's SwiftUI view sources: the names of
+/// [pluginClangDefineFlags], as compilation conditions. A Swift condition is
+/// set or not and takes no value; swiftc warns on `-DNAME=1`.
+List<String> pluginSwiftDefineFlags(Iterable<String> macros) => <String>[
+  '-D$kWatchosPluginDefinesMarker',
+  for (final String macro in macros) '-D$macro',
 ];

@@ -119,4 +119,40 @@ void main() {
       });
     }
   });
+
+  // A plugin guards optional code with its own macros and with the marker,
+  // which says that this CLI applies `defines`; an older CLI passes neither.
+  group('plugin define flags', () {
+    testWithoutContext('clang gets the marker first, then each macro that is on, all =1', () {
+      expect(
+        pluginClangDefineFlags(<String>['PERMISSION_CAMERA', 'PERMISSION_ASSISTANT']),
+        <String>[
+          '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
+          '-DPERMISSION_CAMERA=1',
+          '-DPERMISSION_ASSISTANT=1',
+        ],
+      );
+    });
+
+    // swiftc warns on -DNAME=1: a Swift condition is set or not.
+    testWithoutContext('swiftc gets the same names without a value', () {
+      expect(
+        pluginSwiftDefineFlags(<String>['PERMISSION_CAMERA', 'PERMISSION_ASSISTANT']),
+        <String>[
+          '-DFLUTTER_WATCHOS_PLUGIN_DEFINES',
+          '-DPERMISSION_CAMERA',
+          '-DPERMISSION_ASSISTANT',
+        ],
+      );
+    });
+
+    testWithoutContext('with no macro on, both passes still get the marker', () {
+      expect(pluginClangDefineFlags(const <String>[]), <String>[
+        '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
+      ]);
+      expect(pluginSwiftDefineFlags(const <String>[]), <String>[
+        '-DFLUTTER_WATCHOS_PLUGIN_DEFINES',
+      ]);
+    });
+  });
 }
