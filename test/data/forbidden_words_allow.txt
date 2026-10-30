@@ -26,6 +26,7 @@ packages/in_app_purchase_watchos/lib/in_app_purchase_watchos.dart | rawPrice: (p
 packages/audioplayers_watchos/**/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
 packages/geolocator_watchos/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
 packages/games_services_watchos/example/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of the upstream example, which stays verbatim.
+packages/permission_handler_watchos/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
 packages/audioplayers_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
 packages/firebase_*_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
 packages/flutter_watch_link/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
@@ -37,11 +38,13 @@ packages/local_auth_watchos/**/*.dart | malloc.free( | package:ffi's malloc.free
 packages/shared_preferences_watchos/**/*.dart | malloc.free( | package:ffi's malloc.free, which releases native memory; a Dart API call.
 packages/flutter_secure_storage_watchos/lib/flutter_secure_storage_watchos.dart | ..free( | calloc.free as a cascade on package:ffi's calloc; a Dart API call.
 packages/firebase_*_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/flutter_local_notifications_watchos/**/*.m | free( | C's free(), which releases native memory; here the body of the plugin's exported *_release function.
 packages/flutter_secure_storage_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
 packages/flutter_watch_link/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
 packages/games_services_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
 packages/in_app_purchase_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
 packages/network_info_plus_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/permission_handler_watchos/**/*.m | free( | C's free(), which releases native memory; here the body of the plugin's exported *_release function.
 packages/shared_preferences_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
 packages/firebase_*_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
 packages/flutter_secure_storage_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
