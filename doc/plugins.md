@@ -194,12 +194,13 @@ instead.
   iOS implementation reports such a permission as denied.
 - Guard implementation, not declarations in a header that another plugin
   includes: that plugin's sources are compiled without your macros.
-- An Info.plist change takes effect on the next `flutter-watchos build`,
-  `run` or `test`, which compile plugin sources every time. An Xcode build
-  or archive does not compile them: it links the plugin archive that the
-  last flutter-watchos build left in `watchos/Flutter/`. After an
-  Info.plist edit, run `flutter-watchos build watchos --release` again
-  before you archive (see [Publish an app](publish-app.md)).
+- An Info.plist change takes effect on the next `flutter-watchos build` or
+  `run` (or `drive`, or `test` with `-d`), which compile plugin sources
+  every time. An Xcode build or archive does not compile them: it links the
+  plugin archive that the last flutter-watchos build left in
+  `watchos/Flutter/`. After an Info.plist edit, run
+  `flutter-watchos build watchos --release` again before you archive (see
+  [Publish an app](publish-app.md)).
 - An invalid `defines` stops the build before anything is compiled, and
   names the plugin and the entry. Invalid means a `defines` that is not a
   map, a macro name that is not a C identifier, or a value that is not an
@@ -211,8 +212,11 @@ instead.
   compiles the plugins that declare `defines` without any of their macros
   and without `FLUTTER_WATCHOS_PLUGIN_DEFINES`, as an older flutter-watchos
   does. The file is always `watchos/Runner/Info.plist`, the one the
-  template's `Runner` target names; the build also warns when the watch
-  app's Xcode project sets `INFOPLIST_FILE` only to other files.
+  template's `Runner` target names. When the build reads it, it also warns
+  if the `INFOPLIST_FILE` values in the watch app's Xcode project name only
+  other files. A value that holds a build setting other than `$(SRCROOT)`
+  or `$(PROJECT_DIR)`, such as `$(TARGET_NAME)/Info.plist`, may name this
+  file, so the build does not warn then.
 - A plugin built through SwiftPM (a `watchos/Package.swift` that names a
   SwiftPM package, see [Linking an external native SDK](#linking-an-external-native-sdk))
   is not covered. xcodebuild compiles it, and none of its sources, view

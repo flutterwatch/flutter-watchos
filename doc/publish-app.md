@@ -30,12 +30,14 @@ fi
 ```
 
 The same goes for plugins' native code, which that build compiled and
-staged there too. A plugin can compile code in or out by the keys the watch
-app's `Info.plist` sets (see
-[Compiling out what an app does not use](plugins.md#compiling-out-what-an-app-does-not-use)),
-and Xcode does not recompile it. So after an `Info.plist` edit, such as a
-usage description added on the `Runner` target's Info tab, run
-`flutter-watchos build watchos --release` again before you archive.
+staged there too, and which Xcode does not recompile. A plugin can have
+flutter-watchos compile parts of it in or out by the keys the watch app's
+`Info.plist` sets (see
+[Compiling out what an app does not use](plugins.md#compiling-out-what-an-app-does-not-use)).
+So after an `Info.plist` edit, such as a usage description added on the
+`Runner` target's Info tab, run `flutter-watchos build watchos --release`
+again before you archive. The check above looks only at the build mode, so
+it does not catch this.
 
 ## How submission works
 
