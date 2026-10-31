@@ -47,8 +47,8 @@ const Map<String, bool> _pluginsReadmeTable = <String, bool>{
   'video_player': true,
   'audioplayers': true,
   'in_app_purchase': true,
-  // Not until its package works with games_services' latest major, 5.x.
-  'games_services': false,
+  // From games_services_watchos 0.2.0, which works with games_services 5.x.
+  'games_services': true,
   // Published, but not yet run end to end against a Firebase project and on
   // a physical watch.
   'firebase_core': false,
@@ -204,7 +204,7 @@ void main() {
     testWithoutContext('stays silent for plugins with no listed watchOS package', () {
       expect(
         recommendWatchosPluginsToInstall(
-          allPluginNames: const <String>['some_plugin', 'games_services', 'firebase_core'],
+          allPluginNames: const <String>['some_plugin', 'firebase_messaging', 'firebase_core'],
         ),
         isEmpty,
       );
@@ -390,9 +390,9 @@ flutter:
           - native_gadget_version
 ''');
         final Directory watchosDir = pkgDir.childDirectory('watchos')..createSync();
-        watchosDir.childFile('Package.swift').writeAsStringSync(
-          'let package = Package(name: "native_gadget")\n',
-        );
+        watchosDir
+            .childFile('Package.swift')
+            .writeAsStringSync('let package = Package(name: "native_gadget")\n');
 
         fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
           ..createSync(recursive: true)
@@ -406,19 +406,22 @@ flutter:
               ],
             }),
           );
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'dependencyGraph': <Map<String, String>>[
-              <String, String>{'name': 'native_gadget'},
-            ],
-          }),
-        );
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync(
+              json.encode(<String, dynamic>{
+                'dependencyGraph': <Map<String, String>>[
+                  <String, String>{'name': 'native_gadget'},
+                ],
+              }),
+            );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForWatchosTooling(project);
 
-        final Directory runnerDir =
-            project.directory.childDirectory('watchos').childDirectory('Runner');
+        final Directory runnerDir = project.directory
+            .childDirectory('watchos')
+            .childDirectory('Runner');
         expect(runnerDir.childFile('GeneratedPluginRegistrant.m').existsSync(), isFalse);
         expect(runnerDir.childFile('GeneratedPluginRegistrant.h').existsSync(), isFalse);
       },
@@ -461,27 +464,26 @@ flutter:
           ..writeAsStringSync(
             json.encode(<String, dynamic>{
               'packages': <Map<String, String>>[
-                <String, String>{
-                  'name': 'watch_only',
-                  'rootUri': 'file:///pubcache/watch_only',
-                },
+                <String, String>{'name': 'watch_only', 'rootUri': 'file:///pubcache/watch_only'},
               ],
             }),
           );
         // The crown_breaker shape: pub found nothing it considered a plugin.
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'plugins': <String, dynamic>{'watchos': <dynamic>[]},
-            'dependencyGraph': <dynamic>[],
-          }),
-        );
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync(
+              json.encode(<String, dynamic>{
+                'plugins': <String, dynamic>{'watchos': <dynamic>[]},
+                'dependencyGraph': <dynamic>[],
+              }),
+            );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForWatchosTooling(project);
 
-        final decoded = json.decode(
-          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
-        ) as Map<String, dynamic>;
+        final decoded =
+            json.decode(projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync())
+                as Map<String, dynamic>;
         final plugins = (decoded['plugins'] as Map<String, dynamic>)['watchos']! as List<dynamic>;
         expect(
           plugins.map((dynamic p) => (p as Map<String, dynamic>)['name']),
@@ -531,21 +533,23 @@ flutter:
               ],
             }),
           );
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'plugins': <String, dynamic>{'watchos': <dynamic>[]},
-            'dependencyGraph': <Map<String, String>>[
-              <String, String>{'name': 'old_watch'},
-            ],
-          }),
-        );
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync(
+              json.encode(<String, dynamic>{
+                'plugins': <String, dynamic>{'watchos': <dynamic>[]},
+                'dependencyGraph': <Map<String, String>>[
+                  <String, String>{'name': 'old_watch'},
+                ],
+              }),
+            );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForWatchosTooling(project);
 
-        final decoded = json.decode(
-          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
-        ) as Map<String, dynamic>;
+        final decoded =
+            json.decode(projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync())
+                as Map<String, dynamic>;
         final plugins = (decoded['plugins'] as Map<String, dynamic>)['watchos']! as List<dynamic>;
         expect(
           plugins.map((dynamic p) => (p as Map<String, dynamic>)['name']),
@@ -713,12 +717,9 @@ flutter:
 
   group('native crown runtime', () {
     testWithoutContext('the registrant installs it before any plugin', () {
-      final String source = watchosDartPluginRegistrantSource(
-        <WatchosPlugin>[
-          WatchosPlugin(name: 'flutter_watchos', dartPluginClass: 'FlutterWatchos'),
-        ],
-        crownRuntime: true,
-      );
+      final String source = watchosDartPluginRegistrantSource(<WatchosPlugin>[
+        WatchosPlugin(name: 'flutter_watchos', dartPluginClass: 'FlutterWatchos'),
+      ], crownRuntime: true);
       expect(
         source,
         contains("import 'watchos_crown_runtime.dart' as flutter_watchos_crown_runtime;"),
@@ -747,17 +748,11 @@ flutter:
         ..createSync(recursive: true);
 
       expect(copyWatchosCrownRuntime(root, build), isTrue);
-      expect(
-        build.childFile('watchos_crown_runtime.dart').readAsStringSync(),
-        'void install() {}',
-      );
+      expect(build.childFile('watchos_crown_runtime.dart').readAsStringSync(), 'void install() {}');
 
       runtime.writeAsStringSync('void install() { /* v2 */ }');
       expect(copyWatchosCrownRuntime(root, build), isTrue);
-      expect(
-        build.childFile('watchos_crown_runtime.dart').readAsStringSync(),
-        contains('v2'),
-      );
+      expect(build.childFile('watchos_crown_runtime.dart').readAsStringSync(), contains('v2'));
     });
 
     testWithoutContext('an installation without the runtime removes a stale copy', () {
@@ -829,7 +824,10 @@ flutter:
         await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
 
         expect(filesUnder(projectDir), before);
-        expect(projectDir.childDirectory('watchos').childDirectory('Flutter').existsSync(), isFalse);
+        expect(
+          projectDir.childDirectory('watchos').childDirectory('Flutter').existsSync(),
+          isFalse,
+        );
       },
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
@@ -899,10 +897,12 @@ flutter:
     Directory appUsing(Map<String, String> pluginPubspecs) {
       final Directory projectDir = fileSystem.directory('/app')..createSync();
       projectDir.childDirectory('watchos').childDirectory('Runner').createSync(recursive: true);
-      projectDir.childFile('pubspec.yaml').writeAsStringSync(
-        'name: app\ndependencies:\n'
-        '${pluginPubspecs.keys.map((String name) => '  $name: any\n').join()}',
-      );
+      projectDir
+          .childFile('pubspec.yaml')
+          .writeAsStringSync(
+            'name: app\ndependencies:\n'
+            '${pluginPubspecs.keys.map((String name) => '  $name: any\n').join()}',
+          );
       for (final MapEntry<String, String> plugin in pluginPubspecs.entries) {
         fileSystem.file('/pubcache/${plugin.key}/pubspec.yaml')
           ..createSync(recursive: true)
@@ -918,13 +918,15 @@ flutter:
             ],
           }),
         );
-      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-        json.encode(<String, dynamic>{
-          'dependencyGraph': <Map<String, String>>[
-            for (final String name in pluginPubspecs.keys) <String, String>{'name': name},
-          ],
-        }),
-      );
+      projectDir
+          .childFile('.flutter-plugins-dependencies')
+          .writeAsStringSync(
+            json.encode(<String, dynamic>{
+              'dependencyGraph': <Map<String, String>>[
+                for (final String name in pluginPubspecs.keys) <String, String>{'name': name},
+              ],
+            }),
+          );
       return projectDir;
     }
 
@@ -1025,10 +1027,7 @@ flutter:
         await ensureReadyForWatchosTooling(FlutterProject.fromDirectory(projectDir));
 
         final String warnings = testLogger.warningText;
-        expect(
-          'flutter-watchos pub upgrade flutter_watchos'.allMatches(warnings),
-          hasLength(1),
-        );
+        expect('flutter-watchos pub upgrade flutter_watchos'.allMatches(warnings), hasLength(1));
         expect(warnings, contains('WatchPlatformView'));
       },
       overrides: <Type, Generator>{

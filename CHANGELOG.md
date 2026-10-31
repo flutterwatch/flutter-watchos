@@ -13,6 +13,18 @@
   so plugin discovery keeps only the packages the member itself depends on;
   a plugin used only by a sibling member is not linked into the watch app.
   An app outside a workspace reads the same file as before.
+- **`plugin port --include-example` pins the plugin and keeps the example's
+  assets.** The ported example's pubspec named the app-facing plugin as
+  `any`, which builds against whatever is newest that day; it now names
+  `^<version>` of the package the example came from, and warns when that
+  version cannot be read. The assets and fonts the upstream example's pubspec
+  declares are copied with it and declared again; before, only `lib/` and
+  `integration_test/` were copied, so an example that loads an image failed
+  at its first frame.
+- **`games_services` is among the plugins the tool suggests.** Since
+  games_services_watchos 0.2.0, which works with games_services 5.x, a project
+  that uses `games_services` is told to add it, as for the fifteen other
+  plugins with a watchOS package.
 
 ## 0.1.1
 

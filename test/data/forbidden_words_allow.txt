@@ -19,3 +19,71 @@ lib/watchos_logger.dart | widgetPreviews | The `widgetPreviews` parameter of sto
 .github/workflows/smoke.yml | (alpha|beta|rc) | The pre-release part of `upgrade`'s release tag pattern, which the smoke workflow uses to pick the same tag. Code in a run: line.
 packages/in_app_purchase_watchos/lib/in_app_purchase_watchos.dart | price: p['price'] | The `price` field of `ProductDetails`, an in_app_purchase API name.
 packages/in_app_purchase_watchos/lib/in_app_purchase_watchos.dart | rawPrice: (p['rawPrice'] | The `rawPrice` field of `ProductDetails`, an in_app_purchase API name.
+#
+# The plugins repository (packages/**). These lines match nothing in the CLI,
+# so its test skips them there. None may match packages/flutter_watchos/,
+# which is the CLI's, so each entry names its packages.
+packages/audioplayers_watchos/**/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
+packages/geolocator_watchos/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
+packages/games_services_watchos/example/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of the upstream example, which stays verbatim.
+packages/permission_handler_watchos/LICENSE | Permission is hereby granted, free of charge, | The MIT licence text of an upstream plugin, which stays verbatim.
+packages/audioplayers_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/firebase_*_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/flutter_watch_link/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/games_services_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/url_launcher_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/video_player_watchos/**/*.dart | calloc.free( | package:ffi's calloc.free, which releases native memory; a Dart API call.
+packages/in_app_purchase_watchos/**/*.dart | malloc.free( | package:ffi's malloc.free, which releases native memory; a Dart API call.
+packages/local_auth_watchos/**/*.dart | malloc.free( | package:ffi's malloc.free, which releases native memory; a Dart API call.
+packages/shared_preferences_watchos/**/*.dart | malloc.free( | package:ffi's malloc.free, which releases native memory; a Dart API call.
+packages/flutter_secure_storage_watchos/lib/flutter_secure_storage_watchos.dart | ..free( | calloc.free as a cascade on package:ffi's calloc; a Dart API call.
+packages/firebase_*_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/flutter_local_notifications_watchos/**/*.m | free( | C's free(), which releases native memory; here the body of the plugin's exported *_release function.
+packages/flutter_secure_storage_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/flutter_watch_link/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/games_services_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/in_app_purchase_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/network_info_plus_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/permission_handler_watchos/**/*.m | free( | C's free(), which releases native memory; here the body of the plugin's exported *_release function.
+packages/shared_preferences_watchos/**/*.m | free( | C's free(), which releases native memory; also the tail of each plugin's exported *_free function.
+packages/firebase_*_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
+packages/flutter_secure_storage_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
+packages/games_services_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
+packages/network_info_plus_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
+packages/shared_preferences_watchos/** | _watchos_free | The C function each plugin exports to release a string it returned; a symbol name, also in ffiSymbols and in Dart lookups.
+packages/flutter_watch_link/** | flutter_watch_link_free | The C function flutter_watch_link exports to release a string it returned; a symbol name.
+packages/flutter_watch_link/src/flutter_watch_link_ffi.h | `..._free` | The short form of the symbol name flutter_watch_link_free in its header comments.
+packages/firebase_*_watchos/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/flutter_secure_storage_watchos/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/flutter_watch_link/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/games_services_watchos/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/network_info_plus_watchos/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/shared_preferences_watchos/**/*.dart | _free | Private Dart names (_free, _freeString, _freeFn) of the function bound to a plugin's exported *_free symbol.
+packages/flutter_secure_storage_watchos/**/*.dart | _Free | Private typedef names (_FreeNative, _FreeDart) of the signature of that function.
+packages/network_info_plus_watchos/**/*.dart | _Free | Private typedef names (_FreeNative, _FreeDart) of the signature of that function.
+packages/games_services_watchos/lib/src/games_services_watchos_bindings.dart | free = | The free field of the bindings class, bound to games_services_watchos_free; a Dart member name.
+packages/games_services_watchos/lib/src/games_services_watchos_bindings.dart | ) free; | The declaration of that free field.
+packages/games_services_watchos/lib/src/games_services_watchos_bindings.dart | b.free( | A call of that free field.
+packages/device_info_plus_watchos/** | freeDiskSize | The freeDiskSize field of device_info_plus's IosDeviceInfo; an API name.
+packages/device_info_plus_watchos/watchos/Classes/device_info_plus_watchos_ffi.m | NSFileSystemFreeSize | Foundation's file-system attribute key; an Apple API name.
+packages/device_info_plus_watchos/watchos/Classes/device_info_plus_watchos_ffi.m | freeDisk | A local variable that holds the freeDiskSize value.
+packages/device_info_plus_watchos/example/** | previewSdkInt | The previewSdkInt field of device_info_plus's AndroidBuildVersion, read by the upstream example and its integration test; an API name.
+packages/firebase_messaging_watchos/** | AppleShowPreviewSetting | firebase_messaging's enum for the notification content setting; an API name.
+packages/firebase_messaging_watchos/** | showPreviews | The showPreviews field of firebase_messaging's NotificationSettings, and its key in the native JSON; an API name.
+packages/firebase_messaging_watchos/example/lib/permissions.dart | previewMap | A constant of the upstream example that maps that setting to text; a code identifier.
+packages/flutter_watch_link/example/.gitignore | .widget_preview/ | The folder Flutter's widget previewer writes, ignored as flutter create writes it; a path.
+packages/flutter_watch_link/example/ios/**/WorkspaceSettings.xcsettings | PreviewsEnabled | An Xcode workspace setting key, written by Xcode.
+packages/in_app_purchase_watchos/**/*.dart | .price | The price field of ProductDetails; an in_app_purchase API name.
+packages/in_app_purchase_watchos/**/*.dart | .rawPrice | The rawPrice field of ProductDetails; an in_app_purchase API name.
+packages/in_app_purchase_watchos/test/in_app_purchase_watchos_test.dart | price: | The price parameter of the ProductDetails constructor; an API name.
+packages/in_app_purchase_watchos/test/in_app_purchase_watchos_test.dart | rawPrice: | The rawPrice parameter of the ProductDetails constructor; an API name.
+packages/in_app_purchase_watchos/test/in_app_purchase_watchos_test.dart | 'price' | The price key of the product JSON that the native side returns; a string key.
+packages/in_app_purchase_watchos/test/in_app_purchase_watchos_test.dart | 'rawPrice' | The rawPrice key of the same JSON; a string key.
+packages/in_app_purchase_watchos/watchos/Classes/in_app_purchase_watchos_ffi.h | "price","rawPrice" | The keys of the product JSON, in the comment that documents its format; string keys.
+packages/in_app_purchase_watchos/watchos/Classes/in_app_purchase_watchos_ffi.m | @"price" | The price key of the product JSON; a string key.
+packages/in_app_purchase_watchos/watchos/Classes/in_app_purchase_watchos_ffi.m | @"rawPrice" | The rawPrice key of the product JSON; a string key.
+packages/in_app_purchase_watchos/watchos/Classes/in_app_purchase_watchos_ffi.m | .price | SKProduct's price and priceLocale properties; StoreKit API names.
+packages/in_app_purchase_watchos/example/watchos/Configuration.storekit | "displayPrice" | A key of Xcode's StoreKit configuration file format.
+packages/in_app_purchase_watchos/** | showPriceConsentIfNeeded | A method of in_app_purchase_storekit's platform addition, in the upstream example and in each place this package implements or names it; an API name.
+packages/in_app_purchase_watchos/example/lib/main.dart | confirmPriceChange | A method of the upstream example; a code identifier.
+packages/in_app_purchase_watchos/example/lib/main.dart | shouldShowPriceConsent | A method of the upstream example; a code identifier.
