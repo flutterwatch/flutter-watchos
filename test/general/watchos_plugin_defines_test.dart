@@ -508,6 +508,9 @@ _permission_2: PermissionHandlerWatchosSiri
       expect(others(_templatePbxproj()), isNull);
     });
 
+    // $(SRCROOT) and ${PROJECT_DIR} are expanded to the project directory
+    // before a value is compared, so a value that holds one of them and names
+    // another file is listed too, as written.
     testWithoutContext('each file the project names, once, when none is Runner/Info.plist', () {
       expect(
         others(
@@ -515,9 +518,17 @@ _permission_2: PermissionHandlerWatchosSiri
           '\t\t\t\tINFOPLIST_FILE = Runner/Info-Watch.plist;\n'
           '\t\t\t\tINFOPLIST_FILE = "Runner/Info-Watch.plist";\n'
           '\t\t\t\t"INFOPLIST_FILE[sdk=watchos*]" = "Watch App/Info.plist";\n'
+          '\t\t\t\tINFOPLIST_FILE = "\$(SRCROOT)/Runner/Info-Watch.plist";\n'
+          '\t\t\t\tINFOPLIST_FILE = "\${PROJECT_DIR}/Watch/Info.plist";\n'
           '\t\t\t\tINFOPLIST_FILE = HostApp/Info.plist;\n',
         ),
-        <String>['Runner/Info-Watch.plist', 'Watch App/Info.plist', 'HostApp/Info.plist'],
+        <String>[
+          'Runner/Info-Watch.plist',
+          'Watch App/Info.plist',
+          r'$(SRCROOT)/Runner/Info-Watch.plist',
+          r'${PROJECT_DIR}/Watch/Info.plist',
+          'HostApp/Info.plist',
+        ],
       );
     });
 
@@ -1135,12 +1146,17 @@ _permission_2: PermissionHandlerWatchosSiri
       );
     }
 
-    testUsingContext('no plugin with defines, no Info.plist read, and no -D', () async {
+    // The Xcode project is checked only when the Info.plist is read, so a
+    // project that names only other files gives no warning here.
+    testUsingContext('no plugin with defines, no Info.plist read, no -D and no warning', () async {
       final FlutterProject project = _app(
         fileSystem,
         <String, String>{'plain': ''},
         views: <String>{'plain'},
       );
+      fileSystem.file('/app/watchos/Runner.xcodeproj/project.pbxproj')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('INFOPLIST_FILE = Runner/Info-Watch.plist;\n');
       processManager.addCommands(<FakeCommand>[
         _clang('plain', const <String>[]),
         _swiftc('plain', const <String>[]),
@@ -1151,6 +1167,7 @@ _permission_2: PermissionHandlerWatchosSiri
 
       expect(processManager, hasNoRemainingExpectations);
       expect(plistParser.reads, isEmpty);
+      expect(testLogger.warningText, isEmpty);
     }, overrides: overrides());
 
     // Defines are read from watchos/Runner/Info.plist. An app whose project

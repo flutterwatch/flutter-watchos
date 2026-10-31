@@ -191,14 +191,22 @@ A plain `#if MY_PLUGIN_CONTACTS` leaves the code out in each of those cases
 instead.
 
 - Give the plugin an answer for what it leaves out: permission_handler's
-  iOS implementation reports such a permission as denied.
+  iOS implementation reports such a permission as denied. Compile that
+  answer only where the code is left out: put it in the `#else` of the
+  guard above, or guard it with
+  `#if defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) && !MY_PLUGIN_CONTACTS`
+  (in Swift, `#if FLUTTER_WATCHOS_PLUGIN_DEFINES && !MY_PLUGIN_CONTACTS`).
+  A plain `#if !MY_PLUGIN_CONTACTS` compiles the answer in, in each of the
+  cases above, so the plugin reports denied although its contacts code is
+  in the app.
 - Guard implementation, not declarations in a header that another plugin
   includes: that plugin's sources are compiled without your macros.
 - An Info.plist change takes effect on the next `flutter-watchos build` or
-  `run` (or `drive`, or `test` with `-d`), which compile plugin sources
-  every time. An Xcode build or archive does not compile them: it links the
-  plugin archive that the last flutter-watchos build left in
-  `watchos/Flutter/`. After an Info.plist edit, run
+  `run` (or `drive`, or `test integration_test`, which runs on a watch
+  Simulator). Each of them compiles plugin sources every time; a `test` of
+  host-side tests compiles none. An Xcode build or archive does not compile
+  them either: it links the plugin archive that the last flutter-watchos
+  build left in `watchos/Flutter/`. After an Info.plist edit, run
   `flutter-watchos build watchos --release` again before you archive (see
   [Publish an app](publish-app.md)).
 - An invalid `defines` stops the build before anything is compiled, and
