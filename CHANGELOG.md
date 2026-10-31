@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **An app in a pub workspace links its plugins.** A watch app that is a
+  member of a pub workspace (`resolution: workspace`) built without error
+  but with no plugin native code in it. The tool looked for the app's own
+  `.dart_tool/package_config.json`, and a workspace member has none: pub
+  writes one config at the workspace root and leaves
+  `.dart_tool/pub/workspace_ref.json` in each member pointing to it. The
+  tool now follows that reference to the root's config, as
+  `flutter pub get` does. The root's config lists every member's packages,
+  so plugin discovery keeps only the packages the member itself depends on;
+  a plugin used only by a sibling member is not linked into the watch app.
+  An app outside a workspace reads the same file as before.
+
 ## 0.1.1
 
 Debugging on the watch Simulator now takes stock Flutter's launch options

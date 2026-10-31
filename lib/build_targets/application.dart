@@ -32,6 +32,7 @@ import 'package:package_config/package_config.dart';
 import '../watchos_artifacts.dart';
 import '../watchos_build_info.dart';
 import '../watchos_cache.dart';
+import '../watchos_package_config.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
 import 'watchos_hooks.dart';
@@ -286,7 +287,7 @@ class WatchosKernelSnapshot extends KernelSnapshot {
     final buildMode = BuildMode.fromCliName(buildModeEnvironment);
     final String targetFile =
         environment.defines[kTargetFile] ?? environment.fileSystem.path.join('lib', 'main.dart');
-    final File packagesFile = findPackageConfigFileOrDefault(environment.projectDir);
+    final File packagesFile = watchosPackageConfigFile(environment.projectDir);
     final String targetFileAbsolute = environment.fileSystem.file(targetFile).absolute.path;
     final trackWidgetCreation = environment.defines[kTrackWidgetCreation] != 'false';
     final TargetPlatform targetPlatform = getTargetPlatformForName(targetPlatformEnvironment);
@@ -1513,7 +1514,7 @@ class NativeWatchosBundle extends Target {
     // (WatchStatusBar), so an app without it gets a host module that never
     // references the symbol at all. See kStatusBarSpiSwiftDefine.
     final PackageConfig packageConfig = await loadPackageConfigWithLogging(
-      findPackageConfigFileOrDefault(project.directory),
+      watchosPackageConfigFile(project.directory),
       logger: globals.logger,
     );
     final bool linksFlutterWatchos =
