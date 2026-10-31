@@ -9,6 +9,8 @@ import 'package:flutter_tools/src/base/io.dart' show ProcessResult;
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:process/process.dart';
 
+import '../watchos_package_config.dart';
+
 /// Where the source plugin comes from.
 enum FetchMode {
   /// A directory already on disk (the default positional argument).
@@ -179,9 +181,7 @@ dependencies:
         '${r.stderr}',
       );
     }
-    final File cfg = probe
-        .childDirectory('.dart_tool')
-        .childFile('package_config.json');
+    final File cfg = watchosPackageConfigFile(probe);
     if (!cfg.existsSync()) {
       throw SourceFetchError(
         'pub did not write package_config.json; cannot locate '

@@ -4,8 +4,10 @@
 
 import 'dart:convert';
 
+import 'package:flutter_tools/src/base/common.dart' show ToolExit;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/package_graph.dart' show PackageGraph;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart' show visibleForTesting;
@@ -14,6 +16,8 @@ import 'package:yaml/yaml.dart';
 
 import 'watchos_cache.dart' show watchosToolRootDirectory;
 import 'watchos_host_mode.dart';
+import 'watchos_package_config.dart';
+import 'watchos_plugin_defines.dart';
 import 'watchos_swift_package_manager.dart';
 
 /// Pubspec key, nested under `flutter.plugin.platforms.watchos`, by which an
@@ -57,11 +61,12 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
 /// It lists exactly the rows of the plugins repository's README table whose
 /// package has a plain version on pub.dev and a README snippet that resolves
 /// with the upstream plugin's latest major, so
-/// [recommendWatchosPluginsToInstall] can suggest them: the fifteen below.
+/// [recommendWatchosPluginsToInstall] can suggest them: the sixteen below.
+/// `games_services_watchos` joined with 0.2.0, which works with
+/// games_services 5.x.
 ///
-/// Two kinds of rows are left out on purpose. `games_services_watchos` works
-/// with games_services 4.x, not with its latest major, 5.x. The four Firebase
-/// packages (`firebase_core`, `firebase_auth`, `firebase_messaging` and
+/// One kind of row is left out on purpose. The four Firebase packages
+/// (`firebase_core`, `firebase_auth`, `firebase_messaging` and
 /// `firebase_storage`) are published, but have not yet been run end to end
 /// against a Firebase project and on a physical watch, so the tool does not
 /// suggest them. Never add a name that isn't actually published —
@@ -72,6 +77,7 @@ const Map<String, List<String>> _kKnownWatchosPlugins = <String, List<String>>{
   'connectivity_plus': <String>[],
   'device_info_plus': <String>[],
   'flutter_secure_storage': <String>[],
+  'games_services': <String>[],
   'geolocator': <String>[],
   'in_app_purchase': <String>[],
   'local_auth': <String>[],
@@ -147,9 +153,7 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
 
   // Build a name→path map from .dart_tool/package_config.json.
   final packagePaths = <String, String>{};
-  final File packageConfigFile = project.directory
-      .childDirectory('.dart_tool')
-      .childFile('package_config.json');
+  final File packageConfigFile = watchosPackageConfigFile(project.directory);
   if (packageConfigFile.existsSync()) {
     try {
       final packageConfig =
@@ -162,7 +166,7 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
         // rootUri may be relative to .dart_tool/ or a file:// URI.
         if (rootUri.startsWith('../')) {
           rootUri = globals.fs.path.normalize(
-            globals.fs.path.join(project.directory.path, '.dart_tool', rootUri),
+            globals.fs.path.join(packageConfigFile.parent.path, rootUri),
           );
         } else if (rootUri.startsWith('file://')) {
           rootUri = Uri.parse(rootUri).toFilePath();
@@ -173,6 +177,15 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
       // Malformed package_config.json — leave packagePaths empty.
     } on TypeError {
       // Unexpected JSON shape; fall through with empty packagePaths.
+    }
+  }
+  if (pubWorkspaceRootOf(project.directory) != null) {
+    final Set<String>? memberPackages = _packagesReachableFromWorkspaceMember(
+      project,
+      packageConfigFile.parent.childFile('package_graph.json'),
+    );
+    if (memberPackages != null) {
+      packagePaths.removeWhere((String name, String _) => !memberPackages.contains(name));
     }
   }
 
@@ -240,10 +253,45 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   return out;
 }
 
+Set<String>? _packagesReachableFromWorkspaceMember(FlutterProject project, File packageGraphFile) {
+  final PackageGraph graph;
+  try {
+    graph = PackageGraph.fromJson(
+      packageGraphFile,
+      json.decode(packageGraphFile.readAsStringSync()),
+    );
+  } on FileSystemException {
+    return null;
+  } on FormatException {
+    return null;
+  }
+  final String memberName = project.manifest.appName;
+  final List<String>? memberDependencies = graph.dependencies[memberName];
+  if (memberDependencies == null) {
+    return null;
+  }
+  final reachable = <String>{memberName};
+  final toVisit = <String>[...memberDependencies, ...?graph.devDependencies[memberName]];
+  while (toVisit.isNotEmpty) {
+    final String name = toVisit.removeLast();
+    if (reachable.add(name)) {
+      toVisit.addAll(graph.dependencies[name] ?? const <String>[]);
+    }
+  }
+  return reachable;
+}
+
 /// Discovers plugins in [project] that declare a
 /// `flutter.plugin.platforms.watchos` block, parsing them into [WatchosPlugin]
 /// instances.
-List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
+///
+/// Throws a `ToolExit` for a plugin whose `defines` is invalid (see
+/// [parseWatchosPluginDefines]), unless [refuseInvalidDefines] is false: that
+/// plugin is then discovered with no `defines`, and a trace says why.
+List<WatchosPlugin> _discoverWatchosPlugins(
+  FlutterProject project, {
+  bool refuseInvalidDefines = true,
+}) {
   final watchosPlugins = <WatchosPlugin>[];
   for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
     final dynamic platforms = dep.pluginYaml['platforms'];
@@ -254,6 +302,24 @@ List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
     if (watchosConfig is! YamlMap) {
       continue;
     }
+    final String pubspecPath = globals.fs.path.join(dep.path, 'pubspec.yaml');
+    List<WatchosPluginDefine> defines;
+    try {
+      defines = parseWatchosPluginDefines(
+        pluginName: dep.name,
+        pubspecPath: pubspecPath,
+        yaml: watchosConfig[kWatchosDefines],
+      );
+    } on ToolExit {
+      if (refuseInvalidDefines) {
+        rethrow;
+      }
+      globals.logger.printTrace(
+        'The `$kWatchosDefines` of ${dep.name} in $pubspecPath are invalid, but pub get '
+        'has yet to resolve the last pubspec.yaml edit: the build checks them again after it.',
+      );
+      defines = const <WatchosPluginDefine>[];
+    }
     watchosPlugins.add(
       WatchosPlugin(
         name: dep.name,
@@ -262,6 +328,7 @@ List<WatchosPlugin> _discoverWatchosPlugins(FlutterProject project) {
         dartPluginClass: watchosConfig['dartPluginClass'] as String?,
         ffiPlugin: watchosConfig[kFfiPlugin] as bool?,
         ffiSymbols: _parseFfiSymbols(dep.name, watchosConfig[kWatchosFfiSymbols]),
+        defines: defines,
       ),
     );
     globals.logger.printTrace('Discovered watchOS plugin: ${dep.name} at ${dep.path}');
@@ -313,7 +380,13 @@ List<WatchosSpmPlugin> discoverWatchosSpmPlugins(FlutterProject project) {
     final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
     final String packageName = names.package ?? plugin.name;
     spmPlugins.add(
-      WatchosSpmPlugin(name: packageName, packagePath: watchosDir.path, libraryName: names.library),
+      WatchosSpmPlugin(
+        name: packageName,
+        packagePath: watchosDir.path,
+        libraryName: names.library,
+        pluginName: plugin.name,
+        defines: plugin.defines,
+      ),
     );
     globals.logger.printTrace(
       'watchOS SPM plugin: $packageName (product '
@@ -565,12 +638,11 @@ bool _warnedAboutOldFlutterWatchos = false;
 /// The commands run the tooling step before their `pub get`, and the build
 /// runs it again after. A version read from a config that is about to change
 /// describes a resolution the build will not use: right after the user moves
-/// to a newer plugin, it would still name the old `flutter_watchos`. This is
-/// the test stock `pub get` makes before it skips itself.
+/// to a newer plugin, it would still name the old `flutter_watchos`, and the
+/// `defines` of a plugin version the user just moved away from. This is the
+/// test stock `pub get` makes before it skips itself.
 bool _packageConfigPending(FlutterProject project) {
-  final File config = project.directory
-      .childDirectory('.dart_tool')
-      .childFile('package_config.json');
+  final File config = watchosPackageConfigFile(project.directory);
   final File pubspec = project.pubspecFile;
   if (!config.existsSync() || !pubspec.existsSync()) {
     return true;
@@ -636,6 +708,20 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
     return;
   }
 
+  // First, before anything here writes a file: discovery stops on a plugin
+  // whose `defines` is invalid, and a refused build changes nothing. The
+  // commands take this step before their `pub get`, though, and right after
+  // an edit to pubspec.yaml the package config can still resolve a plugin
+  // version that the edit moved away from, or a plugin it removed. The
+  // refusal is then left to the build, which discovers the plugins again
+  // after `pub get` and before it compiles anything, so the edit that fixes
+  // the app is not refused by the version it replaces.
+  final bool packageConfigPending = _packageConfigPending(project);
+  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(
+    project,
+    refuseInvalidDefines: !packageConfigPending,
+  );
+
   // Keep the host-mode wiring (standalone thin container vs companion iOS
   // app) consistent on every build/run. The mode is derived from the project
   // shape — an ios/ Flutter app means the watch app ships inside it as its
@@ -643,8 +729,6 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   // treats platform directories as the source of truth. Idempotent and
   // silent when the project is already consistent.
   await syncWatchosHostMode(projectDir: project.directory, logger: globals.logger);
-
-  final List<WatchosPlugin> plugins = _discoverWatchosPlugins(project);
 
   final List<String> recommendations = recommendWatchosPluginsToInstall(
     allPluginNames: _findAllPluginNames(project),
@@ -671,7 +755,7 @@ Future<void> ensureReadyForWatchosTooling(FlutterProject project) async {
   if (unsupported.isNotEmpty) {
     globals.logger.printWarning(unsupported.join('\n'));
   }
-  final String? oldPackage = _packageConfigPending(project)
+  final String? oldPackage = packageConfigPending
       ? null
       : oldFlutterWatchosWarning(flutterWatchosVersion);
   if (oldPackage != null && !_warnedAboutOldFlutterWatchos) {
@@ -904,6 +988,7 @@ class WatchosPlugin extends PluginPlatform implements NativeOrDartPlugin {
     this.defaultPackage,
     this.ffiPlugin,
     this.ffiSymbols = const <String>[],
+    this.defines = const <WatchosPluginDefine>[],
   }) : assert(
          pluginClass != null ||
              dartPluginClass != null ||
@@ -921,6 +1006,11 @@ class WatchosPlugin extends PluginPlatform implements NativeOrDartPlugin {
   /// C symbols this FFI plugin exports for `dart:ffi` lookup, declared under
   /// `flutter.plugin.platforms.watchos.ffiSymbols`.
   final List<String> ffiSymbols;
+
+  /// The macros this plugin's native sources are compiled with when the app's
+  /// Info.plist sets their keys, declared under
+  /// `flutter.plugin.platforms.watchos.defines`.
+  final List<WatchosPluginDefine> defines;
 
   @override
   bool hasMethodChannel() => pluginClass != null;

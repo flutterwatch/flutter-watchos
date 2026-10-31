@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/build_info.dart';
+
+import '../watchos_plugin_defines.dart';
 
 /// The `Generated.xcconfig` lines that link the host-module and plugin
 /// archives into the watch target. Pure, so the quoting can be tested.
@@ -90,3 +93,48 @@ String pluginObjectName({
   final String flattened = relative.replaceAll(RegExp(r'[\\/]+'), '_');
   return '${pluginName}__$flattened.o';
 }
+
+/// The optimization and debug-info flags for the plugin C, Objective-C and
+/// Objective-C++ sources the CLI compiles itself.
+///
+/// This pass used to pass no `-O` at all, and clang defaults to `-O0`, so
+/// every FFI plugin shipped unoptimized code in profile and release builds.
+/// `-Os` is Xcode's Release default (`GCC_OPTIMIZATION_LEVEL = s`), which the
+/// same plugin gets on iOS from CocoaPods or SwiftPM. Profile counts as
+/// release because it exists to measure performance. `-g` in every mode, as
+/// for the host module, so plugin frames symbolicate.
+List<String> pluginClangOptimizationFlags(BuildMode mode) => <String>[
+  if (mode == BuildMode.debug) '-O0' else '-Os',
+  '-g',
+];
+
+/// The optimization and debug-info flags for the plugin SwiftUI view sources.
+///
+/// swiftc defaults to `-Onone`, and `-whole-module-optimization` alone does
+/// not turn optimization on. `-O` is Xcode's Release default
+/// (`SWIFT_OPTIMIZATION_LEVEL = -O`) and what the host module is built with.
+List<String> pluginSwiftOptimizationFlags(BuildMode mode) => <String>[
+  if (mode == BuildMode.debug) '-Onone' else '-O',
+  '-g',
+];
+
+/// The `-D` flags for the C, Objective-C and Objective-C++ sources of a
+/// plugin whose `defines` the CLI applies: [kWatchosPluginDefinesMarker],
+/// then each of [macros], all `=1`. A plugin that declares no `defines` gets
+/// no `-D` at all.
+///
+/// [macros] are the plugin's `defines` that the app's Info.plist turns on
+/// (see [enabledWatchosPluginDefines]). A macro that is off is not passed at
+/// all, so `#if` and `#ifdef` agree on it.
+List<String> pluginClangDefineFlags(Iterable<String> macros) => <String>[
+  '-D$kWatchosPluginDefinesMarker=1',
+  for (final String macro in macros) '-D$macro=1',
+];
+
+/// The `-D` flags for a plugin's SwiftUI view sources: the names of
+/// [pluginClangDefineFlags], as compilation conditions. A Swift condition is
+/// set or not and takes no value; swiftc warns on `-DNAME=1`.
+List<String> pluginSwiftDefineFlags(Iterable<String> macros) => <String>[
+  '-D$kWatchosPluginDefinesMarker',
+  for (final String macro in macros) '-D$macro',
+];

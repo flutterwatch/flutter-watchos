@@ -27,9 +27,9 @@ class ExamplePorter {
     required Logger logger,
     required TemplateRenderer templateRenderer,
     this.organization = 'com.example',
-  })  : _fs = fileSystem,
-        _logger = logger,
-        _templateRenderer = templateRenderer;
+  }) : _fs = fileSystem,
+       _logger = logger,
+       _templateRenderer = templateRenderer;
 
   final FileSystem _fs;
   final Logger _logger;
@@ -63,51 +63,83 @@ class ExamplePorter {
     final written = <String>[];
 
     // 1. Copy the upstream demo UI verbatim.
-    written.addAll(_copyTree(
-        exampleSource.childDirectory('lib'), exampleDir.childDirectory('lib')));
+    written.addAll(
+      _copyTree(exampleSource.childDirectory('lib'), exampleDir.childDirectory('lib')),
+    );
 
     // 2. Copy the upstream official integration tests, if any, and add the
     //    flutter_driver entrypoint that `flutter-watchos drive` needs.
-    final Directory upstreamItest =
-        exampleSource.childDirectory('integration_test');
-    final bool hasIntegrationTests = upstreamItest.existsSync() &&
-        upstreamItest.listSync().whereType<File>().any(
-            (File f) => f.path.endsWith('_test.dart'));
+    final Directory upstreamItest = exampleSource.childDirectory('integration_test');
+    final bool hasIntegrationTests =
+        upstreamItest.existsSync() &&
+        upstreamItest.listSync().whereType<File>().any((File f) => f.path.endsWith('_test.dart'));
     if (hasIntegrationTests) {
-      written.addAll(_copyTree(
-          upstreamItest, exampleDir.childDirectory('integration_test')));
+      written.addAll(_copyTree(upstreamItest, exampleDir.childDirectory('integration_test')));
       final File driver = exampleDir
           .childDirectory('test_driver')
           .childFile('integration_test.dart');
       _write(driver, _driver, written, exampleDir);
     }
 
-    // 3. Rewrite the pubspec to pull the app-facing plugin from pub and the
-    //    local *_watchos package by path.
+    // 3. Copy the assets and fonts the upstream example's pubspec declares:
+    //    its code loads them, and `lib/` alone does not carry them.
+    final File upstreamPubspec = exampleSource.childFile('pubspec.yaml');
+    final String upstreamYaml = upstreamPubspec.existsSync()
+        ? upstreamPubspec.readAsStringSync()
+        : '';
+    final List<String> assets = flutterAssets(upstreamYaml);
+    final List<ExampleFont> fonts = flutterFonts(upstreamYaml);
+    final AssetCopy assetCopy = copyDeclaredAssets(
+      exampleSource: exampleSource,
+      exampleDir: exampleDir,
+      assets: assets,
+      fonts: fonts,
+    );
+    written.addAll(assetCopy.written);
+    for (final String missing in assetCopy.missing) {
+      _logger.printWarning('  • The upstream example declares $missing, which is not in it.');
+    }
+
+    // 4. Rewrite the pubspec to pull the app-facing plugin from pub, at the
+    //    version the example came with, and the local *_watchos package by
+    //    path.
+    final File basePubspec = exampleSource.parent.childFile('pubspec.yaml');
+    final String? baseVersion = basePubspec.existsSync()
+        ? packageVersion(basePubspec.readAsStringSync())
+        : null;
+    if (baseVersion == null) {
+      _logger.printWarning(
+        '  • Could not read the version of ${source.basePackageName}; the '
+        "example's pubspec names `${source.basePackageName}: any`. Pin it "
+        'before you publish.',
+      );
+    }
     _write(
       exampleDir.childFile('pubspec.yaml'),
       _pubspec(
         source: source,
         exampleName: exampleName,
-        upstreamExamplePubspec: exampleSource.childFile('pubspec.yaml'),
+        upstreamExamplePubspec: upstreamPubspec,
+        baseVersion: baseVersion,
+        assets: assets,
+        fonts: fonts,
         includeIntegrationTest: hasIntegrationTests,
       ),
       written,
       exampleDir,
     );
 
-    // 4. Fill in the remaining shared app files (analysis_options, .gitignore,
+    // 5. Fill in the remaining shared app files (analysis_options, .gitignore,
     //    README) — the scaffold skips the pubspec/lib we already wrote.
     WatchosAppScaffold(_fs).write(exampleDir.path, exampleName);
     // The scaffold's placeholder widget test references a class the upstream
     // main.dart does not define; the integration tests are the real tests.
-    final File placeholderTest =
-        exampleDir.childDirectory('test').childFile('widget_test.dart');
+    final File placeholderTest = exampleDir.childDirectory('test').childFile('widget_test.dart');
     if (placeholderTest.existsSync()) {
       placeholderTest.deleteSync();
     }
 
-    // 5. Render the watchOS Xcode runner on top.
+    // 6. Render the watchOS Xcode runner on top.
     await renderWatchosRunner(
       fileSystem: _fs,
       logger: _logger,
@@ -126,8 +158,7 @@ class ExamplePorter {
     if (!from.existsSync()) {
       return written;
     }
-    for (final FileSystemEntity entity
-        in from.listSync(recursive: true, followLinks: false)) {
+    for (final FileSystemEntity entity in from.listSync(recursive: true, followLinks: false)) {
       if (entity is! File) {
         continue;
       }
@@ -138,6 +169,52 @@ class ExamplePorter {
       written.add(dest.path);
     }
     return written;
+  }
+
+  /// Copies the [assets] and the [fonts]' files the upstream example
+  /// declares, from [exampleSource] into [exampleDir]. An asset that ends
+  /// with `/` is a directory: its files are copied, not its subdirectories,
+  /// as Flutter bundles it. Declared paths that do not exist are returned in
+  /// [AssetCopy.missing].
+  AssetCopy copyDeclaredAssets({
+    required Directory exampleSource,
+    required Directory exampleDir,
+    required List<String> assets,
+    required List<ExampleFont> fonts,
+  }) {
+    final written = <String>[];
+    final missing = <String>[];
+    final paths = <String>[
+      ...assets,
+      for (final ExampleFont font in fonts)
+        for (final ExampleFontFile file in font.files) file.asset,
+    ];
+    for (final path in paths) {
+      if (path.endsWith('/')) {
+        final Directory from = exampleSource.childDirectory(path);
+        if (!from.existsSync()) {
+          missing.add(path);
+          continue;
+        }
+        for (final File file in from.listSync().whereType<File>()) {
+          final File dest = exampleDir.childDirectory(path).childFile(_fs.path.basename(file.path));
+          dest.parent.createSync(recursive: true);
+          file.copySync(dest.path);
+          written.add(dest.path);
+        }
+      } else {
+        final File from = exampleSource.childFile(path);
+        if (!from.existsSync()) {
+          missing.add(path);
+          continue;
+        }
+        final File dest = exampleDir.childFile(path);
+        dest.parent.createSync(recursive: true);
+        from.copySync(dest.path);
+        written.add(dest.path);
+      }
+    }
+    return AssetCopy(written: written, missing: missing);
   }
 
   void _write(File file, String contents, List<String> written, Directory base) {
@@ -161,6 +238,9 @@ Future<void> main() => integrationDriver();
     required PluginSource source,
     required String exampleName,
     required File upstreamExamplePubspec,
+    required String? baseVersion,
+    required List<String> assets,
+    required List<ExampleFont> fonts,
     required bool includeIntegrationTest,
   }) {
     final String yaml = upstreamExamplePubspec.existsSync()
@@ -169,16 +249,80 @@ Future<void> main() => integrationDriver();
     return buildPubspec(
       exampleName: exampleName,
       base: source.basePackageName,
+      baseVersion: baseVersion,
       output: source.outputPackageName,
-      extraHostedDeps: extraHostedDeps(yaml,
-          base: source.basePackageName,
-          output: source.outputPackageName),
-      extraHostedDevDeps: extraHostedDeps(yaml,
-          section: 'dev_dependencies',
-          base: source.basePackageName,
-          output: source.outputPackageName),
+      extraHostedDeps: extraHostedDeps(
+        yaml,
+        base: source.basePackageName,
+        output: source.outputPackageName,
+      ),
+      extraHostedDevDeps: extraHostedDeps(
+        yaml,
+        section: 'dev_dependencies',
+        base: source.basePackageName,
+        output: source.outputPackageName,
+      ),
       includeIntegrationTest: includeIntegrationTest,
+      assets: assets,
+      fonts: fonts,
     );
+  }
+
+  /// The `version` of the package whose [pubspecYaml] it is, or null.
+  static String? packageVersion(String pubspecYaml) {
+    final Object? version = _loadMap(pubspecYaml)?['version'];
+    return version is String && version.isNotEmpty ? version : null;
+  }
+
+  /// The paths under `flutter: assets:` in an upstream example's
+  /// [pubspecYaml]: plain strings, and the `path` of map entries.
+  static List<String> flutterAssets(String pubspecYaml) {
+    final Object? flutter = _loadMap(pubspecYaml)?['flutter'];
+    final Object? assets = flutter is YamlMap ? flutter['assets'] : null;
+    return <String>[
+      if (assets is YamlList)
+        for (final Object? entry in assets)
+          if (entry is String)
+            entry
+          else if (entry is YamlMap && entry['path'] is String)
+            entry['path'] as String,
+    ];
+  }
+
+  /// The fonts under `flutter: fonts:` in an upstream example's
+  /// [pubspecYaml].
+  static List<ExampleFont> flutterFonts(String pubspecYaml) {
+    final Object? flutter = _loadMap(pubspecYaml)?['flutter'];
+    final Object? fonts = flutter is YamlMap ? flutter['fonts'] : null;
+    return <ExampleFont>[
+      if (fonts is YamlList)
+        for (final Object? font in fonts)
+          if (font is YamlMap && font['family'] is String && font['fonts'] is YamlList)
+            ExampleFont(
+              family: font['family'] as String,
+              files: <ExampleFontFile>[
+                for (final Object? file in font['fonts'] as YamlList)
+                  if (file is YamlMap && file['asset'] is String)
+                    ExampleFontFile(
+                      asset: file['asset'] as String,
+                      weight: file['weight'] is int ? file['weight'] as int : null,
+                      style: file['style'] is String ? file['style'] as String : null,
+                    ),
+              ],
+            ),
+    ];
+  }
+
+  static YamlMap? _loadMap(String yaml) {
+    if (yaml.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final Object? doc = loadYaml(yaml);
+      return doc is YamlMap ? doc : null;
+    } on YamlException {
+      return null;
+    }
   }
 
   /// Extracts the simple hosted dependencies (name → version string) from
@@ -227,10 +371,13 @@ Future<void> main() => integrationDriver();
   static String buildPubspec({
     required String exampleName,
     required String base,
+    String? baseVersion,
     required String output,
     required Map<String, String> extraHostedDeps,
     required bool includeIntegrationTest,
     Map<String, String> extraHostedDevDeps = const <String, String>{},
+    List<String> assets = const <String>[],
+    List<ExampleFont> fonts = const <ExampleFont>[],
   }) {
     final buffer = StringBuffer()
       ..writeln('name: $exampleName')
@@ -244,7 +391,7 @@ Future<void> main() => integrationDriver();
       ..writeln('dependencies:')
       ..writeln('  flutter:')
       ..writeln('    sdk: flutter')
-      ..writeln('  $base: any')
+      ..writeln('  $base: ${baseVersion == null ? 'any' : '^$baseVersion'}')
       ..writeln('  $output:')
       ..writeln('    path: ../');
     for (final MapEntry<String, String> entry in extraHostedDeps.entries) {
@@ -272,8 +419,67 @@ Future<void> main() => integrationDriver();
       ..writeln()
       ..writeln('flutter:')
       ..writeln('  uses-material-design: true');
+    if (assets.isNotEmpty) {
+      buffer.writeln('  assets:');
+      for (final asset in assets) {
+        buffer.writeln('    - "$asset"');
+      }
+    }
+    if (fonts.isNotEmpty) {
+      buffer.writeln('  fonts:');
+      for (final font in fonts) {
+        buffer
+          ..writeln('    - family: "${font.family}"')
+          ..writeln('      fonts:');
+        for (final ExampleFontFile file in font.files) {
+          buffer.writeln('        - asset: "${file.asset}"');
+          if (file.weight != null) {
+            buffer.writeln('          weight: ${file.weight}');
+          }
+          if (file.style != null) {
+            buffer.writeln('          style: ${file.style}');
+          }
+        }
+      }
+    }
     return buffer.toString();
   }
+}
+
+/// A font family an upstream example declares under `flutter: fonts:`.
+class ExampleFont {
+  const ExampleFont({required this.family, required this.files});
+
+  /// The family name.
+  final String family;
+
+  /// Its files.
+  final List<ExampleFontFile> files;
+}
+
+/// One file of an [ExampleFont].
+class ExampleFontFile {
+  const ExampleFontFile({required this.asset, this.weight, this.style});
+
+  /// The file's path in the example.
+  final String asset;
+
+  /// Its weight (100 to 900), if declared.
+  final int? weight;
+
+  /// Its style (`italic`), if declared.
+  final String? style;
+}
+
+/// What [ExamplePorter.copyDeclaredAssets] copied, and what it did not find.
+class AssetCopy {
+  const AssetCopy({required this.written, required this.missing});
+
+  /// The paths written.
+  final List<String> written;
+
+  /// The declared paths that do not exist in the upstream example.
+  final List<String> missing;
 }
 
 /// Thrown when the example cannot be ported (e.g. it already exists).

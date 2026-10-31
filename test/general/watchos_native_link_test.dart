@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_watchos/build_targets/watchos_native_link.dart';
 
 import '../src/common.dart';
@@ -100,6 +101,59 @@ void main() {
         fileSystem: fs,
       );
       expect(a, isNot(b));
+    });
+  });
+
+  // Both passes used to pass no -O at all, so every FFI plugin shipped -O0
+  // (clang) and -Onone (swiftc) code in profile and release builds.
+  group('plugin optimization flags', () {
+    testWithoutContext('debug stays unoptimized, with debug info', () {
+      expect(pluginClangOptimizationFlags(BuildMode.debug), <String>['-O0', '-g']);
+      expect(pluginSwiftOptimizationFlags(BuildMode.debug), <String>['-Onone', '-g']);
+    });
+
+    for (final BuildMode mode in BuildMode.values.where((BuildMode m) => m != BuildMode.debug)) {
+      testWithoutContext('${mode.cliName} is optimized as Xcode Release is', () {
+        expect(pluginClangOptimizationFlags(mode), <String>['-Os', '-g']);
+        expect(pluginSwiftOptimizationFlags(mode), <String>['-O', '-g']);
+      });
+    }
+  });
+
+  // A plugin that declares `defines` guards optional code with its own macros
+  // and with the marker, which says that the CLI applied them. An older CLI
+  // passes neither, and so does this one to a plugin that declares none.
+  group('plugin define flags', () {
+    testWithoutContext('clang gets the marker first, then each macro that is on, all =1', () {
+      expect(
+        pluginClangDefineFlags(<String>['PERMISSION_CAMERA', 'PERMISSION_ASSISTANT']),
+        <String>[
+          '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
+          '-DPERMISSION_CAMERA=1',
+          '-DPERMISSION_ASSISTANT=1',
+        ],
+      );
+    });
+
+    // swiftc warns on -DNAME=1: a Swift condition is set or not.
+    testWithoutContext('swiftc gets the same names without a value', () {
+      expect(
+        pluginSwiftDefineFlags(<String>['PERMISSION_CAMERA', 'PERMISSION_ASSISTANT']),
+        <String>[
+          '-DFLUTTER_WATCHOS_PLUGIN_DEFINES',
+          '-DPERMISSION_CAMERA',
+          '-DPERMISSION_ASSISTANT',
+        ],
+      );
+    });
+
+    testWithoutContext('a plugin with defines but none on still gets the marker', () {
+      expect(pluginClangDefineFlags(const <String>[]), <String>[
+        '-DFLUTTER_WATCHOS_PLUGIN_DEFINES=1',
+      ]);
+      expect(pluginSwiftDefineFlags(const <String>[]), <String>[
+        '-DFLUTTER_WATCHOS_PLUGIN_DEFINES',
+      ]);
     });
   });
 }

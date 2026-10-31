@@ -32,6 +32,8 @@ import 'package:package_config/package_config.dart';
 import '../watchos_artifacts.dart';
 import '../watchos_build_info.dart';
 import '../watchos_cache.dart';
+import '../watchos_package_config.dart';
+import '../watchos_plugin_defines.dart';
 import '../watchos_plugins.dart';
 import '../watchos_swift_package_manager.dart';
 import 'watchos_hooks.dart';
@@ -286,7 +288,7 @@ class WatchosKernelSnapshot extends KernelSnapshot {
     final buildMode = BuildMode.fromCliName(buildModeEnvironment);
     final String targetFile =
         environment.defines[kTargetFile] ?? environment.fileSystem.path.join('lib', 'main.dart');
-    final File packagesFile = findPackageConfigFileOrDefault(environment.projectDir);
+    final File packagesFile = watchosPackageConfigFile(environment.projectDir);
     final String targetFileAbsolute = environment.fileSystem.file(targetFile).absolute.path;
     final trackWidgetCreation = environment.defines[kTrackWidgetCreation] != 'false';
     final TargetPlatform targetPlatform = getTargetPlatformForName(targetPlatformEnvironment);
@@ -1513,7 +1515,7 @@ class NativeWatchosBundle extends Target {
     // (WatchStatusBar), so an app without it gets a host module that never
     // references the symbol at all. See kStatusBarSpiSwiftDefine.
     final PackageConfig packageConfig = await loadPackageConfigWithLogging(
-      findPackageConfigFileOrDefault(project.directory),
+      watchosPackageConfigFile(project.directory),
       logger: globals.logger,
     );
     final bool linksFlutterWatchos =
@@ -1615,6 +1617,11 @@ class NativeWatchosBundle extends Target {
   /// dead-stripped — and the exports' `used` + default-visibility attributes
   /// land them in the binary's dynamic symbol table for
   /// `DynamicLibrary.process()` / dlsym.
+  ///
+  /// The sources of a plugin that declares `defines` get `-D` flags of their
+  /// own: those of its `defines` that the watch app's Info.plist turns on,
+  /// after [kWatchosPluginDefinesMarker] (see `watchos_plugin_defines.dart`).
+  /// The sources of any other plugin get no `-D` at all.
   @visibleForTesting
   Future<(String, Set<String>, Set<String>)?> buildPluginStaticArchive(
     FlutterProject project,
@@ -1629,7 +1636,8 @@ class NativeWatchosBundle extends Target {
     final Directory objDir = flutterDir.childDirectory('.plugins_build')
       ..createSync(recursive: true);
 
-    final sources = <({String plugin, String root, String path})>[];
+    // Each source carries the -D flags of its plugin's clang compiles.
+    final sources = <({String plugin, String root, String path, List<String> defines})>[];
     final headerDirs = <String>{};
     final frameworks = <String>{};
     final libraries = <String>{};
@@ -1654,8 +1662,19 @@ class NativeWatchosBundle extends Target {
     final pluginsWantingNotifications = <String>[];
     // Plugins may also ship SwiftUI platform-view sources (any `.swift` under
     // `watchos/` except the SwiftPM manifest) — compiled per plugin, as the
-    // plugin's own module, further down.
-    final swiftSourcesByPlugin = <String, List<String>>{};
+    // plugin's own module, further down, with the plugin's -D flags.
+    final swiftSourcesByPlugin = <String, ({List<String> sources, List<String> defines})>{};
+    // Which of a plugin's `defines` are on comes from the watch app's
+    // Info.plist, the file the template's Runner target names. It is read on
+    // first use, so only when a plugin compiled here declares `defines`, and
+    // once a build.
+    final File infoPlistFile = watchosProjectDir.childDirectory('Runner').childFile('Info.plist');
+    late final Map<String, Object>? infoPlist = _readDefinesInfoPlist(
+      watchosProjectDir,
+      infoPlistFile,
+    );
+    // Plugins whose `defines` cannot be applied, for want of an Info.plist.
+    final pluginsWithoutInfoPlist = <String>[];
     for (final plugin in plugins) {
       final Directory pluginDir = globals.fs.directory(plugin.packagePath);
       if (!pluginDir.existsSync()) {
@@ -1681,6 +1700,46 @@ class NativeWatchosBundle extends Target {
         resolvedPinsByPlugin[plugin.name] =
             parseResolvedPins(pluginDir.childFile('Package.resolved'));
       }
+      // The macros this plugin's sources are compiled with, after the marker,
+      // or null when its `defines` are not applied: its sources then get no
+      // -D at all, not even the marker, and every part of it compiles as
+      // under a CLI that predates `defines`. That is so for a plugin that
+      // declares none, so that a `defines` misspelled or misplaced in its
+      // pubspec keeps the code behind the marker guard instead of compiling
+      // all of it out; for a plugin built through SwiftPM, which is out of
+      // scope, the view sources compiled here included; and for want of an
+      // Info.plist. -v says which, for every plugin.
+      final List<String>? macros;
+      if (plugin.defines.isEmpty) {
+        macros = null;
+        globals.logger.printTrace(
+          'watchOS plugin ${plugin.pluginName} declares no `$kWatchosDefines`: its '
+          'sources compile without $kWatchosPluginDefinesMarker.',
+        );
+      } else if (hasExternalDeps) {
+        macros = null;
+        globals.logger.printTrace(
+          'watchOS plugin ${plugin.pluginName} is built through SwiftPM, so its '
+          '`$kWatchosDefines` are not applied: its sources compile without '
+          '$kWatchosPluginDefinesMarker.',
+        );
+      } else {
+        final values = infoPlist;
+        if (values == null) {
+          macros = null;
+          pluginsWithoutInfoPlist.add(plugin.pluginName);
+          globals.logger.printTrace(
+            'watchOS plugin ${plugin.pluginName} defines (not applied, cannot read '
+            '${infoPlistFile.path}): its sources compile without '
+            '$kWatchosPluginDefinesMarker.',
+          );
+        } else {
+          macros = _enabledPluginMacros(plugin, values, infoPlistFile.path);
+        }
+      }
+      final List<String> clangDefines = macros == null
+          ? const <String>[]
+          : pluginClangDefineFlags(macros);
       // The shared per-plugin pass runs for every plugin: headers stay
       // visible to other plugins' compiles and platform-view sources are
       // collected either way. Only the `.m` compile is skipped for
@@ -1692,7 +1751,12 @@ class NativeWatchosBundle extends Target {
         final String p = entity.path;
         if (p.endsWith('.m') || p.endsWith('.mm') || p.endsWith('.c')) {
           if (!hasExternalDeps) {
-            sources.add((plugin: plugin.name, root: pluginDir.path, path: p));
+            sources.add((
+              plugin: plugin.name,
+              root: pluginDir.path,
+              path: p,
+              defines: clangDefines,
+            ));
           }
         } else if (p.endsWith('.h')) {
           headerDirs.add(entity.parent.path);
@@ -1700,7 +1764,10 @@ class NativeWatchosBundle extends Target {
       }
       final List<String> swiftSources = collectPluginSwiftViewSources(pluginDir);
       if (swiftSources.isNotEmpty) {
-        swiftSourcesByPlugin[plugin.name] = swiftSources;
+        swiftSourcesByPlugin[plugin.name] = (
+          sources: swiftSources,
+          defines: macros == null ? const <String>[] : pluginSwiftDefineFlags(macros),
+        );
         // Plugin view code builds SwiftUI views by definition.
         frameworks.add('SwiftUI');
       }
@@ -1716,6 +1783,15 @@ class NativeWatchosBundle extends Target {
     if (pluginsWantingNotifications.isNotEmpty) {
       _warnIfAppDelegateNotInstalled(watchosProjectDir, pluginsWantingNotifications);
     }
+    if (pluginsWithoutInfoPlist.isNotEmpty) {
+      globals.logger.printWarning(
+        "Could not read the watch app's Info.plist at ${infoPlistFile.path}, so "
+        'these plugins are compiled without their `$kWatchosDefines` and without '
+        '$kWatchosPluginDefinesMarker, as an older flutter-watchos compiles them: '
+        '${pluginsWithoutInfoPlist.join(', ')}. Code they guard with '
+        '`#if !defined($kWatchosPluginDefinesMarker) || MACRO` is compiled in.',
+      );
+    }
     if (sources.isEmpty && swiftSourcesByPlugin.isEmpty && prebuiltObjects.isEmpty) {
       return null;
     }
@@ -1730,6 +1806,12 @@ class NativeWatchosBundle extends Target {
       simulator: buildInfo.simulator,
     );
 
+    // Every source is compiled on every build, with no up-to-date check, so an
+    // Info.plist edit reaches the objects through their -D flags on the next
+    // build. An up-to-date check added here would have to count those flags
+    // as an input. An Xcode build or archive does not come here: it links the
+    // archive this writes, so an Info.plist edit needs a flutter-watchos build
+    // first (doc/publish-app.md).
     final objects = <String>[...prebuiltObjects];
     for (final src in sources) {
       final String obj = globals.fs.path.join(
@@ -1748,8 +1830,10 @@ class NativeWatchosBundle extends Target {
         'clang',
         '-target',
         clangTarget,
+        ...pluginClangOptimizationFlags(buildInfo.buildInfo.mode),
         '-fobjc-arc',
         '-fmodules',
+        ...src.defines,
         for (final String dir in headerDirs) '-I$dir',
         '-c',
         src.path,
@@ -1772,7 +1856,8 @@ class NativeWatchosBundle extends Target {
     if (swiftSourcesByPlugin.isNotEmpty) {
       final File shim = objDir.childFile('flutter_watchos_plugin_views_shim.swift')
         ..writeAsStringSync(kPluginViewSupportSwift);
-      for (final MapEntry<String, List<String>> entry in swiftSourcesByPlugin.entries) {
+      for (final MapEntry<String, ({List<String> sources, List<String> defines})> entry
+          in swiftSourcesByPlugin.entries) {
         final String obj =
             globals.fs.path.join(objDir.path, '${entry.key}_views.o');
         final ProcessResult r = await globals.processManager.run(<String>[
@@ -1783,14 +1868,16 @@ class NativeWatchosBundle extends Target {
           '-target',
           clangTarget,
           '-parse-as-library',
+          ...pluginSwiftOptimizationFlags(buildInfo.buildInfo.mode),
           '-whole-module-optimization',
+          ...entry.value.defines,
           '-module-name',
           '${entry.key}_views',
           '-emit-object',
           '-o',
           obj,
           shim.path,
-          ...entry.value,
+          ...entry.value.sources,
         ]);
         if (r.exitCode != 0) {
           globals.logger.printError(
@@ -1854,6 +1941,77 @@ class NativeWatchosBundle extends Target {
           ),
           mode: FileMode.append,
         );
+  }
+
+  /// The watch app's Info.plist [file], which plugin `defines` are read from,
+  /// as `PlistParser.parseFile` reads it, or null when it does not exist or
+  /// reads as empty. The parser answers an empty map for a file it cannot
+  /// read, and an app's Info.plist is never empty.
+  ///
+  /// First warns when the watch app's Xcode project, in [watchosProjectDir],
+  /// sets `INFOPLIST_FILE` only to other files.
+  static Map<String, Object>? _readDefinesInfoPlist(Directory watchosProjectDir, File file) {
+    _warnIfProjectUsesOtherInfoPlist(watchosProjectDir, file);
+    if (!file.existsSync()) {
+      return null;
+    }
+    final Map<String, Object> values = globals.plistParser.parseFile(file.path);
+    return values.isEmpty ? null : values;
+  }
+
+  /// Warns when the `Runner.xcodeproj/project.pbxproj` in [watchosProjectDir]
+  /// sets `INFOPLIST_FILE` only to files other than [infoPlistFile] (see
+  /// [otherInfoPlistFiles]). An app that moved its Info.plist and left this
+  /// one behind would otherwise have its plugins follow the keys of a file
+  /// that it is not built with, and nothing would say so.
+  static void _warnIfProjectUsesOtherInfoPlist(Directory watchosProjectDir, File infoPlistFile) {
+    final File pbxproj = watchosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    final List<String>? others;
+    try {
+      if (!pbxproj.existsSync()) {
+        return;
+      }
+      others = otherInfoPlistFiles(
+        pbxproj: pbxproj.readAsStringSync(),
+        projectDirectory: watchosProjectDir.path,
+        infoPlistPath: infoPlistFile.path,
+        pathContext: globals.fs.path,
+      );
+    } on FileSystemException {
+      return; // An unreadable project is no reason to warn, nor to stop.
+    } on FormatException {
+      return; // Nor is one that is not UTF-8.
+    }
+    if (others != null) {
+      globals.logger.printWarning(
+        'Plugin `$kWatchosDefines` are read from ${infoPlistFile.path}, but the watch '
+        "app's Xcode project sets INFOPLIST_FILE only to ${others.join(', ')}: "
+        'the plugins that declare them may not follow the keys the app is built with.',
+      );
+    }
+  }
+
+  /// The macros of [plugin]'s `defines` that [infoPlist], read from
+  /// [infoPlistPath], turns on, in declaration order. `-v` shows them, each
+  /// with the key that turned it on.
+  static List<String> _enabledPluginMacros(
+    WatchosSpmPlugin plugin,
+    Map<String, Object> infoPlist,
+    String infoPlistPath,
+  ) {
+    final Map<String, String> enabled = enabledWatchosPluginDefines(plugin.defines, infoPlist);
+    final String list = enabled.isEmpty
+        ? 'none'
+        : enabled.entries
+              .map((MapEntry<String, String> entry) => '${entry.key} (${entry.value})')
+              .join(', ');
+    globals.logger.printTrace(
+      'watchOS plugin ${plugin.pluginName} defines (${enabled.length} of '
+      '${plugin.defines.length} on, from $infoPlistPath): $list',
+    );
+    return enabled.keys.toList();
   }
 
   /// Reads a plugin's `Package.swift` once; null when absent. The manifest

@@ -4,6 +4,8 @@
 
 import 'package:meta/meta.dart';
 
+import 'watchos_plugin_defines.dart';
+
 /// A watchOS plugin whose `watchos/` folder holds a Swift package
 /// (`Package.swift`), as `discoverWatchosSpmPlugins` finds it.
 ///
@@ -15,13 +17,27 @@ import 'package:meta/meta.dart';
 @immutable
 class WatchosSpmPlugin {
   /// A plugin whose Swift package is named [name] and lives in [packagePath].
-  /// [libraryName] defaults to [name] with hyphens for underscores.
-  WatchosSpmPlugin({required this.name, required this.packagePath, String? libraryName})
-    : libraryName = libraryName ?? name.replaceAll('_', '-');
+  /// [libraryName] defaults to [name] with hyphens for underscores, and
+  /// [pluginName] to [name].
+  WatchosSpmPlugin({
+    required this.name,
+    required this.packagePath,
+    String? libraryName,
+    String? pluginName,
+    this.defines = const <WatchosPluginDefine>[],
+  }) : libraryName = libraryName ?? name.replaceAll('_', '-'),
+       pluginName = pluginName ?? name;
 
   /// The Swift package's name, from its `Package(name:)`, or the plugin's
   /// package name when the manifest does not say.
   final String name;
+
+  /// The plugin's pub package name, which messages call it by.
+  final String pluginName;
+
+  /// The macros the plugin maps to app Info.plist keys, from
+  /// `flutter.plugin.platforms.watchos.defines` in its pubspec.
+  final List<WatchosPluginDefine> defines;
 
   /// The directory that holds the plugin's `Package.swift`.
   final String packagePath;

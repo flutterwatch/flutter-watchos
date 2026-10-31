@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.1.2
+
+Plugin native code is now optimized in profile and release builds, and a
+plugin can leave out the code an app does not use, such as the permission
+groups it never asks for. A watch app in a pub workspace links its plugins.
+The engine, `engine-779a2b7c61ba`, and the Flutter SDK, 3.47.5, are 0.1.1's,
+so `flutter-watchos upgrade` downloads no engine.
+
+- **A plugin can leave out the code an app does not use.** A watchOS plugin
+  can map preprocessor macros to app Info.plist keys under
+  `flutter.plugin.platforms.watchos.defines` in its pubspec. On every
+  build, the tool reads the watch app's `watchos/Runner/Info.plist` and
+  compiles that plugin's native sources with each macro whose key the app
+  sets to a non-empty string or `true`, after
+  `FLUTTER_WATCHOS_PLUGIN_DEFINES`. A plugin that guards its optional code
+  with `!defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MACRO` keeps all of it
+  under an older flutter-watchos, and a plugin without `defines` compiles
+  as before. A permissions plugin can then leave out the groups an app does
+  not use, as permission_handler's `PERMISSION_*` macros do on iOS. An
+  invalid declaration stops the build before anything is compiled, and
+  `-v` prints what each plugin is compiled with. An Xcode archive links the
+  plugin code the last flutter-watchos build compiled, so build again after
+  an Info.plist edit. Plugins built through SwiftPM are not covered. See
+  [Compiling out what an app does not use](doc/plugins.md#compiling-out-what-an-app-does-not-use).
+
+- **Plugin native code is optimized in profile and release builds.** The
+  tool compiles a watchOS plugin's C, Objective-C and Objective-C++ sources
+  and its SwiftUI view sources itself, and it passed no optimization flag,
+  so every plugin ran unoptimized code (`-O0`, `-Onone`) in every build
+  mode. Profile and release builds now use `-Os` and `-O`, as Xcode's
+  Release configuration does, and debug builds stay unoptimized. Debug info
+  (`-g`) is emitted in every mode, as for the host module, so plugin frames
+  symbolicate. Plugins built through SwiftPM were already optimized.
+
+- **An app in a pub workspace links its plugins.** A watch app that is a
+  member of a pub workspace (`resolution: workspace`) built without error
+  but with no plugin native code in it. The tool looked for the app's own
+  `.dart_tool/package_config.json`, and a workspace member has none: pub
+  writes one config at the workspace root and leaves
+  `.dart_tool/pub/workspace_ref.json` in each member pointing to it. The
+  tool now follows that reference to the root's config, as
+  `flutter pub get` does. The root's config lists every member's packages,
+  so plugin discovery keeps only the packages the member itself depends on;
+  a plugin used only by a sibling member is not linked into the watch app.
+  An app outside a workspace reads the same file as before.
+
+- **`plugin port --include-example` pins the plugin and keeps the example's
+  assets.** The ported example's pubspec named the app-facing plugin as
+  `any`, which builds against whatever is newest that day; it now names
+  `^<version>` of the package the example came from, and warns when that
+  version cannot be read. The assets and fonts the upstream example's pubspec
+  declares are copied with it and declared again; before, only `lib/` and
+  `integration_test/` were copied, so an example that loads an image failed
+  at its first frame.
+
+- **`games_services` is among the plugins the tool suggests.** Since
+  games_services_watchos 0.2.0, which works with games_services 5.x, a project
+  that uses `games_services` is told to add it, as for the fifteen other
+  plugins with a watchOS package.
+
 ## 0.1.1
 
 Debugging on the watch Simulator now takes stock Flutter's launch options

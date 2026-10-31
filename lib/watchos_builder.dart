@@ -11,7 +11,6 @@ import 'package:flutter_tools/src/base/utils.dart' show getSizeAsPlatformMB;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
-import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 
@@ -19,6 +18,7 @@ import 'build_targets/application.dart';
 import 'watchos_auth.dart';
 import 'watchos_build_info.dart';
 import 'watchos_cache.dart';
+import 'watchos_package_config.dart';
 import 'watchos_plugins.dart';
 import 'watchos_project.dart';
 
@@ -106,7 +106,7 @@ class WatchosBuilder {
       processManager: globals.processManager,
       platform: globals.platform,
       analytics: globals.analytics,
-      packageConfigPath: findPackageConfigFileOrDefault(project.directory).path,
+      packageConfigPath: watchosPackageConfigFile(project.directory).path,
     );
 
     final Target target = buildInfo.isDebug
