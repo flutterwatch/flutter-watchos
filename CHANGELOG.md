@@ -25,6 +25,31 @@
   games_services_watchos 0.2.0, which works with games_services 5.x, a project
   that uses `games_services` is told to add it, as for the fifteen other
   plugins with a watchOS package.
+- **Plugin native code is optimized in profile and release builds.** The
+  tool compiles a watchOS plugin's C, Objective-C and Objective-C++ sources
+  and its SwiftUI view sources itself, and it passed no optimization flag,
+  so every plugin ran unoptimized code (`-O0`, `-Onone`) in every build
+  mode. Profile and release builds now use `-Os` and `-O`, as Xcode's
+  Release configuration does, and debug builds stay unoptimized. Debug info
+  (`-g`) is emitted in every mode, as for the host module, so plugin frames
+  symbolicate. Plugins built through SwiftPM were already optimized.
+
+- **A plugin can leave out the code an app does not use.** A watchOS plugin
+  can map preprocessor macros to app Info.plist keys under
+  `flutter.plugin.platforms.watchos.defines` in its pubspec. On every
+  build, the tool reads the watch app's `watchos/Runner/Info.plist` and
+  compiles that plugin's native sources with each macro whose key the app
+  sets to a non-empty string or `true`, after
+  `FLUTTER_WATCHOS_PLUGIN_DEFINES`. A plugin that guards its optional code
+  with `!defined(FLUTTER_WATCHOS_PLUGIN_DEFINES) || MACRO` keeps all of it
+  under an older flutter-watchos, and a plugin without `defines` compiles
+  as before. A permissions plugin can then leave out the groups an app does
+  not use, as permission_handler's `PERMISSION_*` macros do on iOS. An
+  invalid declaration stops the build before anything is compiled, and
+  `-v` prints what each plugin is compiled with. An Xcode archive links the
+  plugin code the last flutter-watchos build compiled, so build again after
+  an Info.plist edit. Plugins built through SwiftPM are not covered. See
+  [Compiling out what an app does not use](doc/plugins.md#compiling-out-what-an-app-does-not-use).
 
 ## 0.1.1
 

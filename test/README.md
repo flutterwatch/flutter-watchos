@@ -67,7 +67,7 @@ test/
     ├── watchos_deployment_target_test.dart # deployment target per configuration, plugin targets, Xcode floor
     ├── watchos_kernel_snapshot_test.dart   # kernel compile for AOT modes
     ├── watchos_linked_frameworks_test.dart # Package.swift .linkedFramework parsing
-    ├── watchos_native_link_test.dart       # host archive and plugin link flags
+    ├── watchos_native_link_test.dart       # host archive and plugin link flags, plugin compile flags
     ├── watchos_platform_args_test.dart     # watchOS platform argument expansion
     ├── watchos_shader_target_test.dart     # shader backends in a bundle
     ├── watchos_signing_test.dart           # development team and keychain lookup
@@ -106,6 +106,7 @@ test/
     ├── plugin_port_objc_test.dart          # Objective-C port
     ├── plugin_port_swift_test.dart         # Swift port
     ├── plugin_port_test.dart               # source analysis and scaffolding
+    ├── watchos_plugin_defines_test.dart    # per-app plugin defines: pubspec, Info.plist, flags
     ├── watchos_plugins_test.dart           # plugin detection and recommendations
     │  Commands, doctor and repository checks
     ├── watchos_create_stock_app_test.dart  # a watch-only create writes stock's app

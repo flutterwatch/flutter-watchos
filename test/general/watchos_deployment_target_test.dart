@@ -483,6 +483,11 @@ flutter:
         '${buildInfo.sdkName}: $triple',
         () async {
           final FlutterProject project = appWithPlugin(debug, release);
+          // Debug stays unoptimized; profile and release are optimized as
+          // Xcode's Release configuration is, with debug info in every mode.
+          // The plugin declares no `defines`, so its compiles get no -D, not
+          // even the marker that says the CLI applied them.
+          final debugMode = buildInfo.buildInfo.mode == BuildMode.debug;
           processManager.addCommands(<FakeCommand>[
             FakeCommand(
               command: <Pattern>[
@@ -492,6 +497,8 @@ flutter:
                 'clang',
                 '-target',
                 triple,
+                if (debugMode) '-O0' else '-Os',
+                '-g',
                 '-fobjc-arc',
                 '-fmodules',
                 '-c',
@@ -509,6 +516,8 @@ flutter:
                 '-target',
                 triple,
                 '-parse-as-library',
+                if (debugMode) '-Onone' else '-O',
+                '-g',
                 '-whole-module-optimization',
                 '-module-name',
                 'gadget_views',
