@@ -25,7 +25,7 @@
 /// (`FlutterWatchOSPlatformViewRegisterNativeFactory`, an `@_cdecl` in the
 /// generated `FlutterRunner.swift`) via `dlsym`, never a compile-time import,
 /// so the plugin still links inside an app created by an older CLI — its
-/// views simply don't appear there, matching `WatchPlatformView.isSupported`
+/// views do not appear there, matching `WatchPlatformView.isSupported`
 /// semantics.
 library;
 

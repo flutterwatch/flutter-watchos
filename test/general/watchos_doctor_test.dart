@@ -13,6 +13,8 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart'
+    show ValidationMessage, ValidationMessageType, ValidationResult, ValidationType;
 import 'package:flutter_watchos/watchos_auth.dart';
 import 'package:flutter_watchos/watchos_cache.dart';
 import 'package:flutter_watchos/watchos_doctor.dart';

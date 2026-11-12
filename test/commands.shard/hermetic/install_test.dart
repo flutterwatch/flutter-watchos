@@ -15,13 +15,15 @@ import 'package:flutter_watchos/executable.dart';
 import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/fake_devices.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
+import '../../src/tool_dependencies.dart';
 import 'src/watch_project.dart';
 
 /// `install` with its checks, and a runCommand that only records that it was
 /// reached: nothing is installed.
 class _CheckedInstallCommand extends WatchosInstallCommand {
-  _CheckedInstallCommand() : super(verboseHelp: false);
+  _CheckedInstallCommand() : super(toolContext: const DelegatingToolContext(), verboseHelp: false);
 
   bool reachedRunCommand = false;
 
@@ -61,6 +63,7 @@ void main() {
 
   testUsingContext('install is the watch command, with stock name and options', () {
     final FlutterCommand install = generateWatchosCommands(
+      toolDependencies: contextToolDependencies(),
       verboseHelp: false,
       verbose: false,
     ).singleWhere((FlutterCommand command) => command.name == 'install');

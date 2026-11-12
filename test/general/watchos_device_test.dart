@@ -511,6 +511,41 @@ void main() {
       expect(await device.emulatorId, isNull);
     });
 
+    // Flutter 3.50 asks every device for its CPU architecture, and the
+    // daemon and `devices --machine` report it.
+    testWithoutContext('a watch and a Simulator are both arm64, the engine architecture', () async {
+      for (final isSimulator in <bool>[true, false]) {
+        final device = WatchosDevice(
+          'id',
+          name: 'Apple Watch',
+          logger: BufferLogger.test(),
+          isSimulator: isSimulator,
+        );
+
+        expect(await device.cpuArch, CpuArch.arm64, reason: 'isSimulator: $isSimulator');
+      }
+    });
+
+    testWithoutContext(
+      'the machine-readable device reports arm64, in the mobile category',
+      () async {
+        final device = WatchosDevice(
+          'id',
+          name: 'Apple Watch',
+          logger: BufferLogger.test(),
+          isSimulator: true,
+        );
+
+        final Map<String, Object?> json = await device.toJson();
+
+        expect(json['cpuArch'], 'arm64');
+        expect(json['targetPlatform'], 'ios');
+        // Flutter 3.50 added an `other` category for custom embedders; a watch
+        // stays where 0.1.2 put it.
+        expect(device.category, Category.mobile);
+      },
+    );
+
     // Mirrors stock IOSSimulator.createDevFSWriter. Through the VM Service,
     // the writes of a run session went nowhere once an attach to the same app
     // had ended, and its next hot reload was rejected.

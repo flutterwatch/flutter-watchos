@@ -109,7 +109,7 @@ class WatchosEmulator {
   /// comes up — which routinely takes longer than a single query. When [timeout]
   /// is set (`--device-timeout`), keep querying within that budget for a watch
   /// that is paired but not reachable yet. Without it, return immediately:
-  /// waiting would tax everyone whose watch is simply put away.
+  /// waiting would tax everyone whose watch is put away.
   static Future<List<WatchosDevice>> getPhysicalDevices(
     Logger logger, {
     ProcessUtils? processUtils,

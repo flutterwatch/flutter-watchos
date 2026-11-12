@@ -13,6 +13,7 @@ import 'package:flutter_watchos/executable.dart';
 
 import '../../src/context.dart';
 import '../../src/test_flutter_command_runner.dart';
+import '../../src/tool_dependencies.dart';
 import 'src/words.dart';
 
 /// The commands whose help has stock's port options.
@@ -49,6 +50,7 @@ void main() {
   };
 
   FlutterCommand command(String name, {required bool verboseHelp}) => generateWatchosCommands(
+    toolDependencies: contextToolDependencies(),
     verboseHelp: verboseHelp,
     verbose: verboseHelp,
   ).singleWhere((FlutterCommand command) => command.name == name);

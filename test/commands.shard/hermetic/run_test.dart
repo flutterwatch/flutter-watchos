@@ -17,6 +17,7 @@ import 'package:flutter_watchos/watchos_mode_guidance.dart';
 import '../../src/common.dart';
 import '../../src/context.dart';
 import '../../src/fake_devices.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
 import 'src/watch_project.dart';
 import 'src/words.dart';
@@ -24,7 +25,7 @@ import 'src/words.dart';
 /// `run` with its checks, and a runCommand that only records that it was
 /// reached: nothing is built or launched.
 class _CheckedRunCommand extends WatchosRunCommand {
-  _CheckedRunCommand() : super(verboseHelp: false);
+  _CheckedRunCommand() : super(toolContext: const DelegatingToolContext());
 
   bool reachedRunCommand = false;
 

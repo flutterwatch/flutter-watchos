@@ -10,7 +10,7 @@ import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/flutter_project_metadata.dart'
-    show FlutterProjectMetadata, FlutterTemplateType;
+    show FlutterProjectMetadata, FlutterTemplateType, ParsedFlutterTemplateType;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -113,7 +113,13 @@ String watchosCreateNextSteps(
 }
 
 class WatchosCreateCommand extends CreateCommand {
-  WatchosCreateCommand({required super.verboseHelp}) {
+  WatchosCreateCommand({
+    required super.androidContext,
+    required super.appleContext,
+    required super.templateRenderer,
+    required super.toolContext,
+    super.verboseHelp,
+  }) {
     // Internal only. Users say `--platforms=watchos`; the argv shim in
     // executable.dart rewrites that to this flag because upstream Flutter's
     // `--platforms` parser rejects `watchos`. Hidden so it never appears in
@@ -196,10 +202,13 @@ class WatchosCreateCommand extends CreateCommand {
     // Only an app gets the watch app runner. The type is the one stock create
     // just wrote to .metadata, so `create .` in an existing package, module or
     // plugin, which names no --template, gets no runner either.
-    final FlutterTemplateType? made = FlutterProjectMetadata(
-      globals.fs.directory(projectDirPath).childFile('.metadata'),
-      globals.logger,
-    ).projectType;
+    final FlutterTemplateType? made = _stockTemplateType(
+      FlutterProjectMetadata(
+        globals.fs.directory(projectDirPath).childFile('.metadata'),
+        globals.logger,
+        extensionTemplateManager: null,
+      ).projectType,
+    );
     final String? noApp = watchosCreateNoAppMessage(made);
     if (noApp != null) {
       globals.logger.printStatus(noApp);
@@ -249,7 +258,7 @@ class WatchosCreateCommand extends CreateCommand {
     }
     final Directory directory = globals.fs.directory(projectDirPath);
     final FlutterTemplateType? existing = directory.existsSync() && directory.listSync().isNotEmpty
-        ? determineTemplateType()
+        ? _stockTemplateType(determineTemplateType(extensionTemplateManager: null))
         : null;
     if (existing != null && existing != FlutterTemplateType.app) {
       throwToolExit(
@@ -265,6 +274,14 @@ class WatchosCreateCommand extends CreateCommand {
       );
     }
   }
+
+  /// [type] when it is one of stock's own templates, otherwise null.
+  ///
+  /// With no tool-extension templates, which this command never offers, a
+  /// parsed type is one of stock's or null; null is what a type that cannot be
+  /// read has always been taken as.
+  static FlutterTemplateType? _stockTemplateType(ParsedFlutterTemplateType? type) =>
+      type is FlutterTemplateType ? type : null;
 
   /// Applies the host mode the project's shape implies — companion when
   /// `create` scaffolded (or found) an iOS app, standalone otherwise — and

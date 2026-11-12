@@ -29,7 +29,8 @@ class WatchosDebugAdapterCommand extends DebugAdapterCommand with UnusedPortHelp
   /// [toolPath] is the tool a session starts; it defaults to
   /// `bin/flutter-watchos` next to the pinned SDK, which `main` sets as
   /// [Cache.flutterRoot].
-  WatchosDebugAdapterCommand({super.verboseHelp, String? toolPath}) : _toolPath = toolPath;
+  WatchosDebugAdapterCommand({required super.toolContext, super.verboseHelp, String? toolPath})
+    : _toolPath = toolPath;
 
   final String? _toolPath;
 

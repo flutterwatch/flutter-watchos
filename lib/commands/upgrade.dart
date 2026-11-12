@@ -31,7 +31,7 @@ import '../watchos_cache.dart';
 /// `v3.44.1-watchos.0.1.0` (the tool version may carry a pre-release suffix).
 /// The newest tag by version order is the target.
 class WatchosUpgradeCommand extends UpgradeCommand {
-  WatchosUpgradeCommand({required super.verboseHelp});
+  WatchosUpgradeCommand({required super.toolContext, required super.verboseHelp});
 
   @override
   String get description =>

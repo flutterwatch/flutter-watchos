@@ -18,9 +18,11 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
+import 'package:flutter_tools/src/context/tool_dependencies.dart';
 import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/flutter_project_metadata.dart' show FlutterTemplateType;
+import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
@@ -28,11 +30,13 @@ import 'package:flutter_watchos/commands/create.dart';
 import 'package:flutter_watchos/watchos_platform_args.dart';
 import 'package:test/fake.dart';
 
-import '../../flutter/packages/flutter_tools/test/src/fakes.dart' show TestFeatureFlags;
+import '../../flutter/packages/flutter_tools/test/src/fakes.dart'
+    show DelegatingToolContext, TestFeatureFlags;
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/host_sources.dart';
 import '../src/test_flutter_command_runner.dart';
+import '../src/tool_dependencies.dart';
 
 // The parts of an iOS Runner project the host-mode wiring reads and edits, as
 // in watchos_host_mode_test.dart.
@@ -56,6 +60,30 @@ const _iosPbxproj = '''
 			};
 		};
 ''';
+
+/// `flutter-watchos create`, as the tool builds it, with the services of the
+/// test's context.
+WatchosCreateCommand _watchosCreate() {
+  final ToolDependencies dependencies = contextToolDependencies();
+  return WatchosCreateCommand(
+    androidContext: dependencies.androidContext,
+    appleContext: dependencies.appleContext,
+    templateRenderer: const MustacheTemplateRenderer(),
+    toolContext: const DelegatingToolContext(),
+  );
+}
+
+/// Stock `flutter create`, as stock builds it, with the services of the
+/// test's context.
+CreateCommand _stockCreate() {
+  final ToolDependencies dependencies = contextToolDependencies();
+  return CreateCommand(
+    androidContext: dependencies.androidContext,
+    appleContext: dependencies.appleContext,
+    templateRenderer: const MustacheTemplateRenderer(),
+    toolContext: const DelegatingToolContext(),
+  );
+}
 
 void main() {
   late MemoryFileSystem fileSystem;
@@ -129,7 +157,7 @@ void main() {
       fileSystem.directory(cliRootPath('templates')).deleteSync(recursive: true);
 
       await expectLater(
-        create(WatchosCreateCommand(verboseHelp: false), <String>[
+        create(_watchosCreate(), <String>[
           '--watchos-only',
           '/projects/watch',
         ]),
@@ -144,11 +172,11 @@ void main() {
   testUsingContext(
     'a watch-only create writes the files stock create writes, unmodified',
     () async {
-      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+      await create(_watchosCreate(), <String>[
         '--watchos-only',
         '/projects/watch',
       ]);
-      await create(CreateCommand(), <String>['--platforms=linux', '/projects/stock']);
+      await create(_stockCreate(), <String>['--platforms=linux', '/projects/stock']);
 
       expect(files('watch'), files('stock'));
       for (final String path in files('stock')) {
@@ -188,12 +216,12 @@ void main() {
   testUsingContext(
     'a watch-only create honours --empty as stock does',
     () async {
-      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+      await create(_watchosCreate(), <String>[
         '--watchos-only',
         '--empty',
         '/projects/watch',
       ]);
-      await create(CreateCommand(), <String>['--platforms=linux', '--empty', '/projects/stock']);
+      await create(_stockCreate(), <String>['--platforms=linux', '--empty', '/projects/stock']);
 
       expect(files('watch'), files('stock'));
       expect(read('watch', 'lib/main.dart'), read('stock', 'lib/main.dart'));
@@ -206,7 +234,7 @@ void main() {
     'a failed pub get still leaves the whole project, watchos/ included',
     () async {
       await expectLater(
-        create(WatchosCreateCommand(verboseHelp: false), <String>[
+        create(_watchosCreate(), <String>[
           '--watchos-only',
           '/projects/watch',
         ], pub: true),
@@ -226,7 +254,7 @@ void main() {
         ..createSync(recursive: true)
         ..writeAsStringSync(_iosPbxproj);
 
-      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+      await create(_watchosCreate(), <String>[
         '--watchos-only',
         '/projects/watch',
       ]);
@@ -246,7 +274,7 @@ void main() {
       'refuses $label before writing anything',
       () async {
         await expectLater(
-          create(WatchosCreateCommand(verboseHelp: false), <String>[
+          create(_watchosCreate(), <String>[
             '--watchos-only',
             ...args,
             '/projects/watch',
@@ -269,7 +297,7 @@ void main() {
       'refuses --list-samples $label before writing anything',
       () async {
         await expectLater(
-          create(WatchosCreateCommand(verboseHelp: false), <String>[
+          create(_watchosCreate(), <String>[
             '--watchos-only',
             '--list-samples=/projects/samples.json',
             ...directory,
@@ -292,7 +320,7 @@ void main() {
     testUsingContext(
       'adds no watchos/ to $what made by stock create, and says so',
       () async {
-        await create(WatchosCreateCommand(verboseHelp: false), <String>[
+        await create(_watchosCreate(), <String>[
           '--template=$template',
           '/projects/$template',
         ]);
@@ -314,11 +342,11 @@ void main() {
   testUsingContext(
     'adds no watchos/ to an existing package that create . recreates',
     () async {
-      await create(CreateCommand(), <String>['--template=package', '/projects/package']);
+      await create(_stockCreate(), <String>['--template=package', '/projects/package']);
       testLogger.clear();
 
       // No --template: stock create finds the package's type in .metadata.
-      await create(WatchosCreateCommand(verboseHelp: false), <String>['/projects/package']);
+      await create(_watchosCreate(), <String>['/projects/package']);
 
       expect(project('package').childDirectory('watchos').existsSync(), isFalse);
       expect(
@@ -342,7 +370,7 @@ void main() {
     ]) {
       final String typed = <String>['create', ...platforms, '.'].join(' ');
       testUsingContext('$typed in $what adds no watch app, and names plugin port', () async {
-        await create(CreateCommand(), <String>['--template=$template', '/projects/plugin']);
+        await create(_stockCreate(), <String>['--template=$template', '/projects/plugin']);
         testLogger.clear();
         fileSystem.currentDirectory = project('plugin');
 
@@ -353,7 +381,7 @@ void main() {
           ...platforms,
           '.',
         ]).sublist(1);
-        await create(WatchosCreateCommand(verboseHelp: false), args);
+        await create(_watchosCreate(), args);
 
         if (platforms.isNotEmpty) {
           expect(project('plugin').childDirectory('ios').existsSync(), isTrue);
@@ -385,7 +413,7 @@ void main() {
   testUsingContext(
     'adds watchos/ beside an app made by stock create',
     () async {
-      await create(WatchosCreateCommand(verboseHelp: false), <String>[
+      await create(_watchosCreate(), <String>[
         '--platforms=linux',
         '/projects/app',
       ]);

@@ -12,11 +12,8 @@ import 'package:flutter_watchos/watchos_auth.dart';
 import '../src/common.dart';
 import '../src/fakes.dart';
 
-FakePlatform _withApi(String? value) => FakePlatform(
-  environment: <String, String>{
-    if (value != null) 'WATCHOS_ARTIFACTS_API': value,
-  },
-);
+FakePlatform _withApi(String? value) =>
+    FakePlatform(environment: <String, String>{'WATCHOS_ARTIFACTS_API': ?value});
 
 void main() {
   group('watchosArtifactApiBase', () {

@@ -18,7 +18,7 @@ import 'launch_checks.dart';
 /// opens, so `logs -d <watch>` exits non-zero and says where to look instead.
 class WatchosLogsCommand extends LogsCommand {
   /// Creates the command. [sigint] and [sigterm] end the stream, as in stock.
-  WatchosLogsCommand({required super.sigint, required super.sigterm});
+  WatchosLogsCommand({required super.toolContext, super.sigint, super.sigterm});
 
   @override
   Future<FlutterCommandResult> runCommand() async {

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 import 'package:file/src/interface/directory.dart';
+import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/commands/precache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -71,6 +73,23 @@ class WatchosPrecacheCommand extends PrecacheCommand {
     // into the same engine directory at the same time.
     if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
       await globals.cache.lock();
+    }
+
+    // Stock's `--host-arch` (Flutter 3.50): the host artifacts this run
+    // downloads are for that architecture. Set before any update, as stock
+    // sets it before its own.
+    final String? hostArch = stringArg('host-arch');
+    if (hostArch != null) {
+      final HostPlatform? overridePlatform = HostPlatform.fromOsAndArch(
+        globals.platform.operatingSystem,
+        hostArch,
+      );
+      if (overridePlatform == null) {
+        throwToolExit(
+          'Unsupported host architecture "$hostArch" for OS "${globals.platform.operatingSystem}"',
+        );
+      }
+      globals.cache.osUtils.hostPlatformOverride = overridePlatform;
     }
 
     // Before the engine update, not after it: the update writes the watchOS

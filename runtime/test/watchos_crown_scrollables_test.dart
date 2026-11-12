@@ -9,7 +9,15 @@
 // A case that works with a caveat says so where it asserts today's
 // behaviour (CAVEAT).
 
+// Flutter 3.50 deprecates this library for package:cupertino_ui, which is
+// not adopted yet: the library still works as before, only its import is
+// deprecated.
+// ignore: deprecated_member_use
 import 'package:flutter/cupertino.dart';
+// Flutter 3.50 deprecates this library for package:material_ui, which is
+// not adopted yet: the library still works as before, only its import is
+// deprecated.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_watchos_runtime/watchos_crown_runtime.dart';

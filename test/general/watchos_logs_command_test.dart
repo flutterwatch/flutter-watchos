@@ -23,7 +23,9 @@ import 'package:test/fake.dart';
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/fake_process_manager.dart';
+import '../src/fakes.dart';
 import '../src/test_flutter_command_runner.dart';
+import '../src/tool_dependencies.dart';
 
 // `logs` on a watch: a Simulator streams through stock's command, and a
 // physical watch is refused with guidance before anything runs.
@@ -68,6 +70,7 @@ void main() {
     'logs is the watch command, with stock name and options',
     () {
       final FlutterCommand logs = generateWatchosCommands(
+        toolDependencies: contextToolDependencies(),
         verboseHelp: false,
         verbose: false,
       ).singleWhere((FlutterCommand command) => command.name == 'logs');
@@ -104,6 +107,7 @@ void main() {
         WatchosDevice('watch-1', name: 'My Watch', logger: logger, isSimulator: false),
       );
       final command = WatchosLogsCommand(
+        toolContext: const DelegatingToolContext(),
         sigint: _FakeProcessSignal(),
         sigterm: _FakeProcessSignal(),
       );
@@ -165,7 +169,11 @@ void main() {
         ),
       );
       final sigint = _FakeProcessSignal();
-      final command = WatchosLogsCommand(sigint: sigint, sigterm: _FakeProcessSignal());
+      final command = WatchosLogsCommand(
+        toolContext: const DelegatingToolContext(),
+        sigint: sigint,
+        sigterm: _FakeProcessSignal(),
+      );
 
       final Future<void> run = createTestCommandRunner(
         command,
@@ -219,6 +227,7 @@ void main() {
         ),
       );
       final command = WatchosLogsCommand(
+        toolContext: const DelegatingToolContext(),
         sigint: _FakeProcessSignal(),
         sigterm: _FakeProcessSignal(),
       );
@@ -250,6 +259,7 @@ void main() {
         ),
       );
       final command = WatchosLogsCommand(
+        toolContext: const DelegatingToolContext(),
         sigint: _FakeProcessSignal(),
         sigterm: _FakeProcessSignal(),
       );

@@ -17,7 +17,9 @@ import 'package:flutter_watchos/watchos_device.dart';
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/fake_process_manager.dart';
+import '../src/fakes.dart';
 import '../src/test_flutter_command_runner.dart';
+import '../src/tool_dependencies.dart';
 
 // Screenshots of a watch: `screenshot -d` and the `s` key call
 // supportsScreenshot and takeScreenshot, which go through simctl on the
@@ -99,7 +101,7 @@ void main() {
     ];
 
     Future<void> screenshot() => createTestCommandRunner(
-      WatchosScreenshotCommand(fs: fileSystem),
+      WatchosScreenshotCommand(toolContext: DelegatingToolContext(fs: fileSystem)),
     ).run(<String>['screenshot', '-d', 'watch-1', '-o', 'shot.png']);
 
     testUsingContext(
@@ -208,6 +210,7 @@ void main() {
       'is the watch command, with stock name and options',
       () {
         final FlutterCommand command = generateWatchosCommands(
+          toolDependencies: contextToolDependencies(),
           verboseHelp: false,
           verbose: false,
         ).singleWhere((FlutterCommand command) => command.name == 'screenshot');
@@ -239,7 +242,7 @@ void main() {
 
         await expectLater(
           createTestCommandRunner(
-            WatchosScreenshotCommand(fs: fileSystem),
+            WatchosScreenshotCommand(toolContext: DelegatingToolContext(fs: fileSystem)),
           ).run(<String>['screenshot', '-d', 'AAAA-BBBB-CCCC', '-o', 'shot.png']),
           throwsToolExit(
             message: watchosShutDownSimulatorGuidance(

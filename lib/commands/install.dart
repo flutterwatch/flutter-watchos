@@ -15,7 +15,7 @@ import 'launch_checks.dart';
 /// Its name and options are stock's, so the command list does not change.
 class WatchosInstallCommand extends InstallCommand {
   /// The `install` command.
-  WatchosInstallCommand({required super.verboseHelp});
+  WatchosInstallCommand({required super.toolContext, required super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {

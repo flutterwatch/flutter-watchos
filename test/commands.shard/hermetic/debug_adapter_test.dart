@@ -16,6 +16,7 @@ import 'package:flutter_watchos/commands/debug_adapter.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
+import '../../src/fakes.dart';
 
 const String _tool = '/clone/bin/flutter-watchos';
 
@@ -299,7 +300,13 @@ void main() {
 
   group('WatchosDebugAdapterCommand', () {
     testUsingContext('a given tool path is the one sessions start', () {
-      expect(WatchosDebugAdapterCommand(toolPath: '/elsewhere/tool').toolPath, '/elsewhere/tool');
+      expect(
+        WatchosDebugAdapterCommand(
+          toolContext: const DelegatingToolContext(),
+          toolPath: '/elsewhere/tool',
+        ).toolPath,
+        '/elsewhere/tool',
+      );
     });
 
     testUsingContext(
@@ -307,7 +314,10 @@ void main() {
       () {
         Cache.flutterRoot = '/clone/flutter';
 
-        expect(WatchosDebugAdapterCommand().toolPath, _tool);
+        expect(
+          WatchosDebugAdapterCommand(toolContext: const DelegatingToolContext()).toolPath,
+          _tool,
+        );
       },
       overrides: <Type, Generator>{
         FileSystem: () => MemoryFileSystem.test(),

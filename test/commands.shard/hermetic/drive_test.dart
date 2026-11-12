@@ -11,12 +11,14 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_watchos/build_targets/application.dart';
 import 'package:flutter_watchos/commands/drive.dart';
 import 'package:flutter_watchos/commands/launch_checks.dart';
 import 'package:flutter_watchos/watchos_mode_guidance.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
 import 'src/watch_project.dart';
 import 'src/words.dart';
@@ -24,13 +26,17 @@ import 'src/words.dart';
 /// `drive` with its checks, and a runCommand that only records that it was
 /// reached: nothing is built, launched or driven.
 class _CheckedDriveCommand extends WatchosDriveCommand {
-  _CheckedDriveCommand({required super.fileSystem, required super.logger})
+  _CheckedDriveCommand({required FileSystem fileSystem, required Logger logger})
     : super(
-        verboseHelp: false,
-        platform: FakePlatform(),
-        signals: FakeSignals(),
-        terminal: Terminal.test(),
-        outputPreferences: OutputPreferences.test(),
+        buildSystem: FakeBuildSystem(),
+        buildTargets: const WatchosBuildTargets(),
+        toolContext: DelegatingToolContext(
+          fs: fileSystem,
+          logger: logger,
+          platform: FakePlatform(),
+          signals: FakeSignals(),
+          outputPreferences: OutputPreferences.test(),
+        ),
       );
 
   bool reachedRunCommand = false;

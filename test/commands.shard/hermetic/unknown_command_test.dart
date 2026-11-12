@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/context/tool_dependencies.dart';
 import 'package:flutter_watchos/executable.dart';
 import 'package:flutter_watchos/watchos_logger.dart';
 
@@ -81,7 +82,11 @@ void main() {
               unawaited(
                 runner.run(
                   <String>['--suppress-analytics', '--no-version-check', 'nosuchcommand'],
-                  () => generateWatchosCommands(verboseHelp: false, verbose: false),
+                  (ToolDependencies toolDependencies) => generateWatchosCommands(
+                    toolDependencies: toolDependencies,
+                    verboseHelp: false,
+                    verbose: false,
+                  ),
                   reportCrashes: false,
                   shutdownHooks: ShutdownHooks(),
                   overrides: <Type, Generator>{

@@ -571,6 +571,37 @@ void main() {
     overrides: overrides,
   );
 
+  // Flutter 3.50's stock update returns before updateInner when an artifact
+  // has no version. The engine is looked for all the same, as before.
+  group('with no engine pin', () {
+    setUp(() {
+      fs.file('/cli/bin/internal/engine.version').deleteSync();
+    });
+
+    testUsingContext('update still stops with the hint to run precache', () async {
+      await expectLater(
+        () => makeArtifacts().update(makeUpdater(), logger, fs, FakeOperatingSystemUtils()),
+        throwsToolExit(message: 'Run `flutter-watchos precache`'),
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    }, overrides: overrides);
+
+    testUsingContext(
+      'update still uses the engine WATCHOS_ENGINE_ARTIFACTS names, and warns',
+      () async {
+        fs.directory('/engine').createSync();
+        platform.environment['WATCHOS_ENGINE_ARTIFACTS'] = '/engine';
+
+        await makeArtifacts().update(makeUpdater(), logger, fs, FakeOperatingSystemUtils());
+
+        expect(logger.traceText, contains('WATCHOS_ENGINE_ARTIFACTS=/engine'));
+        expect(logger.warningText, contains('No known version for the artifact name'));
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: overrides,
+    );
+  });
+
   testUsingContext(
     'after login, the next update fetches exactly the owed engines, once',
     () async {

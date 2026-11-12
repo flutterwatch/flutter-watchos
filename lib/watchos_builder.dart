@@ -61,7 +61,7 @@ class WatchosBuilder {
     // Used by AotElfBase to generate an AOT snapshot. watchOS rides the iOS
     // target platform, being an iOS-family OS; see "Platform identity" in
     // doc/architecture.md.
-    final String targetPlatformName = getNameForTargetPlatform(TargetPlatform.ios);
+    final String targetPlatformName = TargetPlatform.ios.getName();
 
     // Read by the hooks target when it has to fall back to naming the iOS
     // family — see `watchosTargetOSName`. That fallback feeds an

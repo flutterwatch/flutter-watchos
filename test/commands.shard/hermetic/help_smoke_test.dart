@@ -7,13 +7,18 @@ import 'package:flutter_tools/executable.dart' as stock;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/commands/create.dart';
+import 'package:flutter_tools/src/commands/doctor.dart';
+import 'package:flutter_tools/src/context/tool_dependencies.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/runner/flutter_command_runner.dart';
 import 'package:flutter_watchos/executable.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
+import '../../src/tool_dependencies.dart';
 import 'src/words.dart';
 
 /// Every name flutter-watchos registers, `-h` or not. A command added or
@@ -61,8 +66,13 @@ Set<String> _names(Iterable<FlutterCommand> commands) =>
     commands.map((FlutterCommand command) => command.name).toSet();
 
 FlutterCommandRunner _runner({required bool verboseHelp}) {
-  final runner = FlutterCommandRunner(verboseHelp: verboseHelp);
+  final ToolDependencies toolDependencies = contextToolDependencies();
+  final runner = FlutterCommandRunner(
+    toolContext: toolDependencies.toolContext,
+    verboseHelp: verboseHelp,
+  );
   generateWatchosCommands(
+    toolDependencies: toolDependencies,
     verboseHelp: verboseHelp,
     verbose: verboseHelp,
   ).forEach(runner.addCommand);
@@ -82,10 +92,30 @@ void main() {
   group('the command list', () {
     testUsingContext('is pinned', () {
       final List<String> names = _names(
-        generateWatchosCommands(verboseHelp: false, verbose: false),
+        generateWatchosCommands(
+          toolDependencies: contextToolDependencies(),
+          verboseHelp: false,
+          verbose: false,
+        ),
       ).toList()..sort();
 
       expect(names, _registered);
+    }, overrides: overrides());
+
+    // A doctor given an extension manager builds stock's validator list,
+    // which has no watchOS entries, and create would offer extension
+    // templates. flutter-watchos passes neither, as 0.1.2 had none to pass.
+    testUsingContext('gives doctor and create no tool-extension managers', () {
+      final List<FlutterCommand> commands = generateWatchosCommands(
+        toolDependencies: contextToolDependencies(),
+        verboseHelp: false,
+        verbose: false,
+      );
+      FlutterCommand named(String name) =>
+          commands.singleWhere((FlutterCommand command) => command.name == name);
+
+      expect((named('doctor') as DoctorCommand).extensionManager, isNull);
+      expect((named('create') as CreateCommand).extensionTemplateManager, isNull);
     }, overrides: overrides());
 
     testUsingContext('-h lists analyze', () {
@@ -102,12 +132,21 @@ void main() {
 
     testUsingContext('leaves out exactly the four stock commands with no use here', () {
       final List<FlutterCommand> stockCommands = stock.generateCommands(
+        // Stock's list, by name only: no command is run, so its services
+        // are stock's test fakes.
+        toolDependencies: FakeToolDependencies(toolContext: FakeToolContext()),
         verboseHelp: true,
         verbose: false,
       );
-      final Set<String> left = _names(
-        stockCommands,
-      ).difference(_names(generateWatchosCommands(verboseHelp: true, verbose: false)));
+      final Set<String> left = _names(stockCommands).difference(
+        _names(
+          generateWatchosCommands(
+            toolDependencies: contextToolDependencies(),
+            verboseHelp: true,
+            verbose: false,
+          ),
+        ),
+      );
 
       // The fourth shows widgets in a browser; the list names it only by
       // leaving it out.
@@ -117,10 +156,19 @@ void main() {
 
     testUsingContext('typing a command that is left out, or its alias, is a usage error', () async {
       final List<FlutterCommand> stockCommands = stock.generateCommands(
+        // Stock's list, by name only: no command is run, so its services
+        // are stock's test fakes.
+        toolDependencies: FakeToolDependencies(toolContext: FakeToolContext()),
         verboseHelp: true,
         verbose: false,
       );
-      final Set<String> ours = _names(generateWatchosCommands(verboseHelp: true, verbose: false));
+      final Set<String> ours = _names(
+        generateWatchosCommands(
+          toolDependencies: contextToolDependencies(),
+          verboseHelp: true,
+          verbose: false,
+        ),
+      );
       final typed = <String>[
         for (final FlutterCommand command in stockCommands)
           if (!ours.contains(command.name)) ...<String>[command.name, ...command.aliases],
@@ -155,6 +203,7 @@ void main() {
     /// command runner, and returns what it printed.
     Future<String> help(String name, {required bool verboseHelp}) async {
       final FlutterCommand command = generateWatchosCommands(
+        toolDependencies: contextToolDependencies(),
         verboseHelp: verboseHelp,
         verbose: verboseHelp,
       ).singleWhere((FlutterCommand command) => command.name == name);
