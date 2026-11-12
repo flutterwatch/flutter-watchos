@@ -5,5 +5,10 @@
 import 'package:flutter_tools/src/commands/devices.dart';
 
 class WatchosDevicesCommand extends DevicesCommand {
-  WatchosDevicesCommand({required super.verboseHelp});
+  WatchosDevicesCommand({
+    required super.deviceManager,
+    required super.doctor,
+    required super.toolContext,
+    super.verboseHelp,
+  });
 }

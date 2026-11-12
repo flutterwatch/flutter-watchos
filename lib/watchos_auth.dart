@@ -135,7 +135,7 @@ void writeWatchosCredentials(
   staged.writeAsStringSync(
     const JsonEncoder.withIndent('  ').convert(<String, Object?>{
       'token': token,
-      if (login != null) 'login': login,
+      'login': ?login,
       'created_at': DateTime.now().toUtc().toIso8601String(),
     }),
   );

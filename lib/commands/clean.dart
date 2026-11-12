@@ -9,7 +9,12 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 class WatchosCleanCommand extends CleanCommand {
-  WatchosCleanCommand({required super.verbose});
+  WatchosCleanCommand({
+    required super.toolContext,
+    required super.xcode,
+    required super.xcodeProjectInterpreter,
+    super.verbose,
+  });
 
   @override
   Future<FlutterCommandResult> runCommand() async {

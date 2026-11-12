@@ -17,6 +17,7 @@ import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/flutter_features.dart';
 import 'package:flutter_tools/src/flutter_features_config.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_watchos/build_targets/application.dart';
 import 'package:flutter_watchos/executable.dart';
 
 import '../../src/common.dart';
@@ -128,7 +129,18 @@ void main() {
       globals.fs.file('/project/pubspec.yaml')
         ..createSync(recursive: true)
         ..writeAsStringSync('name: app\n');
-      daemon = Daemon(connection, notifyingLogger: notifyingLogger);
+      // As `daemon` builds it: the feature flags are the context's, which
+      // are the watchOS flags in the tool and in these tests.
+      daemon = Daemon(
+        connection,
+        analytics: globals.analytics,
+        buildSystem: globals.buildSystem,
+        buildTargets: const WatchosBuildTargets(),
+        featureFlags: featureFlags,
+        toolContext: const DelegatingToolContext(),
+        xcode: globals.xcode,
+        notifyingLogger: notifyingLogger,
+      );
       streams.inputs.add(
         DaemonMessage(<String, Object?>{
           'id': 0,

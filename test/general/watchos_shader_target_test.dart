@@ -154,7 +154,7 @@ flutter:
       defines: <String, String>{
         kBuildMode: BuildMode.release.cliName,
         // watchOS rides the iOS pipeline.
-        kTargetPlatform: getNameForTargetPlatform(TargetPlatform.ios),
+        kTargetPlatform: TargetPlatform.ios.getName(),
       },
       inputs: <String, String>{},
       artifacts: artifacts,

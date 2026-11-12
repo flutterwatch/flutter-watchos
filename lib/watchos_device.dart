@@ -772,6 +772,14 @@ class WatchosDevice extends Device {
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
 
+  /// arm64 on a watch and on the Simulator alike: that is the one
+  /// architecture the watchOS engine is built for (`WatchosBuildInfo`'s
+  /// target arch), and the one an app is built and launched as. A watch's
+  /// arm64_32 slice is the template's stub, which runs no Flutter. Since
+  /// Flutter 3.50 the daemon and `devices --machine` report it as `cpuArch`.
+  @override
+  Future<CpuArch> get cpuArch async => CpuArch.arm64;
+
   // Override the display name so `flutter-watchos devices` shows `watchos` in
   // the platform column instead of the inherited `ios`. The build pipeline
   // still sees `TargetPlatform.ios` (we ride the iOS toolchain).

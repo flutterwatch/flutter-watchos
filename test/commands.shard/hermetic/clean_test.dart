@@ -6,11 +6,25 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/context/apple_context.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_watchos/commands/clean.dart';
 
 import '../../src/context.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
+import '../../src/tool_dependencies.dart';
+
+/// `clean` with the Xcode services the test's context holds, as the tool
+/// builds it.
+WatchosCleanCommand _cleanCommand() {
+  final AppleContext appleContext = contextToolDependencies().appleContext;
+  return WatchosCleanCommand(
+    toolContext: const DelegatingToolContext(),
+    xcode: appleContext.xcode,
+    xcodeProjectInterpreter: appleContext.xcodeProjectInterpreter,
+  );
+}
 
 void main() {
   late MemoryFileSystem fileSystem;
@@ -61,7 +75,7 @@ void main() {
         .childFile('x')
         .createSync(recursive: true);
 
-    await createTestCommandRunner(WatchosCleanCommand(verbose: false)).run(<String>['clean']);
+    await createTestCommandRunner(_cleanCommand()).run(<String>['clean']);
 
     for (final path in <String>[
       'Pods',
@@ -93,7 +107,7 @@ void main() {
   testUsingContext('without watchos/ it is stock clean', () async {
     project.childDirectory('build').childFile('x').createSync(recursive: true);
 
-    await createTestCommandRunner(WatchosCleanCommand(verbose: false)).run(<String>['clean']);
+    await createTestCommandRunner(_cleanCommand()).run(<String>['clean']);
 
     expect(project.childDirectory('build').existsSync(), isFalse);
     expect(logger.statusText, isNot(contains('watchOS')));

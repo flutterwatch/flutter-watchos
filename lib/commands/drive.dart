@@ -15,13 +15,10 @@ import 'port_help.dart';
 
 class WatchosDriveCommand extends DriveCommand with WatchosRequiredArtifacts, UnusedPortHelp {
   WatchosDriveCommand({
-    required super.verboseHelp,
-    required super.fileSystem,
-    required super.logger,
-    required super.platform,
-    required super.signals,
-    required super.terminal,
-    required super.outputPreferences,
+    required super.buildSystem,
+    required super.buildTargets,
+    required super.toolContext,
+    super.verboseHelp,
   });
 
   @override

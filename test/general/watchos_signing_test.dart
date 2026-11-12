@@ -174,9 +174,9 @@ void main() {
 
     Map<String, String> env({String? path, String? id, String? issuer}) {
       return <String, String>{
-        if (path != null) 'APP_STORE_CONNECT_KEY_PATH': path,
-        if (id != null) 'APP_STORE_CONNECT_KEY_ID': id,
-        if (issuer != null) 'APP_STORE_CONNECT_ISSUER_ID': issuer,
+        'APP_STORE_CONNECT_KEY_PATH': ?path,
+        'APP_STORE_CONNECT_KEY_ID': ?id,
+        'APP_STORE_CONNECT_ISSUER_ID': ?issuer,
       };
     }
 

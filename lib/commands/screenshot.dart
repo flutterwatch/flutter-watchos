@@ -13,8 +13,9 @@ import 'launch_checks.dart';
 /// A booted Simulator and a paired watch take the screenshot through
 /// `WatchosDevice.takeScreenshot`, as stock's command calls it.
 class WatchosScreenshotCommand extends ScreenshotCommand {
-  /// The `screenshot` command, writing through [fs].
-  WatchosScreenshotCommand({required super.fs});
+  /// The `screenshot` command, which reads its file system and the rest of
+  /// the tool's services from [toolContext].
+  WatchosScreenshotCommand({required super.toolContext});
 
   @override
   Future<void> validateCommand() async {

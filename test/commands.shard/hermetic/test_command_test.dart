@@ -10,6 +10,7 @@ import 'package:flutter_watchos/commands/test.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
+import '../../src/fakes.dart';
 import '../../src/test_flutter_command_runner.dart';
 import 'src/watch_project.dart';
 
@@ -37,7 +38,7 @@ void main() {
   testUsingContext("runs the watch tooling check, then stock's checks", () async {
     await expectLater(
       createTestCommandRunner(
-        WatchosTestCommand(verboseHelp: false),
+        WatchosTestCommand(toolContext: const DelegatingToolContext()),
       ).run(<String>['test', '--no-pub', 'test/missing_test.dart']),
       throwsToolExit(message: 'cannot run without a dependency on either'),
     );

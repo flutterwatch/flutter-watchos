@@ -133,7 +133,7 @@ enum EngineArtifactsMatch {
 /// An unstamped one is reusable too, and that is the dangerous case. It is
 /// meant for a local engine somebody built and dropped in, which has no id to
 /// declare — but nothing distinguishes it from a download whose stamp went
-/// missing, or a tree that has simply gone stale. On 2026-08-25 exactly that
+/// missing, or a tree that has gone stale. On 2026-08-25 exactly that
 /// happened: a four-day-old engine_artifacts/ answered for a freshly built id,
 /// `precache` reported success, and the CLI ran the old binary. Everything this
 /// project's tooling produces is stamped now (package_artifacts.sh writes it),
@@ -634,6 +634,47 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   @override
   String? get version => pinnedWatchosEngineVersion();
 
+  /// Stock's update, except that with no engine pin the engine is still
+  /// looked for.
+  ///
+  /// From Flutter 3.50 stock's [CachedArtifact.update] returns before
+  /// [updateInner] when an artifact has no version, with only a warning. With
+  /// no `bin/internal/engine.version` that dropped the two things
+  /// [updateInner] does without a pin: use the engine `WATCHOS_ENGINE_ARTIFACTS`
+  /// names, and otherwise stop with [releaseTag]'s hint to run `precache`. So
+  /// with no pin this runs [updateInner] first, as stock did up to Flutter
+  /// 3.47, and then gives stock's warning; with a pin it is stock's.
+  @override
+  Future<void> update(
+    ArtifactUpdater artifactUpdater,
+    Logger logger,
+    FileSystem fileSystem,
+    OperatingSystemUtils operatingSystemUtils, {
+    bool offline = false,
+  }) async {
+    if (version == null) {
+      if (!location.existsSync()) {
+        try {
+          location.createSync(recursive: true);
+        } on FileSystemException catch (err) {
+          logger.printError(err.toString());
+          throwToolExit(
+            'Failed to create directory for flutter cache at ${location.path}. '
+            'Flutter may be missing permissions in its cache directory.',
+          );
+        }
+      }
+      await updateInner(artifactUpdater, fileSystem, operatingSystemUtils);
+    }
+    return super.update(
+      artifactUpdater,
+      logger,
+      fileSystem,
+      operatingSystemUtils,
+      offline: offline,
+    );
+  }
+
   /// The engine id the artifacts are stored under, e.g.
   /// `engine-ddc777be435e`, from `bin/internal/engine.version`.
   ///
@@ -643,7 +684,7 @@ class WatchosEngineArtifacts extends EngineCachedArtifact {
   /// moment one engine is reused across two Flutter releases, and forces a
   /// rebuild and a 75 MB re-upload of bytes that are already there. The id
   /// comes from engine_build/scripts/engine_id.sh, which hashes what actually
-  /// determines the binary, so a framework-only release simply leaves this pin
+  /// determines the binary, so a framework-only release leaves this pin
   /// alone.
   String get releaseTag {
     if (version == null || version!.isEmpty) {

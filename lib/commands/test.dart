@@ -9,7 +9,7 @@ import '../watchos_plugins.dart';
 import 'port_help.dart';
 
 class WatchosTestCommand extends TestCommand with UnusedPortHelp {
-  WatchosTestCommand({required super.verboseHelp});
+  WatchosTestCommand({required super.toolContext, super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {

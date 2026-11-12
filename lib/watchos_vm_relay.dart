@@ -96,7 +96,7 @@ final ZLibCodec _rawInflate = ZLibCodec(raw: true);
 ///
 /// 128 bits from a cryptographic source, minted per run and never written to
 /// disk. It travels to the watch inside `FLUTTER_WATCHOS_RELAY_URL`, so the
-/// bridge needs no code for it — it simply dials the URL it was handed.
+/// bridge needs no code for it — it dials the URL it was handed.
 String generateRelayToken({math.Random? random}) {
   final math.Random source = random ?? math.Random.secure();
   return List<int>.generate(16, (_) => source.nextInt(256))
@@ -317,7 +317,7 @@ class WatchosVmRelay {
   final void Function(String) _logTrace;
 
   /// Secret prefix every bridge request must carry. See [generateRelayToken]
-  /// for why the endpoints cannot simply be bound to loopback instead.
+  /// for why the endpoints cannot be bound to loopback instead.
   final String token;
 
   /// Port the bridge endpoints listen on, on every interface — the watch

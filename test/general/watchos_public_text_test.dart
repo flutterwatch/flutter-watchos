@@ -42,7 +42,7 @@ class _TestNameVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitMethodInvocation(MethodInvocation node) {
     final String name = node.methodName.name;
-    final NodeList<Expression> arguments = node.argumentList.arguments;
+    final NodeList<Argument> arguments = node.argumentList.arguments;
     if (node.target == null &&
         (name.startsWith('test') || name.startsWith('group')) &&
         arguments.isNotEmpty &&

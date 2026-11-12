@@ -74,7 +74,7 @@ entries left out):
 ```
 $ flutter-watchos doctor
 Doctor summary (to see all details, run flutter doctor -v):
-[✓] Flutter (3.47.5, pinned by flutter-watchos, on macOS …, locale …)
+[✓] Flutter (3.50.0, pinned by flutter-watchos, on macOS …, locale …)
 [✓] watchOS toolchain - develop for Apple Watch devices (Simulator engine, not signed in)
 [✓] Xcode - develop for iOS and macOS (Xcode 27.0)
 [✓] Connected device (3 available)

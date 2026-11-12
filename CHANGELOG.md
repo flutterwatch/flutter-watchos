@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.0
+
+flutter-watchos moves to Flutter 3.50.0 and Dart 3.14.0, with a new engine,
+`engine-5ecdacd5012d`, so `flutter-watchos upgrade` downloads the Flutter SDK
+and the engine. Commands keep the options and behaviour of 0.1.2 except where
+Flutter itself changed them; the changes a watch developer can meet are below.
+
+- **Flutter 3.50.0.** The pinned SDK is Flutter 3.50.0. Commands gain the
+  options Flutter 3.50 added, such as `precache --host-arch` and
+  `test --preset`, and `devices --machine` and the daemon report a watch's
+  `cpuArch` as `arm64`. An app's size is unchanged: the same app built with
+  0.1.2 and with 0.2.0 differs by 0.06%.
+
+- **New apps use `material_ui`.** Flutter 3.50's app template imports
+  `package:material_ui`, and `flutter-watchos create` follows it. The created
+  app runs on the Simulator and builds for a watch. An existing app keeps
+  building with its `package:flutter/material.dart` imports, which Flutter
+  3.50 reports as deprecated.
+
+- **`attach` connects once.** As in Flutter 3.50 on every platform, `attach`
+  no longer attaches again when the app restarts; run it again instead.
+
+- **`clean` leaves the Xcode workspace alone by default.** As in Flutter
+  3.50, `clean` runs `xcodebuild clean` only with `--include-xcode-workspace`
+  or `--scheme`.
+
+- **Build hooks receive `watchos` through `code_assets` 2.** A build hook is
+  given the same target OS, architecture and SDK as before. A hook that
+  relies on the iOS-family fallback and returns a library with more than one
+  architecture is now rejected, as it is for iOS.
+
 ## 0.1.2
 
 Plugin native code is now optimized in profile and release builds, and a

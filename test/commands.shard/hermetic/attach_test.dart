@@ -8,11 +8,11 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/signals.dart';
-import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_watchos/build_targets/application.dart';
 import 'package:flutter_watchos/commands/attach.dart';
 import 'package:flutter_watchos/commands/launch_checks.dart';
 import 'package:flutter_watchos/watchos_mode_guidance.dart';
@@ -26,14 +26,19 @@ import 'src/watch_project.dart';
 /// `attach` with its checks, and a runCommand that only records that it was
 /// reached: no connection is attempted.
 class _CheckedAttachCommand extends WatchosAttachCommand {
-  _CheckedAttachCommand({required super.fileSystem, required super.logger})
+  _CheckedAttachCommand({required FileSystem fileSystem, required Logger logger})
     : super(
-        verboseHelp: false,
-        stdio: FakeStdio(),
-        terminal: Terminal.test(),
-        signals: Signals.test(),
-        platform: FakePlatform(),
-        processInfo: ProcessInfo.test(MemoryFileSystem.test()),
+        buildSystem: FakeBuildSystem(),
+        buildTargets: const WatchosBuildTargets(),
+        toolContext: DelegatingToolContext(
+          fs: fileSystem,
+          logger: logger,
+          stdio: FakeStdio(),
+          signals: Signals.test(),
+          platform: FakePlatform(),
+          processInfo: ProcessInfo.test(MemoryFileSystem.test()),
+        ),
+        xcode: null,
       );
 
   bool reachedRunCommand = false;

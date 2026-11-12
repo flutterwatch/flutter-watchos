@@ -6,6 +6,7 @@ import 'package:file/file.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/features.dart';
@@ -66,6 +67,11 @@ class _RecordingCache extends Fake implements Cache {
 
   @override
   bool useUnsignedMacBinaries = false;
+
+  @override
+  final OperatingSystemUtils osUtils = FakeOperatingSystemUtils(
+    hostPlatform: HostPlatform.darwin_arm64,
+  );
 }
 
 void main() {
@@ -667,6 +673,28 @@ void main() {
 
         expect(fs.directory('/cli/engine_artifacts/watchos_debug_sim_arm64').existsSync(), isTrue);
         expect(fs.directory('/cli/engine_artifacts.previous').existsSync(), isFalse);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fs,
+        ProcessManager: () => FakeProcessManager.any(),
+        Platform: () => platform,
+        Cache: () => cache,
+      },
+    );
+
+    // Stock's --host-arch arrived with Flutter 3.50; the watch command takes
+    // it as stock does, and sets it before the first download.
+    testUsingContext(
+      '--host-arch picks the host artifacts before anything is downloaded',
+      () async {
+        HostPlatform? hostPlatformAtFirstUpdate;
+        cache.onUpdate = (Set<DevelopmentArtifact> _) async {
+          hostPlatformAtFirstUpdate ??= cache.osUtils.hostPlatformOverride;
+        };
+
+        await runPrecache(const <String>['--host-arch', 'x64']);
+
+        expect(hostPlatformAtFirstUpdate, HostPlatform.darwin_x64);
       },
       overrides: <Type, Generator>{
         FileSystem: () => fs,

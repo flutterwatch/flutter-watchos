@@ -538,7 +538,7 @@ const Set<String> _kWatchSupportedFrameworkPlugins = <String>{'integration_test'
 /// Builds the developer-facing warning lines for plugins in the dependency
 /// graph that ship native code for other platforms but have no watchOS
 /// implementation. Such plugins never break the build — their native code is
-/// simply not bundled — but calling them on the watch fails at runtime
+/// not bundled — but calling them on the watch fails at runtime
 /// (`MissingPluginException`, or an FFI "symbol not found" `ArgumentError`).
 ///
 /// [pluginPlatforms] maps each plugin package name to the platform keys it

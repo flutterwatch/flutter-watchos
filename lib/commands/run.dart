@@ -13,7 +13,7 @@ import 'launch_checks.dart';
 import 'port_help.dart';
 
 class WatchosRunCommand extends RunCommand with WatchosRequiredArtifacts, UnusedPortHelp {
-  WatchosRunCommand({required super.verboseHelp});
+  WatchosRunCommand({required super.toolContext, super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {

@@ -85,7 +85,26 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
   }) : _bundleBuilder = bundleBuilder ?? WatchosBuilder.buildBundle,
        _registryPost = registryPost,
        super(verboseHelp: verboseHelp) {
-    addCommonDesktopBuildOptions(verboseHelp: verboseHelp);
+    // The options stock's desktop builds took up to Flutter 3.47, when
+    // `addCommonDesktopBuildOptions` added them; 3.50 moved the desktop
+    // builds to option bundles, which also add --flavor and --config-only,
+    // neither of which a watch build has. Each call is still a
+    // [FlutterCommand] method, so `build watchos` keeps the options and help
+    // it had.
+    addBuildModeFlags(verboseHelp: verboseHelp);
+    addBuildPerformanceFile(hide: !verboseHelp);
+    addDartObfuscationOption();
+    addEnableExperimentation(hide: !verboseHelp);
+    addSplitDebugInfoOption();
+    addTreeShakeIconsFlag();
+    usesAnalyzeSizeFlag();
+    usesDartDefineOption();
+    usesExtraDartFlagOptions(verboseHelp: verboseHelp);
+    usesPubOption();
+    usesTargetOption();
+    usesTrackWidgetCreation(verboseHelp: verboseHelp);
+    usesBuildNumberOption();
+    usesBuildNameOption();
     argParser.addFlag(
       'simulator',
       help: 'Build for the watchOS Simulator instead of a physical device.',
@@ -112,7 +131,7 @@ class BuildWatchosCommand extends BuildSubCommand with WatchosRequiredArtifacts 
 
   /// Adds `--analyze-size` and `--code-size-directory` hidden.
   ///
-  /// Stock `addCommonDesktopBuildOptions` adds them for every build, but no
+  /// Stock's desktop builds add them for every build, but no
   /// size report is made for a watchOS build, so [validateCommand] refuses
   /// them. They stay parsable, so a script that passes one gets that refusal
   /// rather than a usage error.
