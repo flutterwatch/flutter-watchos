@@ -154,13 +154,40 @@ You have two options:
 Only the watch *executable* needs the fat slice — embedded frameworks stay
 arm64-only either way.
 
+## Metal and App Review
+
+By default an app renders with Impeller on Metal. The Metal framework is on
+the watch, but the watchOS SDK does not declare it, so by the SDK's definition
+it is not a public API on watchOS. App Store Review Guideline 2.5.1 asks apps
+to use public APIs only.
+
+What is known: apps that render this way have been approved, including one
+whose review notes described the architecture and said that the app imports
+Metal. What is not known: how Apple will judge any other submission. Earlier
+approvals do not bind Apple, and flutter-watchos gives no guarantee about a
+review outcome.
+
+Your options:
+
+- **Ship with the default renderer** and, if you want the reviewer to decide
+  with the facts in front of them, say in the review notes that the app
+  renders with Metal.
+- **Ship with the software rasterizer**: set `FLTEnableImpeller` to `false`
+  in `watchos/Runner/Info.plist`. The engine then draws on the CPU and makes
+  no Metal calls. There is one engine build for both paths, so the binary
+  still carries a weak reference to the framework. Check the app's
+  performance on a physical watch before you choose this.
+
 ## Checklist
+
 
 - [ ] Signed in (`flutter-watchos login`) and the release engines downloaded
 - [ ] `version:` bumped in pubspec.yaml (App Store rejects duplicates)
 - [ ] Release build runs on a physical watch
 - [ ] App icons + `Info.plist` metadata set in `watchos/Runner`
 - [ ] Deployment-target decision made (stub fallback vs. 27.0+)
+- [ ] Renderer decision made (Metal vs. the software rasterizer; see
+      "Metal and App Review")
 - [ ] `flutter-watchos build watchos --release` succeeds
 - [ ] Xcode archive succeeds and shows the App Store Connect distribution
       option (archive the `Runner`/`<app>` scheme, not a bare watch target)
