@@ -106,11 +106,10 @@ jobs:
     # is where they are analysed and tested.
     runs-on: macos-26
     timeout-minutes: 30
-    # Reports without blocking on the release push: by then the package is
-    # already on pub.dev, so a red run could stop nothing. The first commit
-    # after the release tag sets this to false, and the job blocks from then
-    # on.
-    continue-on-error: true
+    # Blocks. The release commit sets this to true, because by that push the
+    # package is already on pub.dev and a red run could stop nothing; the
+    # first commit after the release tag sets it back to false.
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
 
